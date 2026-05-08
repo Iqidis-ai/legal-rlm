@@ -5439,6 +5439,178 @@ class RLMEngine:
 
         return "\n".join(sections) if sections else ""
 
+    async def _run_pre_synthesis_operators(
+        self, state: "InvestigationState",
+    ) -> None:
+        """Operator-substrate hook: invoke deterministic sub-agents before
+        synthesis. Their artifacts land in agent_artifact and are picked up
+        by `_build_agent_artifact_summary` for synthesis context inclusion.
+        """
+        if self._matter_model is None:
+            return
+        from .agents import (
+            default_persona_registry,
+            default_registry,
+            AgentInvocation,
+            AgentRequirement,
+            AgentTaskView,
+            OperatorBudget,
+            SubAgentDispatcher,
+        )
+        # Per-mode budget keeps simple-mode cost bounded
+        mode = self._research_mode_label(state) if hasattr(state, "research_mode") else "simple"
+        try:
+            budget = OperatorBudget.for_mode(getattr(state, "research_mode", "") or "simple")
+        except Exception:
+            budget = OperatorBudget.for_mode("simple")
+        registry = default_registry()
+        persona_registry = default_persona_registry()
+
+        # Pick a persona using available task hints
+        task_type = ""
+        try:
+            task_type = (state.findings.get("task_family")
+                         or state.findings.get("practice_area")
+                         or "")
+        except Exception:
+            task_type = ""
+        sel = persona_registry.select(task_type=task_type)
+        persona_id = sel.persona_id if sel else None
+        persona_policy = sel.policy if sel else None
+
+        invocation = AgentInvocation(
+            matter_id=self._matter_model.matter_id,
+            run_id=str(getattr(state, "run_id", "") or ""),
+            agent_id="dispatcher",
+            phase="pre_synthesis",
+            persona_id=persona_id,
+            requirement=AgentRequirement.OPTIONAL,
+            task=AgentTaskView(),
+            execution_family="investigate",
+            workflow_kind="default",
+            budget=budget,
+            input_refs=(),
+            input_hash=str(getattr(state, "query", "") or "")[:64],
+        )
+        dispatcher = SubAgentDispatcher(
+            registry=registry,
+            matter_model=self._matter_model,
+            llm_client=getattr(self, "_llm_client", None),
+        )
+        try:
+            phase_result = await dispatcher.run_phase(
+                invocation,
+                phase="pre_synthesis",
+                persona_policy=persona_policy,
+            )
+        except Exception as exc:
+            logger.warning("pre-synthesis operator phase failed: %s", exc)
+            return
+        # Telemetry (light)
+        n_artifacts = sum(len(r.artifacts) for _a, r in phase_result.invocations)
+        try:
+            state.findings["operator_phase_summary"] = {
+                "selected_agents": [a.agent_id for a in phase_result.dispatched.selected],
+                "n_invocations": len(phase_result.invocations),
+                "n_artifacts": n_artifacts,
+                "budget_breached": list(phase_result.breached),
+            }
+        except Exception:
+            pass
+
+    def _build_agent_artifact_summary(
+        self, state: "InvestigationState",
+    ) -> str:
+        """Render synthesis-context sections from answer-ingredient agent artifacts.
+
+        Pulls all artifacts with synthesis_visibility='answer_ingredient'
+        from this matter. Groups by artifact_kind. Renders compact tables.
+        Synthesis Context Principle: artifacts are answer ingredients,
+        not gap metadata.
+        """
+        if self._matter_model is None:
+            return ""
+        try:
+            rows = self._matter_model.db.execute(
+                """SELECT artifact_kind, artifact_key, label, payload_json,
+                          confidence, verification_state
+                   FROM agent_artifact
+                   WHERE matter_id=? AND synthesis_visibility='answer_ingredient'
+                   ORDER BY artifact_kind, created_at DESC""",
+                (self._matter_model.matter_id,),
+            ).fetchall()
+        except Exception:
+            return ""
+        if not rows:
+            return ""
+
+        by_kind: dict[str, list[dict]] = {}
+        for r in rows:
+            try:
+                payload = json.loads(r["payload_json"] or "{}")
+            except Exception:
+                payload = {}
+            by_kind.setdefault(r["artifact_kind"], []).append({
+                "label": r["label"] or r["artifact_key"],
+                "confidence": r["confidence"],
+                "verification_state": r["verification_state"],
+                "payload": payload,
+            })
+
+        sections: list[str] = []
+        # HHI calculations table
+        if "hhi.calculation" in by_kind:
+            lines = [
+                "OPERATOR-COMPUTED HHI (deterministic; verifies extracted values):",
+                "",
+                "| Market | Pre-HHI | Post-HHI | Δ HHI | Presumption | Discrepancies |",
+                "|---|---:|---:|---:|---|---|",
+            ]
+            for art in by_kind["hhi.calculation"]:
+                p = art["payload"] or {}
+                disc = p.get("discrepancies") or {}
+                disc_str = (
+                    ", ".join(f"{k}: {v.get('extracted')}→{v.get('computed')}"
+                              for k, v in disc.items()) if disc else "—"
+                )
+                lines.append(
+                    "| " + " | ".join([
+                        str(p.get("market_name") or "—"),
+                        str(p.get("computed_pre_hhi") or "—"),
+                        str(p.get("computed_post_hhi") or "—"),
+                        str(p.get("computed_delta_hhi") or "—"),
+                        "Yes" if p.get("structural_presumption") else "No",
+                        disc_str,
+                    ]) + " |"
+                )
+            sections.append("\n".join(lines))
+
+        # Numerical reconciliation table
+        if "numeric.reconciliation" in by_kind:
+            lines = [
+                "OPERATOR-COMPUTED RECONCILIATION (deterministic bridge totals):",
+                "",
+                "| Category | Period | Items | Seller | Buyer | Δ | Recommended | Bridge |",
+                "|---|---|---:|---:|---:|---:|---:|---|",
+            ]
+            for art in by_kind["numeric.reconciliation"]:
+                p = art["payload"] or {}
+                lines.append(
+                    "| " + " | ".join([
+                        str(p.get("category") or "—"),
+                        str(p.get("period") or "—"),
+                        str(p.get("n_line_items") or 0),
+                        str(p.get("computed_seller_total_str") or "—"),
+                        str(p.get("computed_buyer_total_str") or "—"),
+                        str(p.get("computed_delta_total_str") or "—"),
+                        str(p.get("computed_recommended_total_str") or "—"),
+                        "✓" if p.get("bridge_consistent") else "⚠ inconsistent",
+                    ]) + " |"
+                )
+            sections.append("\n".join(lines))
+
+        return "\n\n".join(sections) if sections else ""
+
     def _build_extraction_slot_row_summary(
         self, state: "InvestigationState",
     ) -> str:
@@ -12050,6 +12222,17 @@ Return:
         state.findings["metadata_citations"] = state.get_citations_formatted()
         state.findings["metadata_entities"] = state.get_entities_formatted()
 
+        # Operator substrate (PR#3): run deterministic operators before
+        # synthesis — they verify LLM-extracted values, do real math the
+        # LLM gets wrong, and produce answer-ingredient artifacts that
+        # synthesis consumes alongside typed evidence. Wrapped in
+        # try/except per the no-silent-fallback rule: failures log but do
+        # not crash investigation.
+        try:
+            await self._run_pre_synthesis_operators(state)
+        except Exception as _op_exc:  # noqa: BLE001
+            logger.debug("pre-synthesis operators failed: %s", _op_exc)
+
         # Dynamically assemble the context packet — only include sections that
         # have real content. PRO gets exactly what's useful, nothing empty.
         context_build = await self._assemble_context_packet(state, findings_text)
@@ -13628,6 +13811,13 @@ Return:
         _prov_summary = self._build_provision_comparison_summary(state)
         if _prov_summary:
             ordered.append(("provision_comparisons", _prov_summary, True))
+
+        # Operator artifacts (PR#3): deterministic agent outputs flow into
+        # synthesis as answer ingredients. Placed before slot rows so the
+        # LLM sees verified math first.
+        _agent_summary = self._build_agent_artifact_summary(state)
+        if _agent_summary:
+            ordered.append(("operator_artifacts", _agent_summary, True))
 
         # Row-atomic extraction-slot summary (PR wedge: market_row first).
         # This is answer ingredients, not gap metadata — only filled rows.

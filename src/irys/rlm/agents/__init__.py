@@ -35,9 +35,51 @@ from .personas import Persona, PersonaPolicy, PersonaRegistry, PersonaSelection,
 from .hhi_calculator import HhiMarketShareCalculator
 from .numerical_reconciliation import NumericalReconciliationAgent
 
+
+def default_registry() -> SubAgentRegistry:
+    """Registry pre-populated with the deterministic built-in operators."""
+    return SubAgentRegistry(agents=(
+        HhiMarketShareCalculator(),
+        NumericalReconciliationAgent(),
+    ))
+
+
+def default_persona_registry() -> PersonaRegistry:
+    """Registry of default personas. By user directive: every persona has
+    open access to every sub-agent (PersonaPolicy() = no_policy_default_allow).
+    Restrictions are explicit opt-in for high-risk operators only.
+    """
+    return PersonaRegistry(personas=(
+        Persona(
+            persona_id="senior_ma_attorney",
+            voice_summary="Senior M&A attorney; numbers-driven; cite-or-don't-claim",
+            domain_profile_ids=("legal:1",),
+            task_types=("corporate-ma",),
+            workflow_kinds=("investigate",),
+        ),
+        Persona(
+            persona_id="antitrust_economist",
+            voice_summary="Antitrust economist; HHI-driven; structural presumption analysis",
+            domain_profile_ids=("legal:1",),
+            task_types=("antitrust-competition",),
+            workflow_kinds=("investigate",),
+        ),
+        Persona(
+            persona_id="banking_finance_attorney",
+            voice_summary="Banking attorney; CP-coverage-driven; closing-set focused",
+            domain_profile_ids=("legal:1",),
+            task_types=("banking-finance",),
+            workflow_kinds=("investigate",),
+        ),
+        # Generic fallback persona — used when no domain-specific persona matches
+        Persona(persona_id="generalist", voice_summary="Generalist analyst"),
+    ))
+
 __all__ = (
     "AgentArtifact",
     "AgentDispatch",
+    "default_persona_registry",
+    "default_registry",
     "HhiMarketShareCalculator",
     "NumericalReconciliationAgent",
     "AgentInputRef",
