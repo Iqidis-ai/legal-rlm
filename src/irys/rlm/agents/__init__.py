@@ -32,10 +32,12 @@ from .registry import AgentDispatch, SubAgentRegistry
 from .dispatcher import SubAgentDispatcher
 from .runtime import AgentRuntime
 from .personas import Persona, PersonaPolicy, PersonaRegistry, PersonaSelection, PolicyDecision
+from .hhi_calculator import HhiMarketShareCalculator
 
 __all__ = (
     "AgentArtifact",
     "AgentDispatch",
+    "HhiMarketShareCalculator",
     "AgentInputRef",
     "AgentInvocation",
     "AgentInvocationResult",
