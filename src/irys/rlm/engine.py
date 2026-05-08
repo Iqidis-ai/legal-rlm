@@ -5439,6 +5439,35 @@ class RLMEngine:
 
         return "\n".join(sections) if sections else ""
 
+    def _resolve_active_domain_profile_id(self) -> str:
+        """Return the active matter's primary domain profile id.
+
+        Reviewer round 1 (term_grid) blocker B5: AgentInvocation.domain_profile_id
+        was empty so the registry couldn't filter agents by `supported_domain_profiles`.
+        Resolve via matter_model.read_domain_composition (or fallback to legal:1).
+
+        Normalizes bare names like "legal" → "legal:1" because operators
+        register their `supported_domain_profiles` with versioned ids.
+        """
+        mm = self._matter_model
+        primary = ""
+        if mm is not None:
+            try:
+                comp = getattr(mm, "_read_matter_domain_composition", None)
+                if comp is not None and callable(comp):
+                    _facets, _weights, p = comp()
+                    if p:
+                        primary = str(p)
+            except Exception:
+                primary = ""
+        if not primary:
+            primary = "legal"
+        # Normalize: "legal" → "legal:1"; pass through if already
+        # versioned ("legal:1", "finance:2", etc).
+        if ":" not in primary:
+            primary = f"{primary}:1"
+        return primary
+
     def _compute_agent_work_profile(self) -> dict[str, int]:
         """Snapshot upstream-evidence counts so agents can match() on
         whether there is real work to do (Codex PR-gate work-aware-match
@@ -5689,6 +5718,11 @@ class RLMEngine:
             input_refs=(),
             input_hash=str(getattr(state, "query", "") or "")[:64],
             work_profile=work_profile,
+            # Reviewer round 1 (term_grid) blocker B5: propagate the
+            # active matter's domain profile into AgentInvocation so the
+            # registry can filter operators by `supported_domain_profiles`.
+            domain_profile_id=self._resolve_active_domain_profile_id(),
+            domain_profile_version=1,
         )
         # Codex HOLD-5 fix: engine stores Gemini client as self.client,
         # not self._llm_client.

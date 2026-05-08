@@ -144,6 +144,30 @@ def make_rule_id(
     return f"rule_v1:{_sha24(canonical)}"
 
 
+def _coerce_str_list(value: Any, *, max_len: int = 16, max_str: int = 200) -> list[str]:
+    """Defensively coerce arbitrary LLM output into a clean str list.
+
+    Reviewer non-blocker fix: previously `list(value)` on a string would
+    yield a character array. This helper handles strings, sequences,
+    and noise gracefully.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value[:max_str]] if value.strip() else []
+    if isinstance(value, (list, tuple)):
+        out: list[str] = []
+        for item in value[:max_len]:
+            if isinstance(item, str) and item.strip():
+                out.append(item[:max_str])
+            elif item is not None:
+                s = str(item)[:max_str]
+                if s.strip():
+                    out.append(s)
+        return out
+    return []
+
+
 def _strip_json_fences(text: str) -> str:
     s = (text or "").strip()
     if s.startswith("```"):
@@ -195,21 +219,45 @@ _TERM_SECTION_HEADER_KEYWORDS = (
 def _section_relevance_score(section: dict, query_keywords: set[str]) -> float:
     """Score a section for term-grid relevance.
 
-    0.0-1.0 score based on:
-    - Header text matching term-grid keywords (clauses, covenants, etc.)
-    - Header text matching the user query keywords
-    - Section length (very short headers/sections deprioritized)
+    Reviewer round 1 blocker B4: previously only scored title text. Now
+    scans body text too so a section titled bare "Section 5.3" with a
+    body about restrictions/deadlines/exceptions is not dropped.
+
+    Scoring sources:
+    - Title matches (heavy weight per match — title hits are reliable)
+    - Body matches on term-grid keywords AND query keywords
+    - Source-kind boost: schedule_index / table_index / contract_provision
+      sections are pre-filtered for relevance and start with a positive prior
     """
     title = str(section.get("title") or section.get("label") or "").lower()
-    if not title:
+    body = str(section.get("text") or section.get("body") or "").lower()
+    if not (title or body):
         return 0.0
     score = 0.0
+    # Title matches: high weight per hit
     for kw in _TERM_SECTION_HEADER_KEYWORDS:
         if kw in title:
             score += 0.20
     for q in query_keywords:
         if q in title and len(q) >= 4:
             score += 0.30
+
+    # Body matches: lower per-hit weight but cumulative; prefer sections
+    # whose body contains *multiple* term-grid signals.
+    if body:
+        body_kw_hits = sum(1 for kw in _TERM_SECTION_HEADER_KEYWORDS if kw in body)
+        score += min(0.4, 0.05 * body_kw_hits)
+        body_q_hits = sum(1 for q in query_keywords if len(q) >= 4 and q in body)
+        score += min(0.35, 0.07 * body_q_hits)
+
+    # Source-kind prior: typed evidence + structure artifacts are
+    # higher-value than raw section maps.
+    src = section.get("_source_kind")
+    if src in ("contract_provision", "schedule_entry"):
+        score += 0.30
+    elif src in ("schedule_index", "table_index"):
+        score += 0.15
+
     return min(score, 1.0)
 
 
@@ -263,12 +311,13 @@ Return ONLY a single JSON object matching this schema (no commentary, no markdow
       "amount": "amount with units (or null)",
       "date_or_period": "duration / deadline / period (or null)",
       "consequence": "what happens when triggered",
-      "source_refs": ["span ids or section refs"],
+      "source_refs": ["span ids or section refs — REQUIRED, do not omit; rows without source_refs WILL BE DROPPED"],
       "confidence": 0.0
     }}
   ],
   "rules": [
     {{
+      "document_id": "string (which doc this rule comes from)",
       "section_ref": "string",
       "if": ["clause"],
       "then": ["consequence"],
@@ -276,7 +325,7 @@ Return ONLY a single JSON object matching this schema (no commentary, no markdow
       "timing": "string (or null)",
       "thresholds": ["string"],
       "parties": ["actor"],
-      "source_span_ids": ["span ids"],
+      "source_span_ids": ["span ids — REQUIRED, do not omit"],
       "confidence": 0.0
     }}
   ]
@@ -442,7 +491,20 @@ class StructuredTermGridExtractor:
             )
 
         if not sections:
-            warnings.append("no_candidate_sections")
+            # Reviewer round 1 blocker B2: differentiate "ran empty"
+            # (no candidate inputs) from "upstream required evidence
+            # missing" (the matter expects term grid work but the
+            # source structure isn't there yet).
+            wp = invocation.work_profile or {}
+            had_strong_signal = (
+                int(wp.get("term_grid_obligation_count", 0) or 0) > 0
+                or int(wp.get("contract_provision_count", 0) or 0) > 0
+            )
+            warnings.append(
+                "upstream_required_evidence_missing"
+                if had_strong_signal
+                else "ran_empty"
+            )
             return AgentInvocationResult(
                 status="success",
                 elapsed_ms=int((_time.perf_counter() - t0) * 1000),
@@ -605,32 +667,141 @@ class StructuredTermGridExtractor:
     def _load_candidate_sections(
         self, runtime: Any, invocation: AgentInvocation, warnings: list[str],
     ) -> list[dict]:
-        """Pull section_map artifacts produced by DocumentFileReader."""
+        """Aggregate every plausible source-section input.
+
+        Reviewer round 1 blocker B1: previously only consumed
+        `document.section_map`. Now pulls section maps + schedule_index +
+        table_index + contract_provision + schedule_entry typed evidence.
+        """
         mm = getattr(runtime, "matter_model", None)
         if mm is None:
             return []
+        sections: list[dict] = []
+
+        # Source 1: document.section_map artifacts
         try:
             rows = mm.db.execute(
                 "SELECT artifact_key, payload_json FROM agent_artifact "
                 "WHERE matter_id=? AND artifact_kind=?",
                 (mm.matter_id, "document.section_map"),
             ).fetchall()
+            for r in rows:
+                try:
+                    payload = _json.loads(r["payload_json"] or "{}")
+                except Exception:
+                    continue
+                doc_id = payload.get("document_id") or r["artifact_key"]
+                for s in payload.get("sections") or []:
+                    if not isinstance(s, dict):
+                        continue
+                    s2 = dict(s)
+                    s2.setdefault("document_id", doc_id)
+                    s2.setdefault("_source_kind", "section_map")
+                    sections.append(s2)
         except Exception as exc:
             warnings.append(f"section_map_load_failed:{type(exc).__name__}")
-            return []
-        sections: list[dict] = []
-        for r in rows:
-            try:
-                payload = _json.loads(r["payload_json"] or "{}")
-            except Exception:
-                continue
-            doc_id = payload.get("document_id") or r["artifact_key"]
-            for s in payload.get("sections") or []:
-                if not isinstance(s, dict):
+
+        # Source 2: document.schedule_index artifacts (named schedules,
+        # exhibits, annexes — high-value for term-grid extraction).
+        try:
+            rows = mm.db.execute(
+                "SELECT artifact_key, payload_json FROM agent_artifact "
+                "WHERE matter_id=? AND artifact_kind=?",
+                (mm.matter_id, "document.schedule_index"),
+            ).fetchall()
+            for r in rows:
+                try:
+                    payload = _json.loads(r["payload_json"] or "{}")
+                except Exception:
                     continue
-                s2 = dict(s)
-                s2.setdefault("document_id", doc_id)
-                sections.append(s2)
+                doc_id = payload.get("document_id") or r["artifact_key"]
+                for sched in payload.get("schedules") or payload.get("entries") or []:
+                    if not isinstance(sched, dict):
+                        continue
+                    sections.append({
+                        "document_id": doc_id,
+                        "title": str(sched.get("label") or sched.get("kind") or "schedule"),
+                        "text": str(sched.get("text") or sched.get("body") or "")[:self.max_section_chars],
+                        "_source_kind": "schedule_index",
+                    })
+        except Exception as exc:
+            warnings.append(f"schedule_index_load_failed:{type(exc).__name__}")
+
+        # Source 3: document.table_index artifacts (typed rows / tables
+        # are sometimes the cleanest source for thresholds/amounts).
+        try:
+            rows = mm.db.execute(
+                "SELECT artifact_key, payload_json FROM agent_artifact "
+                "WHERE matter_id=? AND artifact_kind=?",
+                (mm.matter_id, "document.table_index"),
+            ).fetchall()
+            for r in rows:
+                try:
+                    payload = _json.loads(r["payload_json"] or "{}")
+                except Exception:
+                    continue
+                doc_id = payload.get("document_id") or r["artifact_key"]
+                for tab in payload.get("tables") or []:
+                    if not isinstance(tab, dict):
+                        continue
+                    sections.append({
+                        "document_id": doc_id,
+                        "title": str(tab.get("title") or tab.get("caption") or "table"),
+                        "text": str(tab.get("text") or tab.get("rendered") or "")[:self.max_section_chars],
+                        "_source_kind": "table_index",
+                    })
+        except Exception as exc:
+            warnings.append(f"table_index_load_failed:{type(exc).__name__}")
+
+        # Source 4: contract_provision typed evidence (already-extracted
+        # provisions from prior runs / slot wedges).
+        try:
+            rows = mm.db.execute(
+                "SELECT record_key, payload_json, document_id FROM typed_evidence_record "
+                "WHERE matter_id=? AND record_kind=?",
+                (mm.matter_id, "contract_provision"),
+            ).fetchall()
+            for r in rows:
+                try:
+                    payload = _json.loads(r["payload_json"] or "{}")
+                except Exception:
+                    continue
+                doc_id = r["document_id"] or payload.get("document_id") or ""
+                title = str(payload.get("section_ref") or payload.get("title") or "provision")
+                text = str(payload.get("text") or payload.get("body") or payload.get("provision_text") or "")
+                if text:
+                    sections.append({
+                        "document_id": doc_id, "title": title,
+                        "text": text[:self.max_section_chars],
+                        "_source_kind": "contract_provision",
+                    })
+        except Exception as exc:
+            warnings.append(f"contract_provision_load_failed:{type(exc).__name__}")
+
+        # Source 5: schedule_entry typed evidence
+        try:
+            rows = mm.db.execute(
+                "SELECT record_key, payload_json, document_id FROM typed_evidence_record "
+                "WHERE matter_id=? AND record_kind=?",
+                (mm.matter_id, "schedule_entry"),
+            ).fetchall()
+            for r in rows:
+                try:
+                    payload = _json.loads(r["payload_json"] or "{}")
+                except Exception:
+                    continue
+                doc_id = r["document_id"] or payload.get("document_id") or ""
+                title = str(payload.get("schedule_ref") or "schedule_entry")
+                text = str(payload.get("text") or payload.get("description") or "")
+                if text:
+                    sections.append({
+                        "document_id": doc_id, "title": title,
+                        "text": text[:self.max_section_chars],
+                        "_source_kind": "schedule_entry",
+                    })
+        except Exception as exc:
+            warnings.append(f"schedule_entry_load_failed:{type(exc).__name__}")
+
         return sections
 
     @staticmethod
@@ -714,6 +885,12 @@ class StructuredTermGridExtractor:
             obligation = str(r.get("obligation_or_right") or "")
             if not (section_ref and (topic or obligation)):
                 continue
+            # Reviewer round 1 blocker B3: every term-grid row must be
+            # source-grounded. Drop rows the LLM emits without any
+            # source_refs — those are ungrounded inferences, not facts.
+            source_refs = _coerce_str_list(r.get("source_refs"))
+            if not source_refs:
+                continue
             row_id = make_term_row_id(
                 document_id=doc_id, section_ref=section_ref,
                 topic=topic, actor=actor,
@@ -743,7 +920,7 @@ class StructuredTermGridExtractor:
             "amount": r.get("amount") if r.get("amount") not in (None, "") else None,
             "date_or_period": r.get("date_or_period") if r.get("date_or_period") not in (None, "") else None,
             "consequence": str(r.get("consequence") or "")[:300],
-            "source_refs": list(r.get("source_refs") or [])[:8],
+            "source_refs": _coerce_str_list(r.get("source_refs"), max_len=8),
             "confidence": conf,
         }
 
@@ -758,9 +935,14 @@ class StructuredTermGridExtractor:
                 continue
             doc_id = str(r.get("document_id") or "")
             section_ref = str(r.get("section_ref") or "")
-            if_clauses = list(r.get("if") or [])
-            then_clauses = list(r.get("then") or [])
+            if_clauses = _coerce_str_list(r.get("if"), max_len=5)
+            then_clauses = _coerce_str_list(r.get("then"), max_len=5)
             if not section_ref or not (if_clauses and then_clauses):
+                continue
+            # Reviewer non-blocker: rules also require source_span_ids,
+            # otherwise the rule is ungrounded inference, not extraction.
+            source_spans = _coerce_str_list(r.get("source_span_ids"), max_len=8)
+            if not source_spans:
                 continue
             rule_id = make_rule_id(
                 document_id=doc_id, section_ref=section_ref,
@@ -768,24 +950,28 @@ class StructuredTermGridExtractor:
             )
             if rule_id in seen:
                 if conf > float(seen[rule_id].get("confidence") or 0.0):
-                    seen[rule_id] = self._rule_payload(r, rule_id, conf)
+                    seen[rule_id] = self._rule_payload(r, rule_id, conf, if_clauses, then_clauses, source_spans)
                 continue
-            seen[rule_id] = self._rule_payload(r, rule_id, conf)
+            seen[rule_id] = self._rule_payload(r, rule_id, conf, if_clauses, then_clauses, source_spans)
         return list(seen.values())
 
     @staticmethod
-    def _rule_payload(r: dict, rule_id: str, conf: float) -> dict:
+    def _rule_payload(
+        r: dict, rule_id: str, conf: float,
+        if_clauses: list[str], then_clauses: list[str],
+        source_spans: list[str],
+    ) -> dict:
         return {
             "rule_id": rule_id,
             "document_id": str(r.get("document_id") or ""),
             "section_ref": str(r.get("section_ref") or ""),
-            "if": list(r.get("if") or [])[:5],
-            "then": list(r.get("then") or [])[:5],
-            "unless": list(r.get("unless") or [])[:5],
-            "timing": r.get("timing"),
-            "thresholds": list(r.get("thresholds") or [])[:5],
-            "parties": list(r.get("parties") or [])[:5],
-            "source_span_ids": list(r.get("source_span_ids") or [])[:8],
+            "if": if_clauses,
+            "then": then_clauses,
+            "unless": _coerce_str_list(r.get("unless"), max_len=5),
+            "timing": r.get("timing") if isinstance(r.get("timing"), str) else None,
+            "thresholds": _coerce_str_list(r.get("thresholds"), max_len=5),
+            "parties": _coerce_str_list(r.get("parties"), max_len=5),
+            "source_span_ids": source_spans,
             "confidence": conf,
         }
 

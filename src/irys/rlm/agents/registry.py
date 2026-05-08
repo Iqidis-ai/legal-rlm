@@ -91,6 +91,20 @@ class SubAgentRegistry:
                         "policy_reason": policy_decision.reason,
                     })
                     continue
+            # Domain profile filtering — agents declare which domains
+            # they support. If the invocation's domain doesn't match,
+            # the agent is suppressed. Empty `supported_domain_profiles`
+            # is treated as wildcard (cross-domain operator).
+            invocation_domain = invocation.domain_profile_id or ""
+            supported = tuple(getattr(agent, "supported_domain_profiles", ()) or ())
+            if supported and invocation_domain and invocation_domain not in supported:
+                suppressed.append({
+                    "agent_id": agent.agent_id,
+                    "reason": "domain_profile_mismatch",
+                    "expected_one_of": list(supported),
+                    "got": invocation_domain,
+                })
+                continue
             try:
                 match = agent.match(invocation)
             except Exception as exc:

@@ -288,14 +288,37 @@ def test_match_intent_keyword_must_pair_with_object():
 # ---------------------------------------------------------------------------
 
 
-def test_invoke_no_section_maps_returns_clean_warning():
+def test_invoke_no_section_maps_returns_ran_empty():
+    """No candidate sections AND no strong-signal upstream → ran_empty
+    (Codex reviewer round 1 blocker B2: differentiate ran_empty vs
+    upstream_required_evidence_missing)."""
     agent = StructuredTermGridExtractor()
     matter = MatterModel.open_in_memory()
     fake = _FakeLLMClient(json_response=_intercreditor_response())
     rt = _Runtime(matter, llm_client=fake, query="extract covenants")
     result = asyncio.run(agent.invoke(_invocation(matter), rt))
     assert result.status == "success"
-    assert "no_candidate_sections" in result.warnings
+    assert "ran_empty" in result.warnings
+    assert not result.artifacts
+
+
+def test_invoke_no_section_maps_with_strong_signal_returns_upstream_missing():
+    """When match() required us due to term_grid_obligation_count or
+    contract_provision_count > 0, but no candidate sections exist, we
+    must signal `upstream_required_evidence_missing`, NOT silent ran_empty."""
+    agent = StructuredTermGridExtractor()
+    matter = MatterModel.open_in_memory()
+    fake = _FakeLLMClient(json_response=_intercreditor_response())
+    rt = _Runtime(matter, llm_client=fake, query="extract covenants")
+    inv = _invocation(matter, work_profile={
+        "document_section_map_count": 0,
+        "obligation_row_count": 0,
+        "term_grid_obligation_count": 3,  # strong signal
+        "contract_provision_count": 0,
+    })
+    result = asyncio.run(agent.invoke(inv, rt))
+    assert result.status == "success"
+    assert "upstream_required_evidence_missing" in result.warnings
     assert not result.artifacts
 
 
@@ -331,9 +354,11 @@ def test_invoke_drops_low_confidence_rows():
         "schema_ref": "term_grid.v1",
         "rows": [
             {"document_id": "doc1", "section_ref": "S1", "topic": "low",
-             "actor": "X", "obligation_or_right": "y", "confidence": 0.3},
+             "actor": "X", "obligation_or_right": "y", "confidence": 0.3,
+             "source_refs": ["span:S1"]},
             {"document_id": "doc1", "section_ref": "S2", "topic": "high",
-             "actor": "X", "obligation_or_right": "z", "confidence": 0.9},
+             "actor": "X", "obligation_or_right": "z", "confidence": 0.9,
+             "source_refs": ["span:S2"]},
         ],
         "rules": [],
     }
@@ -412,6 +437,73 @@ def test_invoke_works_on_fuzzy_prompt_no_metadata():
 # ---------------------------------------------------------------------------
 # verify_output
 # ---------------------------------------------------------------------------
+
+
+def test_registry_filters_by_domain_profile():
+    """Reviewer round 1 blocker B5: registry must filter agents whose
+    `supported_domain_profiles` doesn't include the invocation's
+    domain_profile_id. Cross-domain operators (5 profiles) pass; a
+    legal-only operator on a coding invocation gets suppressed."""
+    from irys.rlm.agents import (
+        SubAgentRegistry, AgentInvocation, AgentRequirement,
+        AgentTaskView, OperatorBudget, AgentMatch,
+    )
+    from irys.rlm.agents.contracts import AgentInvocationResult
+
+    class _LegalOnly:
+        agent_id = "legal_only_op"
+        version = 1
+        enabled = True
+        priority = 50
+        capability_tags = ("compute",)
+        supported_domain_profiles = ("legal:1",)
+        phases = ("pre_synthesis",)
+        exclusive_group = None
+        deterministic = True
+
+        def match(self, invocation):
+            return AgentMatch(agent_id=self.agent_id, score=1.0)
+
+        async def invoke(self, invocation, runtime):
+            return AgentInvocationResult(status="success")
+
+        def verify_output(self, invocation, result):
+            return result
+
+    matter = MatterModel.open_in_memory()
+    reg = SubAgentRegistry(agents=(_LegalOnly(),))
+
+    # Coding invocation should suppress the legal-only agent
+    inv_coding = AgentInvocation(
+        matter_id=matter.matter_id, run_id="r",
+        agent_id="dispatcher", phase="pre_synthesis", persona_id=None,
+        requirement=AgentRequirement.OPTIONAL,
+        task=AgentTaskView(),
+        execution_family="investigate", workflow_kind="analysis",
+        budget=OperatorBudget(), input_refs=(), input_hash="ih",
+        domain_profile_id="coding:1", domain_profile_version=1,
+        work_profile={},
+    )
+    disp = reg.dispatch(inv_coding, phase="pre_synthesis", phase_cap=8)
+    assert _LegalOnly().agent_id not in [a.agent_id for a in disp.selected]
+    suppressions = [s for s in disp.suppressed
+                    if s.get("agent_id") == "legal_only_op"]
+    assert suppressions
+    assert suppressions[0]["reason"] == "domain_profile_mismatch"
+
+    # Legal invocation should NOT suppress it
+    inv_legal = AgentInvocation(
+        matter_id=matter.matter_id, run_id="r",
+        agent_id="dispatcher", phase="pre_synthesis", persona_id=None,
+        requirement=AgentRequirement.OPTIONAL,
+        task=AgentTaskView(),
+        execution_family="investigate", workflow_kind="analysis",
+        budget=OperatorBudget(), input_refs=(), input_hash="ih",
+        domain_profile_id="legal:1", domain_profile_version=1,
+        work_profile={},
+    )
+    disp2 = reg.dispatch(inv_legal, phase="pre_synthesis", phase_cap=8)
+    assert "legal_only_op" in [a.agent_id for a in disp2.selected]
 
 
 def test_verify_output_passes_well_formed_artifacts():
