@@ -10523,9 +10523,15 @@ Return:
 
             # Slot-profile registry: append prompt addenda for any matched
             # profiles beyond market_row (which is already in
-            # _REGULATORY_DEEP_READ_SECTION). market_row is excluded here
-            # to avoid duplication. CP gap and QoE line-item profiles
-            # contribute their own addenda when their match terms hit.
+            # _REGULATORY_DEEP_READ_SECTION).
+            #
+            # De-duplication rules to avoid prompt collision:
+            #   - market_row: already in _REGULATORY_DEEP_READ_SECTION, skip
+            #   - cp_gap: skip when _COMPARISON_DEEP_READ_SECTION is already
+            #     active — the existing comparison section already extracts
+            #     provision data row-atomically; doubling the ask hurt the
+            #     compare-CP task by -9pts in banking v2.
+            #   - qoe_line_item: always include — no overlapping section
             try:
                 from .slot_profiles import (
                     SlotProfileContext as _SPCtx,
@@ -10540,9 +10546,11 @@ Return:
                 _slot_dispatch = _slot_registry.dispatch(_slot_ctx)
                 _slot_addenda: list[str] = []
                 for _slot_p in _slot_dispatch.prompt_profiles:
-                    if _slot_p.profile_id == "legal.market_row.v1":
-                        # Already in _REGULATORY_DEEP_READ_SECTION; skip to
-                        # avoid prompt duplication.
+                    pid = _slot_p.profile_id
+                    if pid == "legal.market_row.v1":
+                        continue
+                    if pid == "legal.cp_gap.v1" and _is_comparison_dr:
+                        # Existing comparison section already covers this
                         continue
                     _addendum = _slot_p.prompt_addendum(_slot_ctx)
                     if _addendum:
