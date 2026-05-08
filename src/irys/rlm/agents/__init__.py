@@ -34,6 +34,7 @@ from .runtime import AgentRuntime
 from .personas import Persona, PersonaPolicy, PersonaRegistry, PersonaSelection, PolicyDecision
 from .hhi_calculator import HhiMarketShareCalculator
 from .numerical_reconciliation import NumericalReconciliationAgent
+from .cp_section_extractor import CpSectionExtractorAgent
 
 
 def default_registry() -> SubAgentRegistry:
@@ -41,6 +42,7 @@ def default_registry() -> SubAgentRegistry:
     return SubAgentRegistry(agents=(
         HhiMarketShareCalculator(),
         NumericalReconciliationAgent(),
+        CpSectionExtractorAgent(),
     ))
 
 
@@ -80,6 +82,7 @@ __all__ = (
     "AgentDispatch",
     "default_persona_registry",
     "default_registry",
+    "CpSectionExtractorAgent",
     "HhiMarketShareCalculator",
     "NumericalReconciliationAgent",
     "AgentInputRef",

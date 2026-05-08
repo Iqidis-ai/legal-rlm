@@ -5585,6 +5585,33 @@ class RLMEngine:
                 )
             sections.append("\n".join(lines))
 
+        # CP coverage report (per required document)
+        if "cp.coverage_report" in by_kind:
+            for art in by_kind["cp.coverage_report"]:
+                p = art["payload"] or {}
+                lines = [
+                    f"OPERATOR-COMPUTED CP COVERAGE [{p.get('required_document') or 'document'}]: "
+                    f"{p.get('n_met') or 0}/{p.get('n_total') or 0} met, "
+                    f"{p.get('n_missing') or 0} missing, "
+                    f"{p.get('n_partial') or 0} partial "
+                    f"({p.get('coverage_pct') or 0}%):",
+                    "",
+                    "| CP | Requirement | Status | Severity | Observed Evidence | Evidence Doc |",
+                    "|---|---|---|---|---|---|",
+                ]
+                for it in (p.get("items") or [])[:80]:
+                    lines.append(
+                        "| " + " | ".join([
+                            str(it.get("cp_id") or it.get("cp_section") or "—"),
+                            (str(it.get("requirement_text") or "—")[:120]),
+                            str(it.get("status") or "—"),
+                            str(it.get("severity") or "—"),
+                            (str(it.get("observed_evidence") or "—")[:120]),
+                            str(it.get("evidence_document") or "—"),
+                        ]) + " |"
+                    )
+                sections.append("\n".join(lines))
+
         # Numerical reconciliation table
         if "numeric.reconciliation" in by_kind:
             lines = [
