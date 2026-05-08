@@ -237,11 +237,34 @@ class DocumentFileReader:
         family = (invocation.execution_family or "").lower()
         if family and family not in {"investigate", "extract", "compare"}:
             return None
-        # Always eligible — structural parsing helps any extraction task
+        wp = invocation.work_profile or {}
+        n_docs = int(wp.get("document_inventory_count", -1))
+        n_section_maps = int(wp.get("section_map_count", -1))
+        # Already-parsed docs don't need re-parsing
+        if n_docs > 0 and n_section_maps >= n_docs:
+            return AgentMatch(
+                agent_id=self.agent_id, score=0.10,
+                reasons=("documents_already_parsed",),
+                requirement=AgentRequirement.OPTIONAL,
+                phase="pre_synthesis",
+            )
+        if n_docs > 0:
+            return AgentMatch(
+                agent_id=self.agent_id, score=0.90,
+                reasons=(f"documents:{n_docs}",),
+                requirement=AgentRequirement.OPTIONAL,
+                phase="pre_synthesis",
+            )
+        if n_docs == 0:
+            return AgentMatch(
+                agent_id=self.agent_id, score=0.10,
+                reasons=("no_documents",),
+                requirement=AgentRequirement.OPTIONAL,
+                phase="pre_synthesis",
+            )
         return AgentMatch(
-            agent_id=self.agent_id,
-            score=0.80,
-            reasons=("document_structure_parse",),
+            agent_id=self.agent_id, score=0.80,
+            reasons=("no_work_profile",),
             requirement=AgentRequirement.OPTIONAL,
             phase="pre_synthesis",
         )
@@ -255,12 +278,16 @@ class DocumentFileReader:
         invocation: AgentInvocation,
         runtime: Any,
     ) -> AgentInvocationResult:
+        """All sync I/O is delegated to asyncio.to_thread so the event
+        loop is never blocked by sqlite reads or doc parsing (Codex
+        PR-gate HOLD blocker on async safety)."""
+        import asyncio as _asyncio
         import time as _time
 
         t0 = _time.perf_counter()
         warnings: list[str] = []
         try:
-            inventory = self._list_inventory(runtime)
+            inventory = await _asyncio.to_thread(self._list_inventory, runtime)
         except Exception as exc:
             return AgentInvocationResult(
                 status="error",
@@ -275,24 +302,31 @@ class DocumentFileReader:
                 warnings=("no_documents",),
             )
 
+        # Read + parse each document on a worker thread. This keeps the
+        # event loop free for other concurrent investigations.
         artifacts: list[AgentArtifact] = []
-        for inv_row in inventory[: self.max_documents]:
+
+        def _read_and_parse(inv_row: Mapping[str, Any]) -> tuple[list[AgentArtifact], Optional[str]]:
             doc_id = inv_row.get("id") or inv_row.get("relative_path") or ""
             doc_path = inv_row.get("relative_path") or doc_id
             if not doc_id:
-                continue
+                return ([], None)
             try:
                 text = self._read_document_text(runtime, doc_path)
             except Exception as exc:
-                warnings.append(f"read_error:{doc_path}:{type(exc).__name__}")
-                continue
+                return ([], f"read_error:{doc_path}:{type(exc).__name__}")
             if not text:
-                continue
-
-            doc_artifacts = self._parse_document(
+                return ([], None)
+            arts = self._parse_document(
                 doc_id=str(doc_id), doc_path=str(doc_path), text=text,
             )
-            artifacts.extend(doc_artifacts)
+            return (arts, None)
+
+        for inv_row in inventory[: self.max_documents]:
+            arts, warn = await _asyncio.to_thread(_read_and_parse, inv_row)
+            artifacts.extend(arts)
+            if warn:
+                warnings.append(warn)
 
         return AgentInvocationResult(
             status="success",

@@ -157,6 +157,7 @@ class AgentInvocation:
     capability_tags: tuple[str, ...] = ()
     domain_profile_id: str = ""
     domain_profile_version: int = 0
+    work_profile: Mapping[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -104,23 +104,37 @@ class HhiMarketShareCalculator:
     # ------------------------------------------------------------------
 
     def match(self, invocation: AgentInvocation) -> Optional[AgentMatch]:
-        """Match when the task family signals HHI/market-share work."""
-        # We rely on capability-tag policy + the registry's phase filter.
-        # An additional defensive gate: agent only runs when the
-        # invocation's task touches antitrust/regulatory work.
+        """Work-aware match score (Codex PR-gate fix).
+
+        Returns high score (0.95) when there's actual market_row evidence
+        to compute on; low score (0.15) otherwise. The dispatcher's cap
+        is then a safety net, not the primary relevance gate.
+        """
         family = (invocation.execution_family or "").lower()
-        workflow = (invocation.workflow_kind or "").lower()
-        ok_family = family in {"investigate", "extract", "compare"} or not family
-        if not ok_family:
+        if family and family not in {"investigate", "extract", "compare"}:
             return None
-        # In phase 3 we don't gate by a dedicated antitrust signal — the
-        # agent reads market_row typed_evidence; if there are none, the
-        # invoke() returns success with zero artifacts. That's intentional:
-        # cheap to run, valuable when relevant.
+        # Sniff upstream evidence count from runtime_extras if present
+        # (engine pre-computes a work profile per invocation).
+        wp = invocation.work_profile or {}
+        n_market_rows = int(wp.get("market_row_count", -1))
+        if n_market_rows > 0:
+            return AgentMatch(
+                agent_id=self.agent_id, score=0.95,
+                reasons=(f"market_rows:{n_market_rows}",),
+                requirement=AgentRequirement.OPTIONAL,
+                phase="pre_synthesis",
+            )
+        if n_market_rows == 0:
+            return AgentMatch(
+                agent_id=self.agent_id, score=0.15,
+                reasons=("no_market_rows",),
+                requirement=AgentRequirement.OPTIONAL,
+                phase="pre_synthesis",
+            )
+        # Fall-through (no work profile available) — keep neutral score
         return AgentMatch(
-            agent_id=self.agent_id,
-            score=0.85,
-            reasons=("market_row_eligible",),
+            agent_id=self.agent_id, score=0.85,
+            reasons=("no_work_profile",),
             requirement=AgentRequirement.OPTIONAL,
             phase="pre_synthesis",
         )

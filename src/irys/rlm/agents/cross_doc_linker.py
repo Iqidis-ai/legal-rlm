@@ -112,10 +112,38 @@ class CrossDocLinker:
         family = (invocation.execution_family or "").lower()
         if family and family not in {"investigate", "extract", "compare"}:
             return None
+        wp = invocation.work_profile or {}
+        n_section_maps = int(wp.get("section_map_count", -1))
+        n_schedule_indexes = int(wp.get("schedule_index_count", -1))
+        n_docs = int(wp.get("document_inventory_count", -1))
+        n_actors = int(wp.get("actor_count", -1))
+        # Strong work signal: structure artifacts already exist to traverse
+        if n_section_maps > 0 or n_schedule_indexes > 0:
+            return AgentMatch(
+                agent_id=self.agent_id, score=0.90,
+                reasons=(f"section_maps:{n_section_maps},schedules:{n_schedule_indexes}",),
+                requirement=AgentRequirement.OPTIONAL,
+                phase="pre_synthesis",
+            )
+        # Medium signal: many actors to unify even without doc structure
+        if n_actors >= 3:
+            return AgentMatch(
+                agent_id=self.agent_id, score=0.50,
+                reasons=(f"actors:{n_actors}",),
+                requirement=AgentRequirement.OPTIONAL,
+                phase="pre_synthesis",
+            )
+        # Low: not much to link
+        if n_docs == 0 and n_actors == 0:
+            return AgentMatch(
+                agent_id=self.agent_id, score=0.05,
+                reasons=("nothing_to_link",),
+                requirement=AgentRequirement.OPTIONAL,
+                phase="pre_synthesis",
+            )
         return AgentMatch(
-            agent_id=self.agent_id,
-            score=0.78,
-            reasons=("cross_doc_linkage",),
+            agent_id=self.agent_id, score=0.78,
+            reasons=("no_work_profile",),
             requirement=AgentRequirement.OPTIONAL,
             phase="pre_synthesis",
         )

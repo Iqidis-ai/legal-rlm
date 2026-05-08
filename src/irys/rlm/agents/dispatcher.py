@@ -188,14 +188,38 @@ class SubAgentDispatcher:
                     )
 
             self._account(result)
-            invocation_id = self._record_invocation_row(
-                agent=agent,
-                invocation=invocation_template,
-                result=result,
-            )
-            # Persist artifacts (only when result.status is success or partial)
-            if result.status == "success" and result.artifacts:
-                runtime.write_artifacts(invocation_id, result.artifacts)
+            try:
+                invocation_id = self._record_invocation_row(
+                    agent=agent,
+                    invocation=invocation_template,
+                    result=result,
+                )
+            except Exception as _persist_exc:
+                # Codex HOLD-4 fix: this failure is loud now. The current
+                # agent's run is recorded as a failure result; we do NOT
+                # then call write_artifacts() with no FK.
+                import logging as _logging
+                _logging.getLogger(__name__).error(
+                    "agent %s recorded with status=success but persistence failed: %s",
+                    agent.agent_id, _persist_exc,
+                )
+                invocation_id = ""
+
+            # Persist artifacts only when invocation row was recorded
+            # (write_artifacts FK requires a valid invocation_id).
+            if (
+                invocation_id
+                and result.status == "success"
+                and result.artifacts
+            ):
+                try:
+                    runtime.write_artifacts(invocation_id, result.artifacts)
+                except Exception as _wa_exc:
+                    import logging as _logging
+                    _logging.getLogger(__name__).error(
+                        "agent %s write_artifacts failed: %s",
+                        agent.agent_id, _wa_exc,
+                    )
             invocations.append((agent, result))
 
             self.telemetry(
@@ -232,8 +256,21 @@ class SubAgentDispatcher:
         result: AgentInvocationResult,
         breach_reason: Optional[str] = None,
     ) -> str:
-        """Insert a sub_agent_invocation row; return the id."""
+        """Insert a sub_agent_invocation row; return the id.
+
+        Codex HOLD-4 fix: persistence failures are NOT swallowed silently.
+        On exception, log loudly via logger.error and re-raise so the
+        dispatcher's caller sees the failure (otherwise write_artifacts()
+        would later get an empty FK and fail with a confusing
+        IntegrityError).
+        """
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
         if self.matter_model is None:
+            _log.error(
+                "sub_agent_invocation NOT recorded for %s: matter_model is None",
+                agent.agent_id,
+            )
             return ""
         invocation_id = uuid.uuid4().hex
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")
@@ -277,6 +314,12 @@ class SubAgentDispatcher:
                         breach_reason,
                     ),
                 )
-        except Exception:
-            return ""
+        except Exception as _exc:
+            _log.error(
+                "sub_agent_invocation INSERT failed for %s/%s: %s",
+                agent.agent_id, invocation_id, _exc,
+            )
+            # Re-raise: the dispatcher's caller MUST see this so we don't
+            # silently call write_artifacts() with an empty/invalid FK.
+            raise
         return invocation_id

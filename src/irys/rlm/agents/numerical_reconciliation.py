@@ -133,10 +133,25 @@ class NumericalReconciliationAgent:
         family = (invocation.execution_family or "").lower()
         if family and family not in {"investigate", "extract", "compare"}:
             return None
+        wp = invocation.work_profile or {}
+        n_qoe = int(wp.get("qoe_line_item_count", -1))
+        if n_qoe > 0:
+            return AgentMatch(
+                agent_id=self.agent_id, score=0.95,
+                reasons=(f"qoe_line_items:{n_qoe}",),
+                requirement=AgentRequirement.OPTIONAL,
+                phase="pre_synthesis",
+            )
+        if n_qoe == 0:
+            return AgentMatch(
+                agent_id=self.agent_id, score=0.15,
+                reasons=("no_qoe_line_items",),
+                requirement=AgentRequirement.OPTIONAL,
+                phase="pre_synthesis",
+            )
         return AgentMatch(
-            agent_id=self.agent_id,
-            score=0.85,
-            reasons=("qoe_eligible",),
+            agent_id=self.agent_id, score=0.85,
+            reasons=("no_work_profile",),
             requirement=AgentRequirement.OPTIONAL,
             phase="pre_synthesis",
         )

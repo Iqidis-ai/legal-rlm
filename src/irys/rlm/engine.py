@@ -5439,6 +5439,89 @@ class RLMEngine:
 
         return "\n".join(sections) if sections else ""
 
+    def _compute_agent_work_profile(self) -> dict[str, int]:
+        """Snapshot upstream-evidence counts so agents can match() on
+        whether there is real work to do (Codex PR-gate work-aware-match
+        fix). Cheap COUNT queries — runs once per phase.
+
+        Schema notes (Codex round-2 fix):
+          - typed evidence lives in `typed_evidence_record` with
+            `record_kind` and `matter_id` columns.
+          - All matter-scoped tables (typed_evidence_record,
+            document_inventory, agent_artifact, actor) MUST be filtered
+            by matter_id to prevent cross-matter bleed.
+          - Failures are logged loudly — silent zero-counts mask schema
+            skew and were the original round-2 HOLD root cause.
+        """
+        profile: dict[str, int] = {}
+        if self._matter_model is None:
+            return profile
+        db = self._matter_model.db
+        matter_id = self._matter_model.matter_id
+
+        # typed_evidence_record (kind = market_row, qoe_line_item, cp_gap)
+        for record_kind, key in (
+            ("market_row", "market_row_count"),
+            ("qoe_line_item", "qoe_line_item_count"),
+            ("cp_gap", "cp_gap_count"),
+        ):
+            try:
+                row = db.execute(
+                    "SELECT COUNT(*) AS n FROM typed_evidence_record "
+                    "WHERE matter_id=? AND record_kind=?",
+                    (matter_id, record_kind),
+                ).fetchone()
+                profile[key] = int(row["n"]) if row else 0
+            except Exception as exc:
+                logger.warning(
+                    "work_profile typed_evidence_record(%s) failed: %s",
+                    record_kind, exc,
+                )
+                profile[key] = 0
+
+        # document_inventory (matter-scoped)
+        try:
+            row = db.execute(
+                "SELECT COUNT(*) AS n FROM document_inventory WHERE matter_id=?",
+                (matter_id,),
+            ).fetchone()
+            profile["document_inventory_count"] = int(row["n"]) if row else 0
+        except Exception as exc:
+            logger.warning("work_profile document_inventory failed: %s", exc)
+            profile["document_inventory_count"] = 0
+
+        # agent_artifact structure artifacts (matter-scoped)
+        for artifact_kind, key in (
+            ("document.section_map", "section_map_count"),
+            ("document.schedule_index", "schedule_index_count"),
+        ):
+            try:
+                row = db.execute(
+                    "SELECT COUNT(*) AS n FROM agent_artifact "
+                    "WHERE matter_id=? AND artifact_kind=?",
+                    (matter_id, artifact_kind),
+                ).fetchone()
+                profile[key] = int(row["n"]) if row else 0
+            except Exception as exc:
+                logger.warning(
+                    "work_profile agent_artifact(%s) failed: %s",
+                    artifact_kind, exc,
+                )
+                profile[key] = 0
+
+        # actor (matter-scoped)
+        try:
+            row = db.execute(
+                "SELECT COUNT(*) AS n FROM actor WHERE matter_id=?",
+                (matter_id,),
+            ).fetchone()
+            profile["actor_count"] = int(row["n"]) if row else 0
+        except Exception as exc:
+            logger.warning("work_profile actor failed: %s", exc)
+            profile["actor_count"] = 0
+
+        return profile
+
     async def _run_pre_synthesis_operators(
         self, state: "InvestigationState",
     ) -> None:
@@ -5489,9 +5572,17 @@ class RLMEngine:
         persona_id = sel.persona_id if sel else None
         persona_policy = sel.policy if sel else None
 
+        # Compute upstream-evidence work profile so agents can score
+        # match() relevance against actual artifact counts (Codex PR-gate
+        # work-aware-match fix).
+        work_profile = self._compute_agent_work_profile()
         invocation = AgentInvocation(
             matter_id=self._matter_model.matter_id,
-            run_id=str(getattr(state, "run_id", "") or ""),
+            run_id=str(
+                getattr(state, "_run_id", None)
+                or getattr(state, "run_id", None)
+                or ""
+            ),
             agent_id="dispatcher",
             phase="pre_synthesis",
             persona_id=persona_id,
@@ -5502,11 +5593,14 @@ class RLMEngine:
             budget=budget,
             input_refs=(),
             input_hash=str(getattr(state, "query", "") or "")[:64],
+            work_profile=work_profile,
         )
+        # Codex HOLD-5 fix: engine stores Gemini client as self.client,
+        # not self._llm_client.
         dispatcher = SubAgentDispatcher(
             registry=registry,
             matter_model=self._matter_model,
-            llm_client=getattr(self, "_llm_client", None),
+            llm_client=getattr(self, "client", None),
             runtime_extras={"_repo": repo} if repo is not None else None,
         )
         try:
@@ -5535,21 +5629,36 @@ class RLMEngine:
     ) -> str:
         """Render synthesis-context sections from answer-ingredient agent artifacts.
 
-        Pulls all artifacts with synthesis_visibility='answer_ingredient'
-        from this matter. Groups by artifact_kind. Renders compact tables.
-        Synthesis Context Principle: artifacts are answer ingredients,
-        not gap metadata.
+        Run-scoped: only artifacts produced by the current investigation's
+        sub_agent_invocation rows are included (Codex PR-gate HOLD-1 fix).
+        Groups by artifact_kind. Renders compact tables. Synthesis Context
+        Principle: artifacts are answer ingredients, not gap metadata.
+
+        Also writes synthesis_input_artifact rows for every artifact
+        included in the rendered context (Codex PR-gate HOLD-2 fix —
+        populates the audit trail the v72 schema advertises).
         """
         if self._matter_model is None:
             return ""
+        run_id = str(
+            getattr(state, "_run_id", None)
+            or getattr(state, "run_id", None)
+            or ""
+        )
         try:
             rows = self._matter_model.db.execute(
-                """SELECT artifact_kind, artifact_key, label, payload_json,
-                          confidence, verification_state
-                   FROM agent_artifact
-                   WHERE matter_id=? AND synthesis_visibility='answer_ingredient'
-                   ORDER BY artifact_kind, created_at DESC""",
-                (self._matter_model.matter_id,),
+                """SELECT aa.id AS artifact_id, aa.artifact_kind,
+                          aa.artifact_key, aa.label, aa.payload_json,
+                          aa.confidence, aa.verification_state
+                   FROM agent_artifact aa
+                   JOIN sub_agent_invocation sai
+                     ON sai.id = aa.invocation_id
+                    AND sai.matter_id = aa.matter_id
+                   WHERE aa.matter_id=?
+                     AND COALESCE(sai.run_id, '') = ?
+                     AND aa.synthesis_visibility='answer_ingredient'
+                   ORDER BY aa.artifact_kind, aa.created_at DESC""",
+                (self._matter_model.matter_id, run_id),
             ).fetchall()
         except Exception:
             return ""
@@ -5567,9 +5676,40 @@ class RLMEngine:
                 "confidence": r["confidence"],
                 "verification_state": r["verification_state"],
                 "payload": payload,
+                "_artifact_id": r["artifact_id"],
             })
 
+        # Audit-trail writes (Codex HOLD-2 fix): every artifact included in
+        # the synthesis context gets a synthesis_input_artifact row so the
+        # v72 audit trail is real, not advertised.
+        def _record_synthesis_input(
+            artifact_id: str, section_key: str, reason: str,
+        ) -> None:
+            try:
+                import uuid as _uuid
+                from datetime import datetime, timezone
+                self._matter_model.db.execute(
+                    """INSERT OR IGNORE INTO synthesis_input_artifact
+                       (id, matter_id, run_id, synthesis_output_id,
+                        context_section_key, context_section_hash,
+                        artifact_id, inclusion_reason, included_at)
+                       VALUES (?, ?, ?, NULL, ?, NULL, ?, ?, ?)""",
+                    (
+                        _uuid.uuid4().hex,
+                        self._matter_model.matter_id,
+                        run_id,
+                        section_key,
+                        artifact_id,
+                        reason,
+                        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f"),
+                    ),
+                )
+            except Exception as _ex:
+                logger.debug("synthesis_input_artifact write failed: %s", _ex)
+
         sections: list[str] = []
+        rendered_artifact_ids: list[tuple[str, str]] = []  # (artifact_id, section_key)
+
         # HHI calculations table
         if "hhi.calculation" in by_kind:
             lines = [
@@ -5595,6 +5735,7 @@ class RLMEngine:
                         disc_str,
                     ]) + " |"
                 )
+                rendered_artifact_ids.append((art["_artifact_id"], "operator_artifacts.hhi"))
             sections.append("\n".join(lines))
 
         # CP coverage report (per required document)
@@ -5622,6 +5763,7 @@ class RLMEngine:
                             str(it.get("evidence_document") or "—"),
                         ]) + " |"
                     )
+                rendered_artifact_ids.append((art["_artifact_id"], "operator_artifacts.cp"))
                 sections.append("\n".join(lines))
 
         # Numerical reconciliation table
@@ -5646,7 +5788,16 @@ class RLMEngine:
                         "✓" if p.get("bridge_consistent") else "⚠ inconsistent",
                     ]) + " |"
                 )
+                rendered_artifact_ids.append((art["_artifact_id"], "operator_artifacts.reconciliation"))
             sections.append("\n".join(lines))
+
+        # Flush audit-trail rows for every artifact actually included
+        # in the synthesis context (Codex HOLD-2 fix).
+        for art_id, section_key in rendered_artifact_ids:
+            if art_id:
+                _record_synthesis_input(
+                    art_id, section_key, "rendered_into_synthesis_context",
+                )
 
         return "\n\n".join(sections) if sections else ""
 

@@ -106,10 +106,25 @@ class CpSectionExtractorAgent:
         family = (invocation.execution_family or "").lower()
         if family and family not in {"investigate", "extract", "compare"}:
             return None
+        wp = invocation.work_profile or {}
+        n_cp = int(wp.get("cp_gap_count", -1))
+        if n_cp > 0:
+            return AgentMatch(
+                agent_id=self.agent_id, score=0.95,
+                reasons=(f"cp_gaps:{n_cp}",),
+                requirement=AgentRequirement.OPTIONAL,
+                phase="pre_synthesis",
+            )
+        if n_cp == 0:
+            return AgentMatch(
+                agent_id=self.agent_id, score=0.20,
+                reasons=("no_cp_gaps",),
+                requirement=AgentRequirement.OPTIONAL,
+                phase="pre_synthesis",
+            )
         return AgentMatch(
-            agent_id=self.agent_id,
-            score=0.85,
-            reasons=("cp_gap_eligible",),
+            agent_id=self.agent_id, score=0.85,
+            reasons=("no_work_profile",),
             requirement=AgentRequirement.OPTIONAL,
             phase="pre_synthesis",
         )
