@@ -5460,7 +5460,8 @@ class RLMEngine:
         matter_id = self._matter_model.matter_id
 
         # typed_evidence_record (kind = market_row, qoe_line_item, cp_gap,
-        # task_criteria, task_deliverable_spec, obligation_row)
+        # task_criteria, task_deliverable_spec, obligation_row,
+        # contract_provision)
         for record_kind, key in (
             ("market_row", "market_row_count"),
             ("qoe_line_item", "qoe_line_item_count"),
@@ -5468,6 +5469,8 @@ class RLMEngine:
             ("task_criteria", "task_criteria_count"),
             ("task_deliverable_spec", "task_deliverable_spec_count"),
             ("obligation_row", "obligation_row_count"),
+            ("contract_provision", "contract_provision_count"),
+            ("schedule_entry", "schedule_entry_count"),
         ):
             try:
                 row = db.execute(
@@ -5494,10 +5497,20 @@ class RLMEngine:
             logger.warning("work_profile document_inventory failed: %s", exc)
             profile["document_inventory_count"] = 0
 
-        # agent_artifact structure artifacts (matter-scoped)
+        # agent_artifact structure artifacts (matter-scoped). Includes
+        # both the audit-only `document.*` / `link.*` parsers AND the
+        # term_grid operator's outputs so downstream consumers can
+        # gate on their presence.
         for artifact_kind, key in (
             ("document.section_map", "section_map_count"),
             ("document.schedule_index", "schedule_index_count"),
+            # alias the same count under the term-grid operator's
+            # work-profile key (Codex holistic review action item 3:
+            # work-profile declarations should move toward operator-
+            # owned metadata; this is a transitional step).
+            ("document.section_map", "document_section_map_count"),
+            ("term_grid.v1", "term_grid_count"),
+            ("conditional_rule_tree.v1", "conditional_rule_tree_count"),
         ):
             try:
                 row = db.execute(
@@ -5598,8 +5611,24 @@ class RLMEngine:
                     "what coverage", "what's the coverage",
                 )
             ))
+            # term_grid operator reads this to detect term-extraction intent
+            work_profile["query_text_normalized"] = _query_lc[:600]
         except Exception:
             work_profile["query_asks_completeness"] = 0
+            work_profile["query_text_normalized"] = ""
+
+        # term-grid-specific obligation counter — number of obligation_row
+        # rows whose payload requests `term_grid.v1` as expected_artifact_kind
+        try:
+            row = self._matter_model.db.execute(
+                """SELECT COUNT(*) AS n FROM typed_evidence_record
+                   WHERE matter_id=? AND record_kind='obligation_row'
+                     AND payload_json LIKE ?""",
+                (self._matter_model.matter_id, '%"term_grid.v1"%'),
+            ).fetchone()
+            work_profile["term_grid_obligation_count"] = int(row["n"]) if row else 0
+        except Exception:
+            work_profile["term_grid_obligation_count"] = 0
 
         # Codex Phase-2 r1 (Tier 5) blocker fix: build TaskView, family,
         # and workflow_kind from the live ExecutionContract instead of
@@ -5897,6 +5926,68 @@ class RLMEngine:
                     ]
                 rendered_artifact_ids.append(
                     (art["_artifact_id"], "operator_artifacts.obligation")
+                )
+                sections.append("\n".join(lines))
+
+        # Term grid (source-grounded clause/obligation rows from
+        # StructuredTermGridExtractor). Pre-synthesis ingredient — feeds
+        # synthesis with normalized term rows so the LLM doesn't have to
+        # re-extract from raw prose.
+        if "term_grid.v1" in by_kind:
+            for art in by_kind["term_grid.v1"]:
+                p = art["payload"] or {}
+                rows_p = p.get("rows") or []
+                if not rows_p:
+                    continue
+                lines = [
+                    f"TERM GRID — {len(rows_p)} source-grounded clauses:",
+                    "",
+                    "| Section | Topic | Actor | Obligation/Right | Trigger | Exception | Period | Consequence |",
+                    "|---|---|---|---|---|---|---|---|",
+                ]
+                for r in rows_p[:50]:
+                    lines.append(
+                        "| " + " | ".join([
+                            str(r.get("section_ref") or "—")[:40],
+                            str(r.get("topic") or "—")[:30],
+                            str(r.get("actor") or "—")[:30],
+                            str(r.get("obligation_or_right") or "—")[:80],
+                            str(r.get("trigger") or "—")[:50],
+                            str(r.get("exception") or "—")[:50],
+                            str(r.get("date_or_period") or "—")[:30],
+                            str(r.get("consequence") or "—")[:50],
+                        ]) + " |"
+                    )
+                rendered_artifact_ids.append(
+                    (art["_artifact_id"], "operator_artifacts.term_grid")
+                )
+                sections.append("\n".join(lines))
+
+        # Conditional rule tree (if/then/unless/timing patterns extracted
+        # from source clauses). Compact rule list for synthesis.
+        if "conditional_rule_tree.v1" in by_kind:
+            for art in by_kind["conditional_rule_tree.v1"]:
+                p = art["payload"] or {}
+                rules_p = p.get("rules") or []
+                if not rules_p:
+                    continue
+                lines = [f"CONDITIONAL RULES — {len(rules_p)}:"]
+                for r in rules_p[:30]:
+                    if_part = " AND ".join(str(c) for c in (r.get("if") or [])[:3])
+                    then_part = " AND ".join(str(c) for c in (r.get("then") or [])[:3])
+                    unless_part = " OR ".join(str(c) for c in (r.get("unless") or [])[:2])
+                    timing = r.get("timing") or ""
+                    line = f"- IF {if_part} THEN {then_part}"
+                    if unless_part:
+                        line += f" UNLESS {unless_part}"
+                    if timing:
+                        line += f" (timing: {timing})"
+                    sec = r.get("section_ref") or ""
+                    if sec:
+                        line += f" — {sec}"
+                    lines.append(line)
+                rendered_artifact_ids.append(
+                    (art["_artifact_id"], "operator_artifacts.rule_tree")
                 )
                 sections.append("\n".join(lines))
 

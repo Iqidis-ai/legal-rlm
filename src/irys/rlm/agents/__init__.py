@@ -38,6 +38,7 @@ from .cp_section_extractor import CpSectionExtractorAgent
 from .file_reader import DocumentFileReader
 from .cross_doc_linker import CrossDocLinker
 from .obligation_coverage import ObligationCoverageMatrix
+from .term_grid import StructuredTermGridExtractor
 
 
 def default_registry() -> SubAgentRegistry:
@@ -54,8 +55,14 @@ def default_registry() -> SubAgentRegistry:
         # Coverage operators run first so downstream operators / synthesis
         # see the obligation matrix before producing answers.
         ObligationCoverageMatrix(),
+        # Source structure parsers: section maps + cross-doc links feed
+        # downstream extractors.
         DocumentFileReader(),
         CrossDocLinker(),
+        # Term/rule extractor consumes section maps + obligation rows
+        # and produces source-grounded clauses for synthesis.
+        StructuredTermGridExtractor(),
+        # Deterministic compute operators consume typed evidence rows.
         HhiMarketShareCalculator(),
         NumericalReconciliationAgent(),
         CpSectionExtractorAgent(),
@@ -104,6 +111,7 @@ __all__ = (
     "HhiMarketShareCalculator",
     "NumericalReconciliationAgent",
     "ObligationCoverageMatrix",
+    "StructuredTermGridExtractor",
     "AgentInputRef",
     "AgentInvocation",
     "AgentInvocationResult",
