@@ -5585,10 +5585,17 @@ class RLMEngine:
         work_profile = self._compute_agent_work_profile()
         try:
             _query_lc = (getattr(state, "query", "") or "").lower()
+            # Same tight phrase match as the renderer (engine.py
+            # `_build_agent_artifact_summary`). Bare keywords like
+            # "complete" / "coverage" are too noisy on LAB-style prose.
             work_profile["query_asks_completeness"] = int(any(
-                k in _query_lc for k in (
-                    "missing", "complete", "completeness", "coverage",
-                    "checklist", "validation", "gap", "gaps",
+                phrase in _query_lc for phrase in (
+                    "what gaps", "what is missing", "what's missing",
+                    "what are missing", "list missing", "list the missing",
+                    "missing items", "missing requirements",
+                    "coverage gaps", "coverage report", "coverage audit",
+                    "checklist", "validation report", "validation audit",
+                    "what coverage", "what's the coverage",
                 )
             ))
         except Exception:
@@ -5813,10 +5820,22 @@ class RLMEngine:
         )
         _CONCRETE_GAP_STATUSES = ("missing", "partial", "repair_required")
         if "obligation.coverage_matrix.v1" in by_kind:
+            # Codex holistic review action item 4: bare keywords like
+            # "complete" and "coverage" trigger on benign LAB prose
+            # ("draft a complete memo with comprehensive coverage..."),
+            # which made smoke v8 still render 11/12 pending matrices and
+            # hurt synthesis. Match only on explicit gap-analysis phrases
+            # — actual user requests for completeness audit.
+            _q = (state.query or "").lower()
             user_asks_completeness = any(
-                w in (state.query or "").lower()
-                for w in ("missing", "complete", "coverage",
-                          "gap", "checklist", "validation")
+                phrase in _q for phrase in (
+                    "what gaps", "what is missing", "what's missing",
+                    "what are missing", "list missing", "list the missing",
+                    "missing items", "missing requirements",
+                    "coverage gaps", "coverage report", "coverage audit",
+                    "checklist", "validation report", "validation audit",
+                    "what coverage", "what's the coverage",
+                )
             )
             for art in by_kind["obligation.coverage_matrix.v1"]:
                 p = art["payload"] or {}

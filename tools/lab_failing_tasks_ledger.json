@@ -1,240 +1,192 @@
 {
   "failing_tasks": {
-    "antitrust-competition/draft-antitrust-compliance-training-materials": {
-      "ratio": 0.4,
-      "n_passed": 24,
-      "n_criteria": 60,
-      "scored_run": "20260507-180703"
-    },
     "antitrust-competition/extract-pricing-data-from-document-production": {
-      "ratio": 0.3788,
-      "n_passed": 25,
+      "ratio": 0.3636,
+      "n_passed": 24,
       "n_criteria": 66,
-      "scored_run": "20260507-182556"
+      "scored_run": "20260508-155922"
     },
     "antitrust-competition/prepare-antitrust-risk-assessment": {
-      "ratio": 0.4316,
-      "n_passed": 41,
+      "ratio": 0.3263,
+      "n_passed": 31,
       "n_criteria": 95,
-      "scored_run": "20260507-183436"
+      "scored_run": "20260508-155923"
     },
     "banking-finance/credit-agreement-covenant-extraction": {
-      "ratio": 0.4533,
-      "n_passed": 34,
+      "ratio": 0.48,
+      "n_passed": 36,
       "n_criteria": 75,
-      "scored_run": "20260507-223145"
+      "scored_run": "20260508-155923"
     },
     "banking-finance/draft-credit-compliance-cert": {
-      "ratio": 0.2989,
-      "n_passed": 26,
+      "ratio": 0.2759,
+      "n_passed": 24,
       "n_criteria": 87,
-      "scored_run": "20260507-223922"
-    },
-    "banking-finance/draft-forbearance-agreement": {
-      "ratio": 0.4932,
-      "n_passed": 36,
-      "n_criteria": 73,
-      "scored_run": "20260507-224134"
-    },
-    "banking-finance/draft-intercreditor-agreement": {
-      "ratio": 0.4286,
-      "n_passed": 30,
-      "n_criteria": 70,
-      "scored_run": "20260507-224518"
+      "scored_run": "20260508-155924"
     },
     "banking-finance/extract-credit-agreement-covenants": {
       "ratio": 0.4154,
       "n_passed": 27,
       "n_criteria": 65,
-      "scored_run": "20260507-225212"
+      "scored_run": "20260508-125414"
     },
     "banking-finance/extract-intercreditor-agreement-terms": {
-      "ratio": 0.3678,
-      "n_passed": 32,
+      "ratio": 0.3563,
+      "n_passed": 31,
       "n_criteria": 87,
-      "scored_run": "20260507-225444"
+      "scored_run": "20260508-155925"
+    },
+    "bankruptcy-restructuring/draft-first-day-motions-package": {
+      "ratio": 0.2016,
+      "n_passed": 26,
+      "n_criteria": 129,
+      "scored_run": "20260508-140722"
+    },
+    "corporate-governance/draft-internal-ai-acceptable-use-policy": {
+      "ratio": 0.1864,
+      "n_passed": 11,
+      "n_criteria": 59,
+      "scored_run": "20260508-141335"
     },
     "corporate-ma/analyze-qoe-reconciliation": {
-      "ratio": 0.3588,
-      "n_passed": 47,
+      "ratio": 0.4351,
+      "n_passed": 57,
       "n_criteria": 131,
-      "scored_run": "20260507-231520"
-    },
-    "corporate-ma/analyze-transition-services-agreement-markup": {
-      "ratio": 0.4533,
-      "n_passed": 34,
-      "n_criteria": 75,
-      "scored_run": "20260507-231625"
-    },
-    "corporate-ma/compare-acquisition-agreement-indemnification-provisions-against-precedent-database": {
-      "ratio": 0.4918,
-      "n_passed": 30,
-      "n_criteria": 61,
-      "scored_run": "20260507-231915"
-    },
-    "corporate-ma/compare-proposed-acquisition-structure-against-precedent-transaction-summaries": {
-      "ratio": 0.431,
-      "n_passed": 25,
-      "n_criteria": 58,
-      "scored_run": "20260507-233124"
+      "scored_run": "20260508-160544"
     },
     "corporate-ma/draft-acquisition-due-diligence": {
-      "ratio": 0.3594,
-      "n_passed": 23,
+      "ratio": 0.2812,
+      "n_passed": 18,
       "n_criteria": 64,
-      "scored_run": "20260507-200823"
+      "scored_run": "20260508-160725"
     },
     "corporate-ma/draft-apa-ancillaries": {
-      "ratio": 0.1273,
-      "n_passed": 21,
+      "ratio": 0.1515,
+      "n_passed": 25,
       "n_criteria": 165,
-      "scored_run": "20260507-200923"
-    },
-    "corporate-ma/draft-board-and-stockholder-consent-resolutions-for-acquisition-of-target-company": {
-      "ratio": 0.4783,
-      "n_passed": 33,
-      "n_criteria": 69,
-      "scored_run": "20260507-201018"
-    },
-    "corporate-ma/draft-closing-checklist": {
-      "ratio": 0.3243,
-      "n_passed": 36,
-      "n_criteria": 111,
-      "scored_run": "20260507-201203"
+      "scored_run": "20260508-141959"
     },
     "corporate-ma/draft-disclosure-schedule-preparation": {
-      "ratio": 0.1845,
-      "n_passed": 31,
+      "ratio": 0.2798,
+      "n_passed": 47,
       "n_criteria": 168,
-      "scored_run": "20260507-201636"
+      "scored_run": "20260508-161017"
     },
     "corporate-ma/draft-disclosure-schedules": {
-      "ratio": 0.1818,
-      "n_passed": 16,
+      "ratio": 0.2045,
+      "n_passed": 18,
       "n_criteria": 88,
-      "scored_run": "20260507-201847"
-    },
-    "corporate-ma/draft-markup-of-transition-services-agreement-tsa": {
-      "ratio": 0.2321,
-      "n_passed": 13,
-      "n_criteria": 56,
-      "scored_run": "20260507-204757"
-    },
-    "corporate-ma/draft-ppa-memo": {
-      "ratio": 0.4444,
-      "n_passed": 28,
-      "n_criteria": 63,
-      "scored_run": "20260507-204852"
+      "scored_run": "20260508-161120"
     },
     "corporate-ma/draft-spa-drafting": {
-      "ratio": 0.3557,
-      "n_passed": 53,
+      "ratio": 0.3356,
+      "n_passed": 50,
       "n_criteria": 149,
-      "scored_run": "20260507-205233"
+      "scored_run": "20260508-161329"
     },
     "corporate-ma/draft-stock-purchase-agreement": {
-      "ratio": 0.3077,
-      "n_passed": 36,
+      "ratio": 0.3162,
+      "n_passed": 37,
       "n_criteria": 117,
-      "scored_run": "20260507-205927"
+      "scored_run": "20260508-161349"
     },
     "corporate-ma/draft-third-party-consent-tracking": {
-      "ratio": 0.419,
-      "n_passed": 44,
+      "ratio": 0.3714,
+      "n_passed": 39,
       "n_criteria": 105,
-      "scored_run": "20260507-210143"
-    },
-    "corporate-ma/extract-credit-agreement-covenants": {
-      "ratio": 0.3971,
-      "n_passed": 27,
-      "n_criteria": 68,
-      "scored_run": "20260507-211002"
-    },
-    "corporate-ma/extract-payoff-and-release-requirements-from-credit-facilities": {
-      "ratio": 0.4308,
-      "n_passed": 28,
-      "n_criteria": 65,
-      "scored_run": "20260507-211246"
-    },
-    "corporate-ma/extract-post-closing-obligations": {
-      "ratio": 0.4921,
-      "n_passed": 31,
-      "n_criteria": 63,
-      "scored_run": "20260507-211335"
+      "scored_run": "20260508-142242"
     },
     "corporate-ma/flag-scope-creep-charges-in-transactional-matter-invoice": {
-      "ratio": 0.4043,
-      "n_passed": 19,
+      "ratio": 0.3617,
+      "n_passed": 17,
       "n_criteria": 47,
-      "scored_run": "20260507-211442"
-    },
-    "corporate-ma/identify-disclosure-requirements-based-on-ma-agreement": {
-      "ratio": 0.3231,
-      "n_passed": 21,
-      "n_criteria": 65,
-      "scored_run": "20260507-211815"
-    },
-    "corporate-ma/identify-issues-in-counterpartys-draft-stock-purchase-agreement": {
-      "ratio": 0.4906,
-      "n_passed": 26,
-      "n_criteria": 53,
-      "scored_run": "20260507-212128"
-    },
-    "corporate-ma/identify-issues-in-portfolio-company-contracts": {
-      "ratio": 0.4828,
-      "n_passed": 28,
-      "n_criteria": 58,
-      "scored_run": "20260507-212301"
-    },
-    "corporate-ma/identify-lpa-issues": {
-      "ratio": 0.459,
-      "n_passed": 28,
-      "n_criteria": 61,
-      "scored_run": "20260507-212431"
+      "scored_run": "20260508-142429"
     },
     "corporate-ma/identify-tax-issues-in-target-company-pre": {
       "ratio": 0.4118,
       "n_passed": 21,
       "n_criteria": 51,
-      "scored_run": "20260507-213306"
+      "scored_run": "20260508-142528"
     },
     "corporate-ma/prepare-disclosure-schedule-for-intellectual-property-representation-and-warranty": {
-      "ratio": 0.4688,
-      "n_passed": 30,
+      "ratio": 0.4219,
+      "n_passed": 27,
       "n_criteria": 64,
-      "scored_run": "20260507-213822"
+      "scored_run": "20260508-161845"
     },
     "corporate-ma/review-data-room-red-flag-review": {
-      "ratio": 0.3824,
-      "n_passed": 26,
+      "ratio": 0.3971,
+      "n_passed": 27,
       "n_criteria": 68,
-      "scored_run": "20260507-213934"
+      "scored_run": "20260508-142927"
     },
-    "corporate-ma/review-pe-acquisition-target-contracts": {
-      "ratio": 0.4167,
-      "n_passed": 35,
-      "n_criteria": 84,
-      "scored_run": "20260507-214818"
+    "energy-natural-resources/draft-engineering-procurement-construction-contract": {
+      "ratio": 0.4494,
+      "n_passed": 40,
+      "n_criteria": 89,
+      "scored_run": "20260508-162241"
     },
-    "corporate-ma/summarize-key-legal-issues-from-data-room-document-review": {
-      "ratio": 0.4815,
-      "n_passed": 26,
-      "n_criteria": 54,
-      "scored_run": "20260507-215303"
+    "environmental-esg/extract-environmental-liabilities-from-target-disclosure-schedules": {
+      "ratio": 0.3462,
+      "n_passed": 27,
+      "n_criteria": 78,
+      "scored_run": "20260508-162315"
     },
-    "corporate-ma/synthesize-disclosure-schedules-against-acquisition-agreement": {
-      "ratio": 0.4468,
+    "intellectual-property/draft-discovery-requests": {
+      "ratio": 0.3387,
       "n_passed": 21,
-      "n_criteria": 47,
-      "scored_run": "20260507-215538"
+      "n_criteria": 62,
+      "scored_run": "20260508-162507"
     },
-    "corporate-ma/track-third-party-consents": {
-      "ratio": 0.4128,
-      "n_passed": 45,
-      "n_criteria": 109,
-      "scored_run": "20260507-215813"
+    "intellectual-property/draft-joint-development-agreement": {
+      "ratio": 0.4356,
+      "n_passed": 44,
+      "n_criteria": 101,
+      "scored_run": "20260508-162720"
+    },
+    "intellectual-property/draft-markup-of-counterparty-master-services-agreement": {
+      "ratio": 0.0286,
+      "n_passed": 2,
+      "n_criteria": 70,
+      "scored_run": "20260508-133735"
+    },
+    "intellectual-property/extract-ip-tech-transactions": {
+      "ratio": 0.427,
+      "n_passed": 38,
+      "n_criteria": 89,
+      "scored_run": "20260508-162824"
+    },
+    "international-trade-sanctions/extract-international-trade-sanctions": {
+      "ratio": 0.4857,
+      "n_passed": 34,
+      "n_criteria": 70,
+      "scored_run": "20260508-163250"
+    },
+    "litigation-dispute-resolution/draft-motion-to-dismiss-brief": {
+      "ratio": 0.1798,
+      "n_passed": 16,
+      "n_criteria": 89,
+      "scored_run": "20260508-163451"
+    },
+    "litigation-dispute-resolution/extract-key-admissions-from-deposition-transcript": {
+      "ratio": 0.3913,
+      "n_passed": 18,
+      "n_criteria": 46,
+      "scored_run": "20260508-163525"
+    },
+    "structured-finance-securitization/compare-offering-memorandum-against-indenture": {
+      "ratio": 0.4865,
+      "n_passed": 18,
+      "n_criteria": 37,
+      "scored_run": "20260508-163932"
+    },
+    "trusts-estates-private-client/extract-contested-divorce-asset-extraction": {
+      "ratio": 0.493,
+      "n_passed": 35,
+      "n_criteria": 71,
+      "scored_run": "20260508-145213"
     }
   },
-  "last_refreshed_at": "2026-05-08T03:42:23Z",
+  "last_refreshed_at": "2026-05-08T20:53:50Z",
   "threshold": 0.5
 }

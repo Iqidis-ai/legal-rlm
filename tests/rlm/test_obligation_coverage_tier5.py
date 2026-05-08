@@ -742,6 +742,42 @@ def test_concrete_missing_artifact_renders_into_synthesis():
     )
 
 
+def test_bare_keywords_complete_or_coverage_do_not_trigger_render():
+    """Codex holistic review fix: bare keywords like 'complete' or
+    'coverage' appear in benign LAB prose ('draft a complete memo with
+    comprehensive coverage'). They MUST NOT trigger pending-matrix
+    rendering — only explicit gap-analysis phrases do."""
+    from irys.rlm.engine import RLMEngine
+    from irys.rlm.state import InvestigationState
+    from irys.rlm.governance import ExecutionContract
+
+    matter = MatterModel.open_in_memory()
+    eng = RLMEngine.__new__(RLMEngine)
+    eng._matter_model = matter
+    eng.client = _FakeLLMClient(json_response=_hospital_antitrust_response())
+
+    # Common LAB-style prose with bare keywords that are NOT explicit
+    # completeness asks
+    state = InvestigationState.create(
+        "Draft a complete antitrust memo with comprehensive coverage of "
+        "the proposed acquisition.",
+        "/tmp/repo",
+    )
+    state._run_id = "bare-keyword-test"
+    state.execution_contract = ExecutionContract(
+        family="deliverable",
+        workflow_kind="drafting",
+        output_contract={"task_spec": {"task_type": "antitrust",
+                                        "answer_shape": "memo"}},
+    )
+    asyncio.run(eng._run_pre_synthesis_operators(state))
+    summary = eng._build_agent_artifact_summary(state)
+    assert "OBLIGATION COVERAGE" not in summary, (
+        f"bare keywords 'complete' / 'coverage' must NOT trigger "
+        f"pending-matrix rendering; got {summary[:200]!r}"
+    )
+
+
 def test_completeness_query_renders_pending_rows_explicitly():
     """When the user explicitly asks about completeness/coverage, the
     renderer should show pending rows so they can be addressed."""
