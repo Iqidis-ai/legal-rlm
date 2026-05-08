@@ -1,6 +1,27 @@
 # Irys RLM - Git Ignore File
 # Prevents sensitive data and temporary files from being committed
 
+# Local-only research workspace (Codex idle-time investigations, design notes,
+# strategic analysis). Never commit — these are private to this repo.
+research/
+
+# External benchmark datasets (downloaded; very large; never commit)
+benchmarks/external/data/
+benchmarks/external/results/
+benchmarks/external/__pycache__/
+
+# Stale per-cycle dev artifacts in tools/ (failure analyses, one-off
+# scripts, scratch). The active runners are tracked: lab_smoke.py,
+# lab_benchmark.py, run_all_gates.py, etc. Anything matching these
+# patterns is consumed-and-thrown.
+tools/lab_failure_analysis*.txt
+tools/lab_failures_round*.txt
+tools/antitrust_failure_analysis.md
+tools/benchmark_failures_round*.md
+tools/sweep_review_prompt.md
+tools/rerun_failed_*.sh
+tools/score_v*.sh
+
 # Python
 __pycache__/
 *.py[cod]

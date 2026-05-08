@@ -5459,11 +5459,15 @@ class RLMEngine:
         db = self._matter_model.db
         matter_id = self._matter_model.matter_id
 
-        # typed_evidence_record (kind = market_row, qoe_line_item, cp_gap)
+        # typed_evidence_record (kind = market_row, qoe_line_item, cp_gap,
+        # task_criteria, task_deliverable_spec, obligation_row)
         for record_kind, key in (
             ("market_row", "market_row_count"),
             ("qoe_line_item", "qoe_line_item_count"),
             ("cp_gap", "cp_gap_count"),
+            ("task_criteria", "task_criteria_count"),
+            ("task_deliverable_spec", "task_deliverable_spec_count"),
+            ("obligation_row", "obligation_row_count"),
         ):
             try:
                 row = db.execute(
@@ -5575,7 +5579,62 @@ class RLMEngine:
         # Compute upstream-evidence work profile so agents can score
         # match() relevance against actual artifact counts (Codex PR-gate
         # work-aware-match fix).
+        # Codex Phase-2 r1 (Tier 5) blocker fix: also expose
+        # `query_asks_completeness` so match() can route read/query
+        # completeness prompts to the obligation operator.
         work_profile = self._compute_agent_work_profile()
+        try:
+            _query_lc = (getattr(state, "query", "") or "").lower()
+            work_profile["query_asks_completeness"] = int(any(
+                k in _query_lc for k in (
+                    "missing", "complete", "completeness", "coverage",
+                    "checklist", "validation", "gap", "gaps",
+                )
+            ))
+        except Exception:
+            work_profile["query_asks_completeness"] = 0
+
+        # Codex Phase-2 r1 (Tier 5) blocker fix: build TaskView, family,
+        # and workflow_kind from the live ExecutionContract instead of
+        # hardcoding empty defaults. Without this, every operator phase
+        # invocation looks like a generic investigate/narrative run and
+        # Tier 5 (which gates on family/answer_shape) never fires for
+        # real fuzzy deliverable prompts.
+        contract = getattr(state, "execution_contract", None)
+        if contract is not None:
+            execution_family = (
+                getattr(contract, "family", None) or "investigate"
+            )
+            workflow_kind = (
+                getattr(contract, "workflow_kind", None) or "analysis"
+            )
+            try:
+                output_contract = getattr(contract, "output_contract", {}) or {}
+                ts_dict = output_contract.get("task_spec") or {}
+                task_view = AgentTaskView(
+                    task_type=str(ts_dict.get("task_type") or ""),
+                    operation=str(ts_dict.get("operation") or ""),
+                    required_evidence=tuple(ts_dict.get("required_evidence") or ()),
+                    fresh_extraction_required=bool(
+                        ts_dict.get("fresh_extraction_required", False)
+                    ),
+                    cached_state_allowed=bool(
+                        ts_dict.get("cached_state_allowed", True)
+                    ),
+                    external_tool_required=bool(
+                        ts_dict.get("external_tool_required", False)
+                    ),
+                    answer_shape=str(
+                        ts_dict.get("answer_shape") or "narrative_answer"
+                    ),
+                )
+            except Exception:
+                task_view = AgentTaskView()
+        else:
+            execution_family = "investigate"
+            workflow_kind = "analysis"
+            task_view = AgentTaskView()
+
         invocation = AgentInvocation(
             matter_id=self._matter_model.matter_id,
             run_id=str(
@@ -5587,9 +5646,9 @@ class RLMEngine:
             phase="pre_synthesis",
             persona_id=persona_id,
             requirement=AgentRequirement.OPTIONAL,
-            task=AgentTaskView(),
-            execution_family="investigate",
-            workflow_kind="default",
+            task=task_view,
+            execution_family=execution_family,
+            workflow_kind=workflow_kind,
             budget=budget,
             input_refs=(),
             input_hash=str(getattr(state, "query", "") or "")[:64],
@@ -5597,18 +5656,40 @@ class RLMEngine:
         )
         # Codex HOLD-5 fix: engine stores Gemini client as self.client,
         # not self._llm_client.
+        # Codex Phase-2 r1 (Tier 5) blocker fix: pass `state` through so
+        # operators can read `state.query` (Tier 5 inference needs it),
+        # and any future state-aware operators benefit too.
+        runtime_extras: dict[str, Any] = {"state": state}
+        if repo is not None:
+            runtime_extras["_repo"] = repo
         dispatcher = SubAgentDispatcher(
             registry=registry,
             matter_model=self._matter_model,
             llm_client=getattr(self, "client", None),
-            runtime_extras={"_repo": repo} if repo is not None else None,
+            runtime_extras=runtime_extras,
         )
+        # Special: a RuntimeError raised by a blocking_validator operator
+        # MUST bubble out and halt the investigation. Other exceptions
+        # (timeout, transient I/O) are warnings and synthesis continues.
         try:
             phase_result = await dispatcher.run_phase(
                 invocation,
                 phase="pre_synthesis",
                 persona_policy=persona_policy,
             )
+        except RuntimeError as exc:
+            # blocking_validator escalation — surface a structured halt
+            # finding and re-raise so the engine's outer synthesis path
+            # can short-circuit into a validator-failure response.
+            try:
+                state.findings["blocking_validator_halt"] = {
+                    "phase": "pre_synthesis",
+                    "error": str(exc),
+                }
+            except Exception:
+                pass
+            logger.error("pre-synthesis blocking validator halted run: %s", exc)
+            raise
         except Exception as exc:
             logger.warning("pre-synthesis operator phase failed: %s", exc)
             return
@@ -5709,6 +5790,96 @@ class RLMEngine:
 
         sections: list[str] = []
         rendered_artifact_ids: list[tuple[str, str]] = []  # (artifact_id, section_key)
+
+        # Obligation coverage matrix (Codex lifecycle decision E:
+        # B-now, D-later). Pre-synthesis Tier-5-inferred rows are
+        # expected-output requirements, NOT observed gaps. Their
+        # `unknown` / `upstream_required_evidence_missing` status before
+        # output exists is a placeholder, not a real failure. Rendering
+        # them as "blocking gaps" makes synthesis hedge against work it
+        # hasn't yet done. Smoke v7 confirmed this hurts scores by ~1.4pt
+        # on matrix-injected tasks. So:
+        #   - Only render rows with CONCRETELY VERIFIABLE statuses
+        #     (`missing` from a real artifact_kind absence, `partial`,
+        #     `repair_required`).
+        #   - Drop pure pre-output `unknown` / `upstream_required_evidence_missing`
+        #     rows from the synthesis-injected gap list.
+        #   - Continue to honor user-asks-completeness override (those
+        #     queries are explicit invitations to render the matrix).
+        # Post-synthesis verification of pending rows is deferred to a
+        # future cycle alongside Item 2 (Deliverable Materializer).
+        _PENDING_PRE_OUTPUT_STATUSES = (
+            "unknown", "upstream_required_evidence_missing",
+        )
+        _CONCRETE_GAP_STATUSES = ("missing", "partial", "repair_required")
+        if "obligation.coverage_matrix.v1" in by_kind:
+            user_asks_completeness = any(
+                w in (state.query or "").lower()
+                for w in ("missing", "complete", "coverage",
+                          "gap", "checklist", "validation")
+            )
+            for art in by_kind["obligation.coverage_matrix.v1"]:
+                p = art["payload"] or {}
+                rows_p = p.get("rows") or []
+                concrete_gaps = [
+                    r for r in rows_p
+                    if r.get("severity") in ("critical", "required")
+                    and r.get("status") in _CONCRETE_GAP_STATUSES
+                ]
+                pending_pre_output = [
+                    r for r in rows_p
+                    if r.get("severity") in ("critical", "required")
+                    and r.get("status") in _PENDING_PRE_OUTPUT_STATUSES
+                ]
+                # If user explicitly asked about completeness, render BOTH
+                # concrete and pending (labeled as pending). Otherwise
+                # only render concrete gaps.
+                if user_asks_completeness:
+                    blocking_gaps = concrete_gaps + pending_pre_output
+                else:
+                    blocking_gaps = concrete_gaps
+                all_required_filled = bool(p.get("all_required_filled"))
+                was_blocking = (
+                    p.get("invocation_requirement") == "blocking_validator"
+                )
+                # Codex lifecycle decision E: skip rendering when there
+                # are no concrete gaps to surface — even if the matrix
+                # was produced under blocking_validator. The positive
+                # summary path renders ONLY when actual rows are met
+                # (all_required_filled), not when rows are merely pending.
+                # This is the key fix: pre-synthesis pending rows must
+                # NOT inject "all required obligations met (0/N)" into
+                # synthesis, because that's misleading — the obligations
+                # haven't been written yet.
+                if not blocking_gaps and not user_asks_completeness:
+                    if not (was_blocking and all_required_filled):
+                        continue
+                if blocking_gaps:
+                    lines = [
+                        f"OBLIGATION COVERAGE — {len(blocking_gaps)} blocking gap(s):",
+                        "",
+                        "| Severity | Status | Deliverable | Slot | Criterion |",
+                        "|---|---|---|---|---|",
+                    ]
+                    for r in blocking_gaps[:30]:
+                        lines.append(
+                            "| " + " | ".join([
+                                str(r.get("severity") or "—"),
+                                str(r.get("status") or "—"),
+                                str((r.get("deliverable") or {}).get("deliverable_key") or "—"),
+                                str((r.get("required_slot") or {}).get("label") or "—")[:40],
+                                str((r.get("source_criterion") or {}).get("title") or "—")[:60],
+                            ]) + " |"
+                        )
+                else:
+                    lines = [
+                        f"OBLIGATION COVERAGE — all required obligations met "
+                        f"({p.get('n_met', 0)}/{p.get('n_total', 0)})",
+                    ]
+                rendered_artifact_ids.append(
+                    (art["_artifact_id"], "operator_artifacts.obligation")
+                )
+                sections.append("\n".join(lines))
 
         # HHI calculations table
         if "hhi.calculation" in by_kind:
@@ -12421,6 +12592,11 @@ Return:
         if _os_op.environ.get("IRYS_ENABLE_OPERATORS", "0") == "1":
             try:
                 await self._run_pre_synthesis_operators(state)
+            except RuntimeError:
+                # blocking_validator halted the run. Re-raise so synthesis
+                # short-circuits — the validator_failure artifact will
+                # carry the audit trail.
+                raise
             except Exception as _op_exc:  # noqa: BLE001
                 logger.debug("pre-synthesis operators failed: %s", _op_exc)
 

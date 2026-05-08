@@ -1,6 +1,6 @@
 # Irys RLM Project Context
 
-Last curated: 2026-05-03
+Last curated: 2026-05-08
 
 This is the single maintained context file for coding agents. It replaces the
 old ignored root planning files such as `SYSTEM_STATE.md`, `.claude/CLAUDE.md`,
@@ -215,6 +215,18 @@ Major capabilities present in the codebase:
   cost visibility.
 - Portable ontology reference (`docs/IMPLEMENTED_REASONING_SYSTEM_SCHEMA.md`)
   documenting the general-purpose substrate vs. legal-specific overlays.
+- Operator substrate (PR#3, May 2026) — a registry of bounded sub-agents
+  (`src/irys/rlm/agents/`) with typed contracts, work-aware match scoring,
+  capability-tag dispatch, persona policies, and per-invocation budgets.
+  Six default operators ship: `HhiMarketShareCalculator`,
+  `NumericalReconciliationAgent`, `CpSectionExtractorAgent`,
+  `DocumentFileReader`, `CrossDocLinker`, and `ObligationCoverageMatrix`.
+  The matrix operator includes Tier 5 LLM-based criteria inference so it
+  works on fuzzy user prompts with no benchmark metadata. Output of
+  bounded operators flows into synthesis context as answer ingredients
+  (Synthesis Context Principle) and is persisted as `agent_artifact` rows
+  for audit. The substrate is gated behind the `IRYS_ENABLE_OPERATORS`
+  env flag while the cross-cutting operator phases are stabilized.
 
 ## Targets And Metrics
 

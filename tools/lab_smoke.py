@@ -1,20 +1,29 @@
 """Tiered Harvey LAB benchmark runner.
 
 Tier 1 (smoke, every iteration):
-    - 50 tasks randomly sampled across all 24 practice areas (uniform random,
-      fresh seed each run — do NOT freeze the sample, that's how overfitting
-      to a sample starts).
-    - Plus all known-failing tasks from the most recent sweep stored in
-      the failing-tasks ledger.
+    - Build the candidate pool: all known-failing tasks + N random tasks
+      uniformly sampled across all 24 practice areas (default N=30).
+    - Cap the pool at `--cap-total` (default 40). If the pool is larger,
+      uniformly sub-sample down to the cap.
+    - Random sampling uses a fresh seed each run — do NOT freeze the
+      sample, that's how overfitting to a sample starts.
     - Run, score, update ledger.
+
+The 40-task cap is an iteration-speed throttle (set 2026-05-08 while
+substrate scores are still ramping). Lift the cap (raise --cap-total)
+once Tier 1 scores get strong; eventually retire the cap entirely and
+return to "all failing + 50 random".
 
 Tier 2 (confirmation, only when Tier 1 looks clean):
     - Full benchmark across all 989 tasks. Used as the gate before declaring
       a structural change ship-able.
 
 Usage:
-    # Tier 1 smoke (default)
+    # Tier 1 smoke (default, 40-cap)
     python tools/lab_smoke.py
+
+    # Tier 1 with a wider cap (once scores improve)
+    python tools/lab_smoke.py --cap-total 80 --random 50
 
     # Tier 2 full sweep
     python tools/lab_smoke.py --tier 2
@@ -22,9 +31,6 @@ Usage:
     # Refresh the failing-tasks ledger from the latest scored runs across
     # the harvey-labs results dir
     python tools/lab_smoke.py --refresh-ledger
-
-    # Override knobs
-    python tools/lab_smoke.py --random 50 --failing-threshold 0.5 --concurrency 6
 
 The failing-tasks ledger lives at tools/lab_failing_tasks_ledger.json; it is
 updated after every smoke or full run so subsequent smokes pick up the
@@ -158,9 +164,18 @@ def _now_iso() -> str:
 
 
 def pick_smoke_tasks(
-    all_tasks: list[str], failing_tasks: list[str], n_random: int = 50,
+    all_tasks: list[str],
+    failing_tasks: list[str],
+    n_random: int = 30,
+    cap_total: int = 40,
 ) -> list[str]:
-    """Tier-1 selection: failing tasks + N random uniformly across areas.
+    """Tier-1 selection: failing tasks + N random, capped at cap_total.
+
+    Iteration speed throttle (2026-05-08): build the candidate pool from
+    `failing_tasks ∪ N_random`, then if the pool exceeds `cap_total`,
+    uniformly subsample down to `cap_total`. This keeps cycles fast while
+    we're far from passing — once scores get strong we lift the cap and
+    return to full Tier 1.
 
     Random sampling uses the system RNG (fresh seed per run by default).
     Avoids cherry-picking — prevents unconscious overfitting to a fixed sample.
@@ -170,9 +185,14 @@ def pick_smoke_tasks(
     pool = [t for t in all_tasks if t not in failing_set]
     n = min(n_random, len(pool))
     sampled = rng.sample(pool, n)
-    # Stable order: failing first (so they're prioritized in the run log),
-    # then sampled in random order.
-    return sorted(failing_set) + sampled
+    candidates = sorted(failing_set) + sampled
+    if len(candidates) > cap_total:
+        # Subsample down to cap_total — uniform across the pool, NOT
+        # failing-prioritized, so we don't always run the same failing
+        # tasks every cycle (that would be its own form of overfitting).
+        candidates = rng.sample(candidates, cap_total)
+        candidates.sort()  # stable order for logging
+    return candidates
 
 
 # ---------------------------------------------------------------------------
@@ -292,9 +312,11 @@ def score_summary_for_tasks(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Tiered Harvey LAB benchmark runner")
     parser.add_argument("--tier", type=int, choices=[1, 2], default=1,
-                        help="1 = smoke (50 random + failing); 2 = full sweep")
-    parser.add_argument("--random", type=int, default=50,
-                        help="Number of random tasks for Tier 1")
+                        help="1 = smoke (failing + N random, capped); 2 = full sweep")
+    parser.add_argument("--random", type=int, default=30,
+                        help="Number of random tasks added to the candidate pool")
+    parser.add_argument("--cap-total", type=int, default=40,
+                        help="Hard cap on Tier 1 task count (uniform sub-sample if pool > cap)")
     parser.add_argument("--failing-threshold", type=float, default=0.5,
                         help="Tasks below this criteria-pass ratio are 'failing'")
     parser.add_argument("--lab-root", default=str(LAB_ROOT_DEFAULT),
@@ -338,11 +360,16 @@ def main() -> None:
     all_tasks = discover_all_tasks(lab_root)
     ledger = load_ledger()
     failing = list(ledger.get("failing_tasks", {}).keys())
-    smoke = pick_smoke_tasks(all_tasks, failing, n_random=args.random)
+    smoke = pick_smoke_tasks(
+        all_tasks, failing, n_random=args.random, cap_total=args.cap_total,
+    )
 
+    smoke_set = set(smoke)
+    n_failing_in_smoke = len(set(failing) & smoke_set)
+    n_random_in_smoke = len(smoke) - n_failing_in_smoke
     print(f"Tier 1 smoke set: {len(smoke)} tasks "
-          f"({len(failing) & len(set(smoke))} failing + "
-          f"{len(smoke) - len(set(failing) & set(smoke))} random)")
+          f"(cap={args.cap_total}; "
+          f"{n_failing_in_smoke} failing + {n_random_in_smoke} random)")
 
     if args.dry_run:
         for t in smoke:
@@ -367,7 +394,7 @@ def main() -> None:
     fixed = set(failing) - set(new_ledger["failing_tasks"].keys())
     new_failing = set(new_ledger["failing_tasks"].keys()) - set(failing)
     if fixed:
-        print(f"Tasks moved from failing→passing ({len(fixed)}):")
+        print(f"Tasks moved from failing -> passing ({len(fixed)}):")
         for t in sorted(fixed):
             print(f"  + {t}")
     if new_failing:
@@ -375,7 +402,7 @@ def main() -> None:
         for t in sorted(new_failing):
             print(f"  - {t}")
     if not new_ledger["failing_tasks"]:
-        print("\n✅ All known-failing tasks now pass. "
+        print("\n[OK] All known-failing tasks now pass. "
               "Consider escalating to Tier 2 (full sweep) for stability check.")
 
 

@@ -22,6 +22,10 @@ class AgentDispatch:
     selected: tuple[SubAgent, ...]
     candidates: tuple[AgentMatch, ...]
     suppressed: tuple[Mapping[str, object], ...]
+    # Per-agent (agent, match) pairs in the same order as `selected`.
+    # Dispatcher uses match.requirement to build per-agent invocations
+    # so an agent's blocking_validator escalation is honored end-to-end.
+    selected_with_match: tuple[tuple[SubAgent, AgentMatch], ...] = ()
 
 
 class SubAgentRegistry:
@@ -108,6 +112,7 @@ class SubAgentRegistry:
         )
 
         selected: list[SubAgent] = []
+        selected_pairs: list[tuple[SubAgent, AgentMatch]] = []
         occupied: dict[str, str] = {}
         for agent, match in scored:
             group = match.exclusive_group or getattr(agent, "exclusive_group", None)
@@ -125,6 +130,7 @@ class SubAgentRegistry:
                 })
                 continue
             selected.append(agent)
+            selected_pairs.append((agent, match))
             if group:
                 occupied[group] = agent.agent_id
 
@@ -132,6 +138,7 @@ class SubAgentRegistry:
             selected=tuple(selected),
             candidates=tuple(m for _, m in scored),
             suppressed=tuple(suppressed),
+            selected_with_match=tuple(selected_pairs),
         )
 
 

@@ -37,11 +37,15 @@ from .numerical_reconciliation import NumericalReconciliationAgent
 from .cp_section_extractor import CpSectionExtractorAgent
 from .file_reader import DocumentFileReader
 from .cross_doc_linker import CrossDocLinker
+from .obligation_coverage import ObligationCoverageMatrix
 
 
 def default_registry() -> SubAgentRegistry:
     """Registry pre-populated with the deterministic built-in operators."""
     return SubAgentRegistry(agents=(
+        # Coverage operators run first so downstream operators / synthesis
+        # see the obligation matrix before producing answers.
+        ObligationCoverageMatrix(),
         DocumentFileReader(),
         CrossDocLinker(),
         HhiMarketShareCalculator(),
@@ -91,6 +95,7 @@ __all__ = (
     "DocumentFileReader",
     "HhiMarketShareCalculator",
     "NumericalReconciliationAgent",
+    "ObligationCoverageMatrix",
     "AgentInputRef",
     "AgentInvocation",
     "AgentInvocationResult",

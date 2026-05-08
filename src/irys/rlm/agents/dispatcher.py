@@ -127,14 +127,47 @@ class SubAgentDispatcher:
         invocations: list[tuple[SubAgent, AgentInvocationResult]] = []
         breached: list[str] = []
 
-        for agent in dispatch.selected:
+        # Use selected_with_match if available so each agent gets its own
+        # invocation with the match's requirement (Codex Phase 2 round-1
+        # blocker: AgentMatch.requirement was being ignored, meaning an
+        # agent could not escalate itself to blocking_validator at runtime).
+        if dispatch.selected_with_match:
+            agent_match_pairs = list(dispatch.selected_with_match)
+        else:
+            agent_match_pairs = [(a, None) for a in dispatch.selected]
+
+        # Strictness ranking — an agent's match can ESCALATE its own
+        # requirement (e.g. obligation_coverage flagging itself as a
+        # blocking_validator on deliverable family) but cannot DOWNGRADE
+        # below the template's expectation for the phase.
+        _STRICTNESS_RANK = {
+            AgentRequirement.OPTIONAL: 0,
+            AgentRequirement.REQUIRED: 1,
+            AgentRequirement.BLOCKING_VALIDATOR: 2,
+        }
+
+        for agent, match in agent_match_pairs:
+            from dataclasses import replace as _dc_replace
+            template_req = invocation_template.requirement
+            match_req = match.requirement if match is not None else template_req
+            effective_req = (
+                match_req
+                if _STRICTNESS_RANK[match_req] > _STRICTNESS_RANK[template_req]
+                else template_req
+            )
+            per_invocation = _dc_replace(
+                invocation_template,
+                requirement=effective_req,
+                agent_id=agent.agent_id,
+            )
+
             breach = self._check_pre_invocation(budget)
             if breach:
                 breached.append(breach)
                 # Record a budget-exhausted row for observability
                 self._record_invocation_row(
                     agent=agent,
-                    invocation=invocation_template,
+                    invocation=per_invocation,
                     result=AgentInvocationResult(
                         status="budget_exhausted",
                         error_class="OperatorBudgetExceeded",
@@ -142,13 +175,13 @@ class SubAgentDispatcher:
                     ),
                     breach_reason=breach,
                 )
-                if invocation_template.requirement == AgentRequirement.BLOCKING_VALIDATOR:
+                if per_invocation.requirement == AgentRequirement.BLOCKING_VALIDATOR:
                     raise OperatorBudgetExceeded(breach)
                 break
 
             runtime = AgentRuntime(
                 matter_model=self.matter_model,
-                invocation=invocation_template,
+                invocation=per_invocation,
                 llm_client=self.llm_client,
             )
             for _attr, _val in self.runtime_extras.items():
@@ -156,7 +189,7 @@ class SubAgentDispatcher:
             t0 = _time.perf_counter()
             try:
                 result = await _asyncio.wait_for(
-                    agent.invoke(invocation_template, runtime),
+                    agent.invoke(per_invocation, runtime),
                     timeout=budget.max_wall_ms_per_agent / 1000.0,
                 )
             except _asyncio.TimeoutError:
@@ -176,22 +209,26 @@ class SubAgentDispatcher:
 
             # Verify_output is a hook for agents to validate their own
             # output (e.g., HHI math sanity, schema completeness).
+            # CRITICAL: keep result.artifacts even when verify_output
+            # downgrades status to 'invalid' (Codex Phase 2 r1 blocker:
+            # validator_failure artifact must be persisted for audit).
             if result.status == "success":
                 try:
-                    result = agent.verify_output(invocation_template, result)
+                    result = agent.verify_output(per_invocation, result)
                 except Exception as exc:
                     result = AgentInvocationResult(
                         status="invalid",
                         error_class=type(exc).__name__,
                         error=f"verify_output raised: {exc}",
                         elapsed_ms=result.elapsed_ms,
+                        artifacts=result.artifacts,
                     )
 
             self._account(result)
             try:
                 invocation_id = self._record_invocation_row(
                     agent=agent,
-                    invocation=invocation_template,
+                    invocation=per_invocation,
                     result=result,
                 )
             except Exception as _persist_exc:
@@ -205,16 +242,16 @@ class SubAgentDispatcher:
                 )
                 invocation_id = ""
 
-            # Persist artifacts only when invocation row was recorded
-            # (write_artifacts FK requires a valid invocation_id).
-            if (
-                invocation_id
-                and result.status == "success"
-                and result.artifacts
-            ):
+            # Persist artifacts whenever the operator produced any. Codex
+            # Phase 2 r1 blocker: previously we required status='success',
+            # which dropped validator_failure artifacts even though they
+            # are explicitly the audit trail for blocking failures.
+            artifact_persistence_failed = False
+            if invocation_id and result.artifacts:
                 try:
                     runtime.write_artifacts(invocation_id, result.artifacts)
                 except Exception as _wa_exc:
+                    artifact_persistence_failed = True
                     import logging as _logging
                     _logging.getLogger(__name__).error(
                         "agent %s write_artifacts failed: %s",
@@ -229,13 +266,34 @@ class SubAgentDispatcher:
                 elapsed_ms=result.elapsed_ms,
             )
 
-            # Blocking validator: hard-fail the investigation
+            # Blocking validator: hard-fail the investigation. Read from
+            # per_invocation (post-match override), not the template.
             if (
                 result.status != "success"
-                and invocation_template.requirement == AgentRequirement.BLOCKING_VALIDATOR
+                and per_invocation.requirement == AgentRequirement.BLOCKING_VALIDATOR
+            ):
+                # Codex Phase-2 r2: if write_artifacts failed, the audit
+                # trail is missing. Surface it in the halt message so the
+                # outer engine + observability layer can record it.
+                halt_msg = f"blocking validator failed: {agent.agent_id}: {result.error}"
+                if artifact_persistence_failed:
+                    halt_msg += (
+                        " | AUDIT-PERSISTENCE-FAILED: validator_failure artifact"
+                        " could not be written"
+                    )
+                raise RuntimeError(halt_msg)
+            # If a blocking validator SUCCEEDED but its audit artifact
+            # write failed, that's also a contract violation — surface as
+            # halt so we don't silently lose the run-level audit trail.
+            if (
+                result.status == "success"
+                and per_invocation.requirement == AgentRequirement.BLOCKING_VALIDATOR
+                and artifact_persistence_failed
+                and result.artifacts
             ):
                 raise RuntimeError(
-                    f"blocking validator failed: {agent.agent_id}: {result.error}"
+                    f"blocking validator audit failed: {agent.agent_id}: "
+                    "matrix artifact persistence error"
                 )
 
         return PhaseRunResult(
