@@ -1917,6 +1917,8 @@
     "evidence_relevance_filter",
     "extraction_repair",
     "synthesis_coverage_repair",
-    "synthesis_per_issue"
+    "synthesis_per_issue",
+    "obligation_criteria_inference",
+    "term_grid_extraction"
   ]
 }

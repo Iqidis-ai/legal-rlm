@@ -1656,6 +1656,425 @@ async def get_pending_clarifications(matter_id: str, limit: int = 20):
     return model.clarifications.get_pending(limit=limit)
 
 
+# ---------------------------------------------------------------------------
+# Operator substrate observability endpoints
+#
+# Read-only matter-scoped views over `sub_agent_invocation`,
+# `agent_artifact`, `synthesis_input_artifact`, and `persona_selection`.
+# Per Codex UI/API design (research/findings/ui_api_surfacing_design.md):
+# professional language, no benchmark metadata, no triggering of reruns.
+# ---------------------------------------------------------------------------
+
+
+@app.get(
+    "/matter/{matter_id}/operator-invocations",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_operator_invocations(
+    matter_id: str,
+    run_id: Optional[str] = None,
+    phase: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    status: Optional[str] = None,
+    requirement: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """List operator invocations (specialist checks) for a matter."""
+    model = await _get_matter_model_or_404(matter_id)
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=422, detail="limit must be 1-500")
+    where = ["matter_id=?"]
+    params: list[Any] = [model.matter_id]
+    if run_id:
+        where.append("run_id=?")
+        params.append(run_id)
+    if phase:
+        where.append("phase=?")
+        params.append(phase)
+    if agent_id:
+        where.append("agent_id=?")
+        params.append(agent_id)
+    if status:
+        where.append("status=?")
+        params.append(status)
+    if requirement:
+        if requirement not in {"optional", "required", "blocking_validator"}:
+            raise HTTPException(status_code=422, detail="invalid requirement")
+        where.append("requirement=?")
+        params.append(requirement)
+    sql = (
+        f"SELECT * FROM sub_agent_invocation "
+        f"WHERE {' AND '.join(where)} "
+        f"ORDER BY invocation_at DESC LIMIT ? OFFSET ?"
+    )
+    params.extend([limit + 1, offset])
+    rows = model.db.execute(sql, tuple(params)).fetchall()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    invocations = []
+    for r in rows:
+        d = dict(r)
+        # Roll up artifact counts/kinds from agent_artifact
+        try:
+            arts = model.db.execute(
+                "SELECT artifact_kind FROM agent_artifact "
+                "WHERE matter_id=? AND invocation_id=?",
+                (model.matter_id, d["id"]),
+            ).fetchall()
+            d["artifact_count"] = len(arts)
+            d["artifact_kinds"] = sorted({a["artifact_kind"] for a in arts})
+        except Exception:
+            d["artifact_count"] = 0
+            d["artifact_kinds"] = []
+        try:
+            d["capability_tags"] = _json.loads(d.get("capability_tags_json") or "[]")
+        except Exception:
+            d["capability_tags"] = []
+        d.pop("capability_tags_json", None)
+        invocations.append(d)
+    return {
+        "matter_id": model.matter_id,
+        "limit": limit,
+        "offset": offset,
+        "next_offset": (offset + limit) if has_more else None,
+        "invocations": invocations,
+    }
+
+
+@app.get(
+    "/matter/{matter_id}/operator-artifacts",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_operator_artifacts(
+    matter_id: str,
+    run_id: Optional[str] = None,
+    invocation_id: Optional[str] = None,
+    artifact_kind: Optional[str] = None,
+    synthesis_visibility: Optional[str] = None,
+    verification_state: Optional[str] = None,
+    include_payload: bool = False,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """List operator artifacts. Supports run/kind/visibility filters."""
+    model = await _get_matter_model_or_404(matter_id)
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=422, detail="limit must be 1-500")
+    if synthesis_visibility and synthesis_visibility not in {
+        "none", "answer_ingredient", "audit_only",
+    }:
+        raise HTTPException(status_code=422, detail="invalid synthesis_visibility")
+    where = ["aa.matter_id=?"]
+    params: list[Any] = [model.matter_id]
+    if invocation_id:
+        where.append("aa.invocation_id=?")
+        params.append(invocation_id)
+    if artifact_kind:
+        where.append("aa.artifact_kind=?")
+        params.append(artifact_kind)
+    if synthesis_visibility:
+        where.append("aa.synthesis_visibility=?")
+        params.append(synthesis_visibility)
+    if verification_state:
+        where.append("aa.verification_state=?")
+        params.append(verification_state)
+    if run_id:
+        where.append("sai.run_id=?")
+        params.append(run_id)
+    sql = (
+        "SELECT aa.*, sai.run_id, sai.agent_id "
+        "FROM agent_artifact aa "
+        "JOIN sub_agent_invocation sai "
+        "  ON sai.id = aa.invocation_id AND sai.matter_id = aa.matter_id "
+        f"WHERE {' AND '.join(where)} "
+        "ORDER BY aa.created_at DESC LIMIT ? OFFSET ?"
+    )
+    params.extend([limit + 1, offset])
+    rows = model.db.execute(sql, tuple(params)).fetchall()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    artifacts = []
+    for r in rows:
+        d = dict(r)
+        try:
+            payload = _json.loads(d.get("payload_json") or "{}")
+        except Exception:
+            payload = {}
+            d["payload_parse_error"] = True
+        # Compact summary fields useful for list views
+        summary = {
+            "schema_ref": payload.get("schema_ref"),
+            "run_id": payload.get("run_id"),
+        }
+        for k in ("n_total", "n_met", "n_missing", "n_critical_missing",
+                  "n_required_missing", "n_rows", "n_rules", "matrix_status",
+                  "topics"):
+            if k in payload:
+                summary[k] = payload[k]
+        d["payload_summary"] = summary
+        d["payload"] = payload if include_payload else None
+        d.pop("payload_json", None)
+        for jk in ("source_refs_json", "typed_evidence_refs_json"):
+            try:
+                d[jk.replace("_json", "")] = _json.loads(d.get(jk) or "[]")
+            except Exception:
+                d[jk.replace("_json", "")] = []
+            d.pop(jk, None)
+        artifacts.append(d)
+    return {
+        "matter_id": model.matter_id,
+        "limit": limit,
+        "offset": offset,
+        "next_offset": (offset + limit) if has_more else None,
+        "artifacts": artifacts,
+    }
+
+
+@app.get(
+    "/matter/{matter_id}/operator-artifacts/{artifact_id}",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_operator_artifact(
+    matter_id: str,
+    artifact_id: str,
+    truncate_rows: bool = True,
+    row_limit: int = 200,
+):
+    """Get a single operator artifact, with optional row truncation."""
+    model = await _get_matter_model_or_404(matter_id)
+    if row_limit < 1 or row_limit > 2000:
+        raise HTTPException(status_code=422, detail="row_limit must be 1-2000")
+    row = model.db.execute(
+        "SELECT aa.*, sai.run_id, sai.agent_id FROM agent_artifact aa "
+        "JOIN sub_agent_invocation sai "
+        "  ON sai.id = aa.invocation_id AND sai.matter_id = aa.matter_id "
+        "WHERE aa.matter_id=? AND aa.id=?",
+        (model.matter_id, artifact_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    d = dict(row)
+    try:
+        payload = _json.loads(d.get("payload_json") or "{}")
+    except Exception:
+        raise HTTPException(status_code=500, detail="invalid stored payload JSON")
+    truncated = False
+    if truncate_rows:
+        for key in ("rows", "rules"):
+            seq = payload.get(key)
+            if isinstance(seq, list) and len(seq) > row_limit:
+                payload[key] = seq[:row_limit]
+                truncated = True
+    d["payload"] = payload
+    d.pop("payload_json", None)
+    return {
+        "matter_id": model.matter_id,
+        "artifact": d,
+        "truncated": truncated,
+        "row_limit": row_limit,
+    }
+
+
+@app.get(
+    "/matter/{matter_id}/requirement-coverage",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_requirement_coverage(
+    matter_id: str,
+    run_id: Optional[str] = None,
+):
+    """Return the latest obligation coverage matrix for a matter (or
+    specific run)."""
+    model = await _get_matter_model_or_404(matter_id)
+    where = ["aa.matter_id=?", "aa.artifact_kind='obligation.coverage_matrix.v1'"]
+    params: list[Any] = [model.matter_id]
+    if run_id:
+        where.append("sai.run_id=?")
+        params.append(run_id)
+    row = model.db.execute(
+        "SELECT aa.*, sai.run_id FROM agent_artifact aa "
+        "JOIN sub_agent_invocation sai "
+        "  ON sai.id = aa.invocation_id AND sai.matter_id = aa.matter_id "
+        f"WHERE {' AND '.join(where)} "
+        "ORDER BY aa.created_at DESC LIMIT 1",
+        tuple(params),
+    ).fetchone()
+    if row is None:
+        return {
+            "matter_id": model.matter_id,
+            "run_id": run_id,
+            "matrix": None,
+            "validator_failure": None,
+        }
+    try:
+        matrix = _json.loads(row["payload_json"] or "{}")
+    except Exception:
+        matrix = {}
+    # Look for a validator_failure artifact tied to the same matrix
+    vf = model.db.execute(
+        "SELECT aa.payload_json FROM agent_artifact aa "
+        "WHERE aa.matter_id=? "
+        "  AND aa.artifact_kind='validator_failure.obligation_coverage.v1' "
+        "  AND aa.invocation_id=? "
+        "ORDER BY aa.created_at DESC LIMIT 1",
+        (model.matter_id, row["invocation_id"]),
+    ).fetchone()
+    validator_failure = None
+    if vf is not None:
+        try:
+            validator_failure = _json.loads(vf["payload_json"] or "{}")
+        except Exception:
+            validator_failure = None
+    return {
+        "matter_id": model.matter_id,
+        "run_id": row["run_id"],
+        "artifact_id": row["id"],
+        "matrix": matrix,
+        "validator_failure": validator_failure,
+    }
+
+
+@app.get(
+    "/matter/{matter_id}/term-grid",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_term_grid(
+    matter_id: str,
+    run_id: Optional[str] = None,
+    topic: Optional[str] = None,
+    limit_rows: int = 500,
+):
+    """Return aggregated term_grid + rule tree for a matter (or run)."""
+    model = await _get_matter_model_or_404(matter_id)
+    if limit_rows < 1 or limit_rows > 5000:
+        raise HTTPException(status_code=422, detail="limit_rows must be 1-5000")
+    where = ["aa.matter_id=?"]
+    params: list[Any] = [model.matter_id]
+    if run_id:
+        where.append("sai.run_id=?")
+        params.append(run_id)
+    sql_base = (
+        "SELECT aa.payload_json, sai.run_id, aa.created_at "
+        "FROM agent_artifact aa "
+        "JOIN sub_agent_invocation sai "
+        "  ON sai.id = aa.invocation_id AND sai.matter_id = aa.matter_id "
+        f"WHERE {' AND '.join(where)} AND aa.artifact_kind=? "
+        "ORDER BY aa.created_at DESC"
+    )
+    grids = model.db.execute(sql_base, (*params, "term_grid.v1")).fetchall()
+    trees = model.db.execute(sql_base, (*params, "conditional_rule_tree.v1")).fetchall()
+
+    rows: list[dict] = []
+    topics: set[str] = set()
+    for g in grids:
+        try:
+            payload = _json.loads(g["payload_json"] or "{}")
+        except Exception:
+            continue
+        for r in payload.get("rows") or []:
+            if topic and r.get("topic") != topic:
+                continue
+            rows.append(r)
+            t = r.get("topic")
+            if t:
+                topics.add(t)
+            if len(rows) >= limit_rows:
+                break
+        if len(rows) >= limit_rows:
+            break
+
+    rules: list[dict] = []
+    for t in trees:
+        try:
+            payload = _json.loads(t["payload_json"] or "{}")
+        except Exception:
+            continue
+        rules.extend(payload.get("rules") or [])
+
+    return {
+        "matter_id": model.matter_id,
+        "run_id": run_id,
+        "topics": sorted(topics),
+        "rows": rows,
+        "rules": rules[:limit_rows],
+        "n_rows": len(rows),
+        "n_rules": len(rules),
+    }
+
+
+@app.get(
+    "/matter/{matter_id}/operator-summary",
+    tags=["Matter Model"],
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_operator_summary(
+    matter_id: str,
+    run_id: Optional[str] = None,
+):
+    """Aggregate operator stats: counts, latency, cost, blocking failures."""
+    model = await _get_matter_model_or_404(matter_id)
+    where = ["matter_id=?"]
+    params: list[Any] = [model.matter_id]
+    if run_id:
+        where.append("run_id=?")
+        params.append(run_id)
+    inv_sql = (
+        "SELECT COUNT(*) AS n_invocations, "
+        "       SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) AS n_success, "
+        "       SUM(CASE WHEN status NOT IN ('success') THEN 1 ELSE 0 END) AS n_failed, "
+        "       SUM(latency_ms) AS total_latency_ms, "
+        "       SUM(cost_estimate) AS total_cost, "
+        "       SUM(llm_calls) AS total_llm_calls, "
+        "       SUM(token_estimate) AS total_tokens "
+        "FROM sub_agent_invocation "
+        f"WHERE {' AND '.join(where)}"
+    )
+    row = model.db.execute(inv_sql, tuple(params)).fetchone() or {}
+    n_inv = (row["n_invocations"] or 0) if isinstance(row, dict) or hasattr(row, "keys") else 0
+    summary = {
+        "matter_id": model.matter_id,
+        "run_id": run_id,
+        "n_invocations": int(row["n_invocations"] or 0),
+        "n_success": int(row["n_success"] or 0),
+        "n_failed": int(row["n_failed"] or 0),
+        "total_latency_ms": int(row["total_latency_ms"] or 0),
+        "total_cost": float(row["total_cost"] or 0.0),
+        "total_llm_calls": int(row["total_llm_calls"] or 0),
+        "total_tokens": int(row["total_tokens"] or 0),
+        "by_agent": [],
+        "n_blocking_failures": 0,
+    }
+    by_agent = model.db.execute(
+        "SELECT agent_id, COUNT(*) AS n, "
+        "       SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) AS n_success, "
+        "       SUM(latency_ms) AS latency_ms, SUM(cost_estimate) AS cost "
+        "FROM sub_agent_invocation "
+        f"WHERE {' AND '.join(where)} "
+        "GROUP BY agent_id ORDER BY n DESC",
+        tuple(params),
+    ).fetchall()
+    summary["by_agent"] = [dict(r) for r in by_agent]
+
+    blocking_where = list(where)
+    blocking_params = list(params)
+    blocking_where.extend([
+        "requirement='blocking_validator'", "status NOT IN ('success')",
+    ])
+    blocking = model.db.execute(
+        "SELECT COUNT(*) AS n FROM sub_agent_invocation "
+        f"WHERE {' AND '.join(blocking_where)}",
+        tuple(blocking_params),
+    ).fetchone()
+    summary["n_blocking_failures"] = int((blocking and blocking["n"]) or 0)
+    return summary
+
+
 def _resolve_resumed_run_id(model: Any, run_id: str) -> str:
     """adv#036 HIGH: resolve a stale interrupted run_id to its live resumed child.
 
