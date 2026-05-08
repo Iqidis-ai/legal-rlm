@@ -5448,11 +5448,54 @@ class RLMEngine:
         rows are included. Pending/not_observable slots are intentionally
         omitted unless the user query asks about coverage/completeness
         (handled by separate gap section gating).
+
+        Renders one section per matched slot profile via its
+        render_answer_rows method. Registry-driven for cross-domain support
+        (market_row, cp_gap, qoe_line_item, future profiles).
         """
         if self._matter_model is None:
             return ""
+        # Multi-profile dispatch: render any selected profile's answerable rows.
+        try:
+            from .slot_profiles import (
+                SlotProfileContext as _RSCtx,
+                default_registry as _rs_default_registry,
+            )
+            _rs_registry = _rs_default_registry()
+            _rs_ctx = _RSCtx.empty(
+                matter_id=self._matter_model.matter_id,
+                query=state.query or "",
+            )
+            _rs_dispatch = _rs_registry.dispatch(_rs_ctx)
+        except Exception:
+            _rs_dispatch = None
+
+        sections: list[str] = []
+        if _rs_dispatch is not None:
+            for _profile in _rs_dispatch.selected:
+                if _profile.profile_id == "legal.market_row.v1":
+                    # Handled by the legacy market_row branch below to
+                    # preserve existing output formatting.
+                    continue
+                try:
+                    rows = self._matter_model.extraction_slots.get_answerable_rows_for_profile(
+                        _profile.profile_id,
+                    )
+                except Exception:
+                    rows = []
+                if not rows:
+                    continue
+                try:
+                    rendered = _profile.render_answer_rows(rows)
+                except Exception:
+                    rendered = ""
+                if rendered:
+                    sections.append(rendered)
+
+        # Legacy market_row path: continue to use the matter-level
+        # get_filled_slots reader to preserve current behavior.
         if not self._should_profile_dataset_shape(state):
-            return ""
+            return "\n\n".join(sections) if sections else ""
         try:
             # Cross-scope read: any filled market_row slot for this matter is
             # answer-eligible regardless of which query first registered it.
@@ -5461,9 +5504,9 @@ class RLMEngine:
                 slot_kind="collection_item",
             )
         except Exception:
-            return ""
+            return "\n\n".join(sections) if sections else ""
         if not filled:
-            return ""
+            return "\n\n".join(sections) if sections else ""
         # Collect typed_evidence row payloads referenced by these slots
         market_rows: list[dict] = []
         seen_record_ids: set[str] = set()
@@ -5537,7 +5580,12 @@ class RLMEngine:
                     _fmt(p.get("source_detail")),
                 ]) + " |"
             )
-        return "\n".join(lines)
+        market_section = "\n".join(lines)
+        # Stitch market_row section together with any registry-rendered
+        # sections (CP gap, QoE line item, etc.) collected above.
+        if sections:
+            return market_section + "\n\n" + "\n\n".join(sections)
+        return market_section
 
     def _build_regulatory_data_summary(
         self, state: "InvestigationState",
@@ -10473,6 +10521,38 @@ Return:
             elif _is_comparison_dr:
                 _task_section = _COMPARISON_DEEP_READ_SECTION
 
+            # Slot-profile registry: append prompt addenda for any matched
+            # profiles beyond market_row (which is already in
+            # _REGULATORY_DEEP_READ_SECTION). market_row is excluded here
+            # to avoid duplication. CP gap and QoE line-item profiles
+            # contribute their own addenda when their match terms hit.
+            try:
+                from .slot_profiles import (
+                    SlotProfileContext as _SPCtx,
+                    default_registry as _slot_default_registry,
+                )
+                _slot_registry = _slot_default_registry()
+                _slot_ctx = _SPCtx.empty(
+                    matter_id=getattr(self._matter_model, "matter_id", "")
+                    if self._matter_model else "",
+                    query=state.query or "",
+                )
+                _slot_dispatch = _slot_registry.dispatch(_slot_ctx)
+                _slot_addenda: list[str] = []
+                for _slot_p in _slot_dispatch.prompt_profiles:
+                    if _slot_p.profile_id == "legal.market_row.v1":
+                        # Already in _REGULATORY_DEEP_READ_SECTION; skip to
+                        # avoid prompt duplication.
+                        continue
+                    _addendum = _slot_p.prompt_addendum(_slot_ctx)
+                    if _addendum:
+                        _slot_addenda.append(_addendum)
+                if _slot_addenda:
+                    _task_section = ((_task_section + "\n\n").lstrip("\n")
+                                     + "\n\n".join(_slot_addenda))
+            except Exception as _slot_exc:
+                logger.debug("slot-profile prompt addendum failed: %s", _slot_exc)
+
             _cross_ref_ctx = ""
             _existing_facts = state.findings.get("accumulated_facts", [])
             if _existing_facts and len(_existing_facts) >= 3:
@@ -11145,6 +11225,107 @@ Return:
                             _mm_mr.extraction_slots.mark_filled(_matched["id"], _record_id)
                     except Exception as _slot_exc:
                         logger.debug("slot mark_filled failed: %s", _slot_exc)
+
+            # Registry-driven parsers for non-market_row profiles (CP gap,
+            # QoE line item, etc.). Each matched profile parses its own
+            # row schema, writes typed_evidence, and links a slot.
+            try:
+                from .slot_profiles import (
+                    SlotProfileContext as _RDPCtx,
+                    default_registry as _rdp_default_registry,
+                )
+                _rdp_mm = self._matter_model
+                if _rdp_mm is not None:
+                    _rdp_registry = _rdp_default_registry()
+                    _rdp_ctx = _RDPCtx.empty(
+                        matter_id=_rdp_mm.matter_id,
+                        query=state.query or "",
+                    )
+                    _rdp_dispatch = _rdp_registry.dispatch(_rdp_ctx)
+                    for _rdp_profile in _rdp_dispatch.selected:
+                        if _rdp_profile.profile_id == "legal.market_row.v1":
+                            # Already handled inline above
+                            continue
+                        try:
+                            _writes = _rdp_profile.parse_evidence(
+                                analysis=analysis,
+                                document=doc,
+                                context=_rdp_ctx,
+                            )
+                        except Exception as _parse_exc:
+                            logger.debug(
+                                "profile %s parse_evidence failed: %s",
+                                _rdp_profile.profile_id, _parse_exc,
+                            )
+                            continue
+                        for _w in _writes:
+                            try:
+                                _rec_id, _ = _rdp_mm.typed_evidence.upsert(
+                                    _w.record_kind,
+                                    _w.record_key,
+                                    payload=dict(_w.payload),
+                                    label=_w.label,
+                                    document_id=_w.document_id,
+                                    confidence=_w.confidence,
+                                )
+                            except Exception as _upsert_exc:
+                                logger.debug(
+                                    "profile %s typed_evidence.upsert failed: %s",
+                                    _rdp_profile.profile_id, _upsert_exc,
+                                )
+                                continue
+                            # Append to facts so SO-2 retry catches them
+                            _label = _w.label or _w.record_key
+                            facts_to_add.append((
+                                f"[{_rdp_profile.record_kind.upper()}] {_label}",
+                                "supports",
+                                None,
+                                {
+                                    "subject_ref_type": "free_text",
+                                    "subject_ref_id": _label[:120],
+                                    "predicate_key": f"has_{_rdp_profile.record_kind}",
+                                    "object_json": json.dumps(
+                                        {k: _w.payload.get(k) for k in (
+                                            "status", "severity", "delta",
+                                            "post_merger_hhi", "delta_hhi",
+                                        ) if k in _w.payload}
+                                    ),
+                                },
+                            ))
+                            # Lazy-register slot, then link evidence
+                            if _w.slot_key:
+                                try:
+                                    _slot_id, _ = _rdp_mm.extraction_slots.register(
+                                        _rdp_mm.matter_id,
+                                        _rdp_profile.slot_kind,
+                                        _w.slot_key,
+                                        1,
+                                        expected_count_confidence=0.70,
+                                        scope_query_hash=self._slot_scope_query_hash(
+                                            state.query
+                                        ),
+                                        schema_ref=_rdp_profile.schema_ref,
+                                    )
+                                    # Set profile_id (v71 column) for later
+                                    # answerable-rows query routing.
+                                    _rdp_mm.db.execute(
+                                        "UPDATE extraction_slot SET profile_id=?"
+                                        " WHERE matter_id=? AND id=?",
+                                        (_rdp_profile.profile_id,
+                                         _rdp_mm.matter_id, _slot_id),
+                                    )
+                                    _rdp_mm.extraction_slots.link_evidence(
+                                        _slot_id, _rec_id,
+                                        link_role="fills",
+                                        profile_id=_rdp_profile.profile_id,
+                                    )
+                                except Exception as _link_exc:
+                                    logger.debug(
+                                        "profile %s slot link failed: %s",
+                                        _rdp_profile.profile_id, _link_exc,
+                                    )
+            except Exception as _rdp_exc:
+                logger.debug("registry-driven parse failed: %s", _rdp_exc)
 
             # Adverse evidence (hot documents, admissions, problematic language)
             _adv_ev = analysis.get("adverse_evidence")
