@@ -41,7 +41,15 @@ from .obligation_coverage import ObligationCoverageMatrix
 
 
 def default_registry() -> SubAgentRegistry:
-    """Registry pre-populated with the deterministic built-in operators."""
+    """Registry pre-populated with the built-in operators.
+
+    Five are deterministic (HHI math, numerical reconciliation, CP
+    section organization, document structure parsing, cross-doc linking).
+    One — ObligationCoverageMatrix — is bounded-LLM: pure deterministic
+    when criteria/deliverables are pre-supplied (Tiers 1-3); falls
+    through to one bounded LLM call (Tier 5) when criteria must be
+    inferred from a fuzzy user prompt.
+    """
     return SubAgentRegistry(agents=(
         # Coverage operators run first so downstream operators / synthesis
         # see the obligation matrix before producing answers.

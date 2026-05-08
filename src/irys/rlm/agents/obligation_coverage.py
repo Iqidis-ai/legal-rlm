@@ -32,11 +32,12 @@ Row status (D4): met, partial, missing, unknown, repair_required,
 Matrix status (D4): success, ran_empty, upstream_required_evidence_missing,
                     invalid_input
 
-Failure policy (D8): blocking_validator by default for benchmark/external
-deliverables. v1 implementation: detect-and-halt (return status='invalid'
-from verify_output when critical/required obligations are unmet, which
-the dispatcher treats as a hard fail). Repair pass orchestration is
-deferred to a follow-up cycle alongside Item 2's deliverable materializer.
+Failure policy (D8): blocking_validator by default for external/deployable
+final work product (deliverable family + drafting workflow). v1
+implementation: detect-and-halt (return status='invalid' from
+verify_output when critical/required obligations are unmet, which the
+dispatcher treats as a hard fail). Repair pass orchestration is deferred
+to a follow-up cycle alongside the deliverable materializer.
 """
 
 from __future__ import annotations
@@ -853,7 +854,7 @@ class ObligationCoverageMatrix:
                         "title": str(c.get("title") or ""),
                         "description": str(c.get("description") or ""),
                         "severity": str(c.get("severity") or "required").lower(),
-                        "source": str(c.get("source") or "lab_config"),
+                        "source": str(c.get("source") or "explicit_task_contract"),
                         "task_id": str(payload.get("task_id") or ""),
                     })
         return out
@@ -936,34 +937,14 @@ class ObligationCoverageMatrix:
                 })
         return out
 
-    @staticmethod
-    def _criteria_from_run_objective(runtime: Any) -> list[dict]:
-        """DEPRECATED — do not call from `_load_criteria`.
-
-        Codex Phase-2 r3 (post-smoke v6): RunObjective.success_criteria is
-        engine-internal scaffolding from `_workflow_success_criteria()`,
-        not user intent. Sourcing obligation criteria from it short-
-        circuits Tier 5 inference and produces noisy matrices that hurt
-        synthesis. Kept only so the helper signature remains discoverable
-        if a future caller wants to reframe it (e.g. user-supplied API
-        criteria via a future RunObjective surface).
-        """
-        ro = getattr(getattr(runtime, "state", None), "run_objective", None) if hasattr(runtime, "state") else None
-        if ro is None:
-            return []
-        crits = getattr(ro, "success_criteria", None) or []
-        out: list[dict] = []
-        for i, c in enumerate(crits):
-            if isinstance(c, str) and c.strip():
-                out.append({
-                    "criterion_id": f"ro_{i}",
-                    "title": c[:80],
-                    "description": c,
-                    "severity": "required",
-                    "source": "run_objective",
-                    "task_id": "",
-                })
-        return out
+    # Note: an earlier `_criteria_from_run_objective()` helper sourced
+    # criteria from `state.run_objective.success_criteria`. Smoke v6
+    # demonstrated that source is engine-internal scaffolding from
+    # `engine._workflow_success_criteria()`, not user intent — using it
+    # short-circuited Tier 5 and produced noisy matrices. The helper has
+    # been removed (Codex holistic review action item 6). If a future
+    # caller needs RunObjective-shaped criteria, design a new typed
+    # surface for it; do NOT reactivate the engine-scaffolding path.
 
     # ------------------------------------------------------------------
     # Tier 5 — prompt-inferred criteria
@@ -1276,7 +1257,7 @@ class ObligationCoverageMatrix:
           2. ExecutionContract.output_contract.task_id
           3. invocation.task.task_type + invocation.input_hash (last resort)
         """
-        # Tier 1: criteria/deliverable carry an external task_id (LAB ships these)
+        # Tier 1: criteria/deliverable carry an external task_id (e.g. caller pre-supplied via task contract)
         for src in criteria + deliverables:
             tid = src.get("task_id")
             if tid:
@@ -1409,7 +1390,7 @@ class ObligationCoverageMatrix:
         )
         ob_id = make_obligation_id(
             task_fingerprint=task_fingerprint,
-            source_family=str(criterion.get("source") or "lab_config"),
+            source_family=str(criterion.get("source") or "explicit_task_contract"),
             source_criterion_key_or_text=str(criterion_key),
             deliverable_key=str(deliverable.get("deliverable_key", "")),
             required_slot_key=f"{slot_kind}:{slot_key}",
