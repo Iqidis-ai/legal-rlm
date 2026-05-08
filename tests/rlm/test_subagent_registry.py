@@ -248,11 +248,19 @@ def test_persona_registry_falls_back_to_generic():
 # ---------------------------------------------------------------------------
 
 
-def test_operator_budget_simple_mode_tighter():
+def test_operator_budget_simple_mode_constraints():
+    """Simple mode keeps LLM-call/token/cost budget tight; per-phase
+    agent count is intentionally generous because built-in operators
+    are deterministic + cheap."""
     s = OperatorBudget.for_mode("simple")
     d = OperatorBudget.for_mode("deep")
-    assert s.max_agents_total < d.max_agents_total
-    assert s.max_wall_ms_total < d.max_wall_ms_total
+    # The cost-bearing dimensions stay tighter
+    assert s.max_llm_calls_total <= d.max_llm_calls_total
+    assert s.max_tokens_total <= d.max_tokens_total
+    assert s.max_cost_estimate_usd <= d.max_cost_estimate_usd
+    # Agent count cap is generous in both modes
+    assert s.max_agents_per_phase >= 5
+    assert s.max_agents_total >= s.max_agents_per_phase
 
 
 def test_operator_budget_unknown_keys_ignored():

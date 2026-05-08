@@ -64,13 +64,18 @@ class OperatorBudget:
 
     @classmethod
     def for_mode(cls, research_mode: str) -> "OperatorBudget":
-        """Per-mode default budgets. simple is tighter; deep is wider."""
+        """Per-mode default budgets.
+
+        Default operators are deterministic + cheap (no LLM calls), so the
+        per-phase cap intentionally allows all built-in operators to run
+        even in simple mode. The wall-time budget bounds total cost.
+        """
         mode = (research_mode or "simple").lower()
         if mode == "simple":
             return cls(
-                max_agents_total=4,
-                max_agents_per_phase=2,
-                max_wall_ms_total=30_000,
+                max_agents_total=8,
+                max_agents_per_phase=8,
+                max_wall_ms_total=45_000,
                 max_wall_ms_per_agent=10_000,
                 max_llm_calls_total=3,
                 max_tokens_total=8_000,
