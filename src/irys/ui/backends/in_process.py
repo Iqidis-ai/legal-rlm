@@ -1184,6 +1184,103 @@ class InProcessBackend(UIBackend):
         return model.get_cost_anomalies(limit=limit, run_id=run_id)
 
     # ------------------------------------------------------------------ #
+    # Operator substrate observability — feeds the 3 new UI panels.       #
+    # Read-only matter-scoped views over agent_artifact /                 #
+    # sub_agent_invocation / synthesis_input_artifact.                    #
+    # ------------------------------------------------------------------ #
+
+    async def get_requirement_coverage(self, matter_id: str) -> dict:
+        """Latest obligation.coverage_matrix.v1 + linked validator failure."""
+        import json as _json
+        model = self._get_matter_model(matter_id)
+        row = model.db.execute(
+            "SELECT aa.id, aa.payload_json, aa.invocation_id "
+            "FROM agent_artifact aa "
+            "WHERE aa.matter_id=? "
+            "  AND aa.artifact_kind='obligation.coverage_matrix.v1' "
+            "ORDER BY aa.created_at DESC LIMIT 1",
+            (model.matter_id,),
+        ).fetchone()
+        if row is None:
+            return {"matrix": None, "validator_failure": None}
+        try:
+            matrix = _json.loads(row["payload_json"] or "{}")
+        except Exception:
+            matrix = None
+        vf = model.db.execute(
+            "SELECT payload_json FROM agent_artifact "
+            "WHERE matter_id=? "
+            "  AND artifact_kind='validator_failure.obligation_coverage.v1' "
+            "  AND invocation_id=? "
+            "ORDER BY created_at DESC LIMIT 1",
+            (model.matter_id, row["invocation_id"]),
+        ).fetchone()
+        validator_failure = None
+        if vf is not None:
+            try:
+                validator_failure = _json.loads(vf["payload_json"] or "{}")
+            except Exception:
+                validator_failure = None
+        return {"matrix": matrix, "validator_failure": validator_failure}
+
+    async def get_term_grid(self, matter_id: str) -> dict:
+        """Aggregate term_grid.v1 + conditional_rule_tree.v1 for a matter."""
+        import json as _json
+        model = self._get_matter_model(matter_id)
+        grids = model.db.execute(
+            "SELECT payload_json FROM agent_artifact "
+            "WHERE matter_id=? AND artifact_kind='term_grid.v1' "
+            "ORDER BY created_at DESC LIMIT 5",
+            (model.matter_id,),
+        ).fetchall()
+        rule_rows = model.db.execute(
+            "SELECT payload_json FROM agent_artifact "
+            "WHERE matter_id=? AND artifact_kind='conditional_rule_tree.v1' "
+            "ORDER BY created_at DESC LIMIT 5",
+            (model.matter_id,),
+        ).fetchall()
+        rows: list[dict] = []
+        topics: set[str] = set()
+        for g in grids:
+            try:
+                p = _json.loads(g["payload_json"] or "{}")
+            except Exception:
+                continue
+            for r in p.get("rows") or []:
+                rows.append(r)
+                t = r.get("topic")
+                if t:
+                    topics.add(t)
+        rules: list[dict] = []
+        for tr in rule_rows:
+            try:
+                p = _json.loads(tr["payload_json"] or "{}")
+            except Exception:
+                continue
+            rules.extend(p.get("rules") or [])
+        return {
+            "rows": rows, "rules": rules,
+            "topics": sorted(topics),
+            "n_rows": len(rows), "n_rules": len(rules),
+        }
+
+    async def get_processing_log(self, matter_id: str, limit: int = 100) -> dict:
+        """Recent operator invocations with rolled-up artifact counts."""
+        model = self._get_matter_model(matter_id)
+        rows = model.db.execute(
+            "SELECT id, agent_id, run_id, phase, requirement, status, "
+            "       latency_ms, cost_estimate, llm_calls, token_estimate, "
+            "       invocation_at, error_class, error_message, "
+            "       budget_breach_reason "
+            "FROM sub_agent_invocation "
+            "WHERE matter_id=? "
+            "ORDER BY invocation_at DESC LIMIT ?",
+            (model.matter_id, limit),
+        ).fetchall()
+        return {"matter_id": model.matter_id,
+                "invocations": [dict(r) for r in rows]}
+
+    # ------------------------------------------------------------------ #
     # P0.3 Review Queue — attorney review workflow (SO-3)                 #
     # ------------------------------------------------------------------ #
 

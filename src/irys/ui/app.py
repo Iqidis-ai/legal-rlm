@@ -5291,6 +5291,249 @@ def _fmt_communication_map_panel(graph: dict, domain: str = "legal") -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Operator substrate observability formatters
+#
+# Per Codex UI/API design (research/findings/ui_api_surfacing_design.md):
+# professional language, no benchmark metadata, render only what helps a
+# domain professional understand what specialist checks ran on their matter.
+# ---------------------------------------------------------------------------
+
+
+_OPERATOR_DISPLAY_NAMES = {
+    "antitrust.hhi_market_share.v1": "HHI calculator",
+    "finance.numerical_reconciliation.v1": "Numerical reconciliation",
+    "banking.cp_section_extractor.v1": "CP section extractor",
+    "document.file_reader.v1": "Document parser",
+    "link.cross_document_linker.v1": "Cross-document linker",
+    "obligation_coverage_matrix": "Obligation coverage",
+    "structured_term_grid_extractor.v1": "Term grid extractor",
+}
+
+
+def _operator_display(agent_id: str) -> str:
+    return _OPERATOR_DISPLAY_NAMES.get(agent_id, agent_id or "operator")
+
+
+def _fmt_requirement_coverage_panel(data: dict) -> str:
+    """Render the latest obligation coverage matrix.
+
+    `data` mirrors the `/matter/{id}/requirement-coverage` API response:
+      {"matrix": {...} | None, "validator_failure": {...} | None}
+    """
+    p = (data or {}).get("matrix") or {}
+    vf_payload = (data or {}).get("validator_failure")
+    if not p:
+        return (
+            "<div class='viz-empty'>No requirement coverage matrix has been "
+            "produced for this matter yet. This is normal for narrow factual "
+            "lookups; coverage runs primarily on deliverable / drafting "
+            "investigations.</div>"
+        )
+    rows = p.get("rows") or []
+    n_total = p.get("n_total", 0)
+    n_met = p.get("n_met", 0)
+    n_critical_missing = p.get("n_critical_missing", 0)
+    n_required_missing = p.get("n_required_missing", 0)
+    n_pending = p.get("n_pending_output", 0)
+    n_concrete = p.get("n_verifiable_gaps", 0)
+    src = p.get("criteria_source", "")
+    out: list[str] = []
+    out.append("<div class='operator-panel'>")
+    # Top summary
+    summary = (
+        f"<div class='req-cov-summary'>"
+        f"<strong>{n_met}/{n_total}</strong> met "
+        f"· <strong>{n_critical_missing}</strong> critical missing "
+        f"· <strong>{n_required_missing}</strong> required missing "
+        f"· <strong>{n_pending}</strong> pending output "
+        f"· <strong>{n_concrete}</strong> verifiable gaps "
+        f"· source: <em>{_escape(src)}</em>"
+        f"</div>"
+    )
+    out.append(summary)
+    if vf_payload:
+        out.append(
+            "<div class='req-cov-blocker' style='background:#fff3cd;"
+            "border:1px solid #f0ad4e;padding:8px;margin:8px 0;'>"
+            "<strong>Review blocker:</strong> required coverage was not "
+            "satisfied before synthesis. The investigation halted; see "
+            "Processing Log for the validator failure record."
+            "</div>"
+        )
+    # Row table
+    if rows:
+        out.append("<table class='operator-table'><thead><tr>"
+                   "<th>Requirement</th><th>Severity</th><th>Status</th>"
+                   "<th>Deliverable</th><th>Slot</th><th>Reason</th>"
+                   "</tr></thead><tbody>")
+        for r in rows[:50]:
+            sc = r.get("source_criterion") or {}
+            dv = r.get("deliverable") or {}
+            sl = r.get("required_slot") or {}
+            status = (r.get("status") or "—")
+            sev = (r.get("severity") or "—")
+            row_color = {
+                "met": "#d4edda",
+                "missing": "#f8d7da",
+                "partial": "#fff3cd",
+                "unknown": "#e9ecef",
+                "upstream_required_evidence_missing": "#fce5cd",
+            }.get(status, "")
+            style = f"background:{row_color};" if row_color else ""
+            out.append(
+                f"<tr style='{style}'>"
+                f"<td>{_escape(sc.get('title') or '—')}</td>"
+                f"<td>{_escape(sev)}</td>"
+                f"<td>{_escape(status)}</td>"
+                f"<td>{_escape(dv.get('deliverable_key') or '—')}</td>"
+                f"<td>{_escape(sl.get('label') or '—')}</td>"
+                f"<td>{_escape(r.get('status_reason') or '')[:120]}</td>"
+                "</tr>"
+            )
+        out.append("</tbody></table>")
+        if len(rows) > 50:
+            out.append(f"<p class='viz-note'>Showing first 50 of {len(rows)} requirements.</p>")
+    return "".join(out) + "</div>"
+
+
+def _fmt_term_grid_panel(data: dict) -> str:
+    """Render extracted term grid + conditional rules.
+
+    `data` mirrors the `/matter/{id}/term-grid` API response:
+      {"rows": [...], "rules": [...], "topics": [...], "n_rows": N, "n_rules": M}
+    """
+    rows = (data or {}).get("rows") or []
+    rules = (data or {}).get("rules") or []
+    topics = set((data or {}).get("topics") or [])
+    if not rows and not rules:
+        return (
+            "<div class='viz-empty'>No extracted terms or conditional rules "
+            "are available for this matter yet. This is expected when the "
+            "investigation did not involve clauses, conditions, covenants, "
+            "or structured rules.</div>"
+        )
+    out: list[str] = ["<div class='operator-panel'>"]
+    out.append(
+        f"<div class='term-grid-summary'>"
+        f"<strong>{len(rows)}</strong> term rows across "
+        f"<strong>{len(topics)}</strong> topics · "
+        f"<strong>{len(rules)}</strong> conditional rules</div>"
+    )
+    if rows:
+        out.append("<h4>Terms</h4>")
+        out.append(
+            "<table class='operator-table'><thead><tr>"
+            "<th>Topic</th><th>Actor</th><th>Obligation / Right</th>"
+            "<th>Trigger</th><th>Exception</th><th>Period</th>"
+            "<th>Source</th><th>Conf.</th>"
+            "</tr></thead><tbody>"
+        )
+        for r in rows[:80]:
+            out.append(
+                "<tr>"
+                f"<td>{_escape(r.get('topic') or '—')}</td>"
+                f"<td>{_escape(r.get('actor') or '—')}</td>"
+                f"<td>{_escape((r.get('obligation_or_right') or '—')[:120])}</td>"
+                f"<td>{_escape((r.get('trigger') or '—')[:80])}</td>"
+                f"<td>{_escape((r.get('exception') or '—')[:80])}</td>"
+                f"<td>{_escape(r.get('date_or_period') or '—')}</td>"
+                f"<td>{_escape((r.get('section_ref') or '—')[:40])}</td>"
+                f"<td>{r.get('confidence', 0.0):.2f}</td>"
+                "</tr>"
+            )
+        out.append("</tbody></table>")
+    if rules:
+        out.append("<h4>Conditional rules</h4>")
+        out.append(
+            "<table class='operator-table'><thead><tr>"
+            "<th>If</th><th>Then</th><th>Unless</th><th>Timing</th>"
+            "<th>Source</th><th>Conf.</th>"
+            "</tr></thead><tbody>"
+        )
+        for r in rules[:50]:
+            out.append(
+                "<tr>"
+                f"<td>{_escape(' AND '.join(str(x) for x in (r.get('if') or [])[:3]))}</td>"
+                f"<td>{_escape(' AND '.join(str(x) for x in (r.get('then') or [])[:3]))}</td>"
+                f"<td>{_escape(' OR '.join(str(x) for x in (r.get('unless') or [])[:2]))}</td>"
+                f"<td>{_escape(str(r.get('timing') or '—'))}</td>"
+                f"<td>{_escape((r.get('section_ref') or '—')[:40])}</td>"
+                f"<td>{r.get('confidence', 0.0):.2f}</td>"
+                "</tr>"
+            )
+        out.append("</tbody></table>")
+    return "".join(out) + "</div>"
+
+
+def _fmt_processing_log_panel(data: dict) -> str:
+    """Render specialist-checks (operator) log: what ran, status, cost, blockers.
+
+    `data` mirrors `/matter/{id}/operator-invocations` API response.
+    """
+    invocations = (data or {}).get("invocations") or []
+    if not invocations:
+        return (
+            "<div class='viz-empty'>No specialist checks have been recorded "
+            "for this matter yet. Run an investigation; specialist checks "
+            "fire automatically when their inputs are available.</div>"
+        )
+    n_total = len(invocations)
+    n_success = sum(1 for r in invocations if r["status"] == "success")
+    n_failed = n_total - n_success
+    total_latency = sum((r["latency_ms"] or 0) for r in invocations)
+    total_cost = sum((r["cost_estimate"] or 0.0) for r in invocations)
+    total_llm = sum((r["llm_calls"] or 0) for r in invocations)
+    blocking_failed = [r for r in invocations
+                        if r["requirement"] == "blocking_validator"
+                        and r["status"] != "success"]
+    out: list[str] = ["<div class='operator-panel'>"]
+    out.append(
+        f"<div class='proc-log-summary'>"
+        f"<strong>{n_total}</strong> specialist checks · "
+        f"<strong>{n_success}</strong> ok · "
+        f"<strong>{n_failed}</strong> failed/blocked · "
+        f"<strong>{total_latency}ms</strong> total latency · "
+        f"<strong>{total_llm}</strong> LLM calls · "
+        f"<strong>${total_cost:.4f}</strong> cost"
+        f"</div>"
+    )
+    if blocking_failed:
+        out.append(
+            f"<div class='proc-log-blockers' style='background:#f8d7da;"
+            f"border:1px solid #dc3545;padding:8px;margin:8px 0;'>"
+            f"<strong>{len(blocking_failed)} blocking validator failure(s)</strong> "
+            f"halted the investigation. Inspect Requirement Coverage above for "
+            f"the missing obligations.</div>"
+        )
+    out.append(
+        "<table class='operator-table'><thead><tr>"
+        "<th>Specialist Check</th><th>Phase</th><th>Requirement</th>"
+        "<th>Status</th><th>Latency</th><th>Cost</th><th>LLM calls</th>"
+        "<th>Error</th>"
+        "</tr></thead><tbody>"
+    )
+    for r in invocations[:80]:
+        status = r["status"] or "—"
+        bg = ""
+        if status != "success":
+            bg = "background:#fce5cd;" if status == "invalid" else "background:#f8d7da;"
+        out.append(
+            f"<tr style='{bg}'>"
+            f"<td>{_escape(_operator_display(r['agent_id']))}</td>"
+            f"<td>{_escape(r['phase'] or '—')}</td>"
+            f"<td>{_escape(r['requirement'] or '—')}</td>"
+            f"<td>{_escape(status)}</td>"
+            f"<td>{r['latency_ms'] or 0}ms</td>"
+            f"<td>${(r['cost_estimate'] or 0.0):.4f}</td>"
+            f"<td>{r['llm_calls'] or 0}</td>"
+            f"<td>{_escape((r['error_message'] or r['budget_breach_reason'] or '')[:80])}</td>"
+            "</tr>"
+        )
+    out.append("</tbody></table>")
+    return "".join(out) + "</div>"
+
+
 def _fmt_llm_analytics_panel(
     summary: dict,
     calls: list[dict],
@@ -15193,6 +15436,36 @@ class AppState:
             logger.warning("resolve_actor failed: %s", exc)
             return f"Error: {_escape(str(exc))}"
 
+    def load_requirement_coverage(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_requirement_coverage(matter_id))
+            return _fmt_requirement_coverage_panel(data)
+        except Exception as exc:
+            logger.warning("load_requirement_coverage: %s", exc)
+            return f"<div class='viz-empty'>Error loading requirement coverage: {_escape(str(exc))}</div>"
+
+    def load_term_grid_panel(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_term_grid(matter_id))
+            return _fmt_term_grid_panel(data)
+        except Exception as exc:
+            logger.warning("load_term_grid_panel: %s", exc)
+            return f"<div class='viz-empty'>Error loading term grid: {_escape(str(exc))}</div>"
+
+    def load_processing_log(self, matter_id: str) -> str:
+        if not matter_id or matter_id == "—":
+            return "<div class='viz-empty'>No matter loaded.</div>"
+        try:
+            data = _run_async(self.backend().get_processing_log(matter_id))
+            return _fmt_processing_log_panel(data)
+        except Exception as exc:
+            logger.warning("load_processing_log: %s", exc)
+            return f"<div class='viz-empty'>Error loading processing log: {_escape(str(exc))}</div>"
+
     def load_llm_analytics(self, matter_id: str) -> str:
         if not matter_id or matter_id == "—":
             return "<div class='viz-empty'>No matter loaded.</div>"
@@ -17439,6 +17712,66 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
                 resolve_actor_btn = gr.Button("Resolve", variant="secondary", size="sm", scale=1)
             resolve_actor_result = gr.Markdown("")
 
+        # ==================================================================
+        # OPERATOR SUBSTRATE — specialist checks, requirement coverage,
+        # extracted terms/rules. Surfaces the v72 sub_agent substrate so
+        # users can see what specialist operators ran on their matter.
+        # ==================================================================
+
+        with gr.Accordion(
+            "Requirement Coverage — requested work product coverage", open=False,
+        ):
+            gr.Markdown(
+                "Shows what Irys believed the requested output needed and "
+                "whether required ingredients were available before synthesis. "
+                "Critical or required obligations marked **missing** indicate "
+                "the answer may be incomplete; **pending** rows are placeholders "
+                "that the synthesis pass will produce."
+            )
+            requirement_coverage_html = gr.HTML(
+                "<div class='viz-empty'>Requirement coverage will appear here "
+                "after an investigation that involves a deliverable / drafting task.</div>"
+            )
+            refresh_requirement_coverage_btn = gr.Button(
+                "Refresh Requirement Coverage", variant="secondary", size="sm",
+            )
+
+        with gr.Accordion(
+            "Terms & Rules — extracted source obligations and conditions",
+            open=False,
+        ):
+            gr.Markdown(
+                "Shows the normalized source-grounded clause/rule rows that "
+                "Irys extracted before synthesis. Each row cites the document "
+                "and section it came from. Rows with low confidence are "
+                "filtered before reaching synthesis."
+            )
+            term_grid_html = gr.HTML(
+                "<div class='viz-empty'>Extracted terms and conditional rules "
+                "will appear here when the investigation involves clauses, "
+                "covenants, conditions, or structured rules.</div>"
+            )
+            refresh_term_grid_btn = gr.Button(
+                "Refresh Terms & Rules", variant="secondary", size="sm",
+            )
+
+        with gr.Accordion(
+            "Processing Log — specialist checks, cost, and blockers", open=False,
+        ):
+            gr.Markdown(
+                "Shows every specialist check (operator) Irys ran on this matter: "
+                "what it did, how long it took, what it cost, and whether any "
+                "check failed or blocked the investigation. Use this to diagnose "
+                "why a specific output looks the way it does."
+            )
+            processing_log_html = gr.HTML(
+                "<div class='viz-empty'>Processing log will appear here after "
+                "an investigation runs.</div>"
+            )
+            refresh_processing_log_btn = gr.Button(
+                "Refresh Processing Log", variant="secondary", size="sm",
+            )
+
         with gr.Accordion("LLM Analytics — cost, latency, and stage mix", open=False):
             gr.Markdown(
                 "Shows recent LLM calls, spend by stage, and the current tier mix."
@@ -18991,6 +19324,22 @@ def create_app(api_key: Optional[str] = None) -> gr.Blocks:
             fn=lambda mid: state.load_investigation_history(mid, domain=state._detect_domain(mid)),
             inputs=[matter_id_box],
             outputs=[investigation_history_html],
+        )
+        # Operator substrate refresh buttons
+        refresh_requirement_coverage_btn.click(
+            fn=lambda mid: state.load_requirement_coverage(mid),
+            inputs=[matter_id_box],
+            outputs=[requirement_coverage_html],
+        )
+        refresh_term_grid_btn.click(
+            fn=lambda mid: state.load_term_grid_panel(mid),
+            inputs=[matter_id_box],
+            outputs=[term_grid_html],
+        )
+        refresh_processing_log_btn.click(
+            fn=lambda mid: state.load_processing_log(mid),
+            inputs=[matter_id_box],
+            outputs=[processing_log_html],
         )
 
         # --- UI-6 privilege mode toggle + document picker ---
