@@ -248,13 +248,42 @@ Design your approach:
 - What search terms will find relevant passages?
 - Does the query require external authority (case law, regulations)?
 
+STRUCTURED LEAD SCHEMA:
+
+priority_files may contain either:
+1. A plain exact filename/path string: "agreement.pdf"
+2. A read-scope object:
+   {{"filepath": "agreement.pdf", "page_start": 10, "page_end": 14,
+     "char_start": null, "char_end": null, "max_chars": null,
+     "target": "Article 13", "reason": "why this region is needed"}}
+
+Read-scope rules:
+- "filepath" is required for object form and must match a repository filename/path.
+- page_start/page_end and char_start/char_end are optional; use them only when known.
+- Do NOT invent page or character ranges. If the relevant location is unknown, search first.
+- "target" is a focus label for extraction/debugging; the read tool will NOT secretly search for it.
+
+search_terms may contain either:
+1. A plain literal search string: "Article 13"
+2. A structured search object:
+   {{"query": "Article 13", "documents": ["agreement.pdf"],
+     "case_sensitive": false, "context_lines": 6}}
+
+Search rules:
+- "query" is required for object form.
+- "documents"/"files" is optional; use only exact repository filenames/paths.
+- Do not use regex syntax. Use literal searches only.
+
 === OUTPUT (JSON only) ===
 {{
     "reasoning": "Strategy and file categorization",
     "key_issues": ["legal issue 1", "legal issue 2"],
-    "priority_files": ["exact_filename.pdf"],
+    "priority_files": [
+        "exact_filename.pdf",
+        {{"filepath": "agreement.pdf", "page_start": 10, "page_end": 14, "target": "Article 13", "reason": "late-clause review"}}
+    ],
     "skip_files": ["generic_reference.pdf"],
-    "search_terms": ["term1", "term2"],
+    "search_terms": ["term1", {{"query": "Article 13", "documents": ["agreement.pdf"], "context_lines": 6}}],
     "case_law_searches": [],
     "web_searches": [],
     "success_criteria": "What finding would answer this query",
@@ -288,6 +317,33 @@ Make these assessments:
    - What search terms will find relevant passages?
    - Does the query require external authority (case law, regulations)?
 
+STRUCTURED LEAD SCHEMA:
+
+priority_files may contain either:
+1. A plain exact filename/path string: "agreement.pdf"
+2. A read-scope object:
+   {{"filepath": "agreement.pdf", "page_start": 10, "page_end": 14,
+     "char_start": null, "char_end": null, "max_chars": null,
+     "target": "Article 13", "reason": "why this region is needed"}}
+
+Read-scope rules:
+- "filepath" is required for object form and must match a repository filename/path.
+- page_start/page_end and char_start/char_end are optional; use them only when known.
+- Do NOT invent page or character ranges. If the relevant location is unknown, search first.
+- If cached facts identify an exact page/section, you may request that scoped read.
+- "target" is a focus label for extraction/debugging; the read tool will NOT secretly search for it.
+
+search_terms may contain either:
+1. A plain literal search string: "Article 13"
+2. A structured search object:
+   {{"query": "Article 13", "documents": ["agreement.pdf"],
+     "case_sensitive": false, "context_lines": 6}}
+
+Search rules:
+- "query" is required for object form.
+- "documents"/"files" is optional; use only exact repository filenames/paths.
+- Do not use regex syntax. Use literal searches only.
+
 === OUTPUT (JSON only) ===
 {{
     "can_answer_from_facts": true | false,
@@ -295,9 +351,12 @@ Make these assessments:
     "complexity": "simple" | "complex",
     "reasoning": "Strategy and assessment",
     "key_issues": ["legal issue 1", "legal issue 2"],
-    "priority_files": ["exact_filename.pdf"],
+    "priority_files": [
+        "exact_filename.pdf",
+        {{"filepath": "agreement.pdf", "page_start": 10, "page_end": 14, "target": "Article 13", "reason": "late-clause review"}}
+    ],
     "skip_files": ["generic_reference.pdf"],
-    "search_terms": ["term1", "term2"],
+    "search_terms": ["term1", {{"query": "Article 13", "documents": ["agreement.pdf"], "context_lines": 6}}],
     "case_law_searches": [],
     "web_searches": [],
     "success_criteria": "What finding would answer this query"
@@ -335,8 +394,16 @@ P_EXTRACT_FACTS = """You are extracting facts from a document for a legal invest
 Query: {query}
 
 Document: {filename}
+{scope_context}
 Content:
 {content}
+
+SCOPE DISCIPLINE:
+- The content above may be a prefix excerpt or a targeted page/character region, not the full document.
+- Extract facts only from the provided content.
+- Do NOT state that a clause, term, or issue is absent from the whole document unless the provided scope clearly covers the relevant section.
+- If the provided scope appears insufficient, say so in "gaps" and suggest a targeted follow-up in "next_steps" or "references".
+- For quote page numbers, use visible page markers when available; otherwise use null.
 
 CRITICAL: Legal precision is paramount. Extract ALL relevant facts with EXACT values.
 
@@ -684,9 +751,10 @@ Already read: {already_read}
 DOCUMENT CRITICALITY (memory management)
 ═══════════════════════════════════════════════════════════════════════════════
 
-DECISIVE (loaded in full for synthesis):
-- Case-specific docs that DIRECTLY answer the query
+DECISIVE (pinned for synthesis as the relevant document region/scope):
+- Case-specific docs or specific regions that DIRECTLY answer the query
 - Contracts, correspondence, pleadings, expert reports specific to THIS matter
+- When the search hit identifies a useful page/section, include page_start/page_end and target
 
 NEVER DECISIVE:
 - Statutes, acts, codes, regulations
@@ -698,16 +766,54 @@ IRRELEVANT: Skip entirely
 
 ═══════════════════════════════════════════════════════════════════════════════
 
+SEARCH HIT DISCIPLINE:
+- Put a fact in "facts" only if it is directly proven by the visible search hit/context.
+- Do NOT infer the full meaning of a clause from a snippet. Use "read_deeper" for more context.
+- Search locates; read executes explicit scopes. Do not assume a search hit means the document was fully reviewed.
+
+STRUCTURED OUTPUT SCHEMA:
+
+ranked_documents items must be objects:
+{{"file": "exact path/file.pdf", "score": 0-100,
+  "criticality": "DECISIVE" | "SUPPORTING" | "IRRELEVANT",
+  "reason": "why this ranking is appropriate",
+  "page_start": 64, "page_end": 75, "target": "Article 13"}}
+
+ranked_documents rules:
+- "file", "score", "criticality", and "reason" are required.
+- page_start/page_end/target are optional, but include them when search hits reveal a useful region.
+- Do NOT invent page ranges. If only a file is known, omit page_start/page_end.
+
+read_deeper may contain either:
+1. A plain exact filename/path string: "file.pdf"
+2. A read-scope object:
+   {{"filepath": "path/file.pdf", "page_start": 64, "page_end": 75,
+     "char_start": null, "char_end": null, "max_chars": null,
+     "target": "Article 13", "reason": "search hit showed relevant clause"}}
+
+additional_searches may contain either:
+1. A plain literal search string: "default clause"
+2. A structured search object:
+   {{"query": "Article 13", "documents": ["path/file.pdf"],
+     "case_sensitive": false, "context_lines": 6}}
+
+Search rules:
+- "documents"/"files" is optional; use only exact filenames/paths from search results or repository listing.
+- Do not use regex syntax. Use literal searches only.
+
 === OUTPUT (JSON only) ===
 {{
     "relevant_hit_numbers": [1, 3, 5],
     "facts": ["fact with exact values"],
     "citations": [{{"text": "quote", "source": "file", "page": 1}}],
     "ranked_documents": [
-        {{"file": "path/file.pdf", "score": 95, "criticality": "DECISIVE|SUPPORTING|IRRELEVANT", "reason": "why"}}
+        {{"file": "path/file.pdf", "score": 95, "criticality": "DECISIVE|SUPPORTING|IRRELEVANT", "reason": "why", "page_start": 64, "page_end": 75, "target": "Article 13"}}
     ],
-    "additional_searches": ["term"],
-    "read_deeper": ["file.pdf"],
+    "additional_searches": ["term", {{"query": "Article 13", "documents": ["path/file.pdf"], "context_lines": 6}}],
+    "read_deeper": [
+        "file.pdf",
+        {{"filepath": "path/file.pdf", "page_start": 64, "page_end": 75, "target": "Article 13", "reason": "search hit showed relevant clause"}}
+    ],
     "assessment": "Strategic assessment and gaps"
 }}"""
 

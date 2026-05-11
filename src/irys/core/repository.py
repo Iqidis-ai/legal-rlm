@@ -489,14 +489,19 @@ class MatterRepository:
         - path: Relative path for reading
         - type: File extension
         - size_kb: Size in KB (rounded)
+        - page_count: Extracted page count, when already available
+        - extracted_chars: Extracted character count, when already available
         """
         files = []
         for file_info in self.list_files():
+            doc = self._doc_cache.get(str(file_info.path))
             files.append({
                 "filename": file_info.filename,
                 "path": file_info.relative_path,
                 "type": file_info.file_type,
                 "size_kb": round(file_info.size_bytes / 1024),
+                "page_count": doc.page_count if doc else None,
+                "extracted_chars": doc.total_chars if doc else None,
             })
         return files
 
@@ -779,6 +784,23 @@ class MatterRepository:
         )
 
         # Map filenames to display names
+        return self._map_search_results_to_display_names(results)
+
+    def smart_search_files(
+        self,
+        query: str,
+        files: list[Path],
+        case_sensitive: bool = False,
+        context_lines: int = 2,
+    ) -> SearchResults:
+        """Smart search over an explicit, already-validated file subset."""
+        results = self.search_engine.smart_search(
+            query=query,
+            files=files,
+            regex=False,
+            case_sensitive=case_sensitive,
+            context_lines=context_lines,
+        )
         return self._map_search_results_to_display_names(results)
 
     def search_multi(

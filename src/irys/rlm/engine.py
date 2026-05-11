@@ -58,8 +58,15 @@ class RLMConfig:
     max_leads_per_level: int = 3  # Reduced from 5
     max_documents_per_search: int = 5  # Reduced from 10
     # Dynamic excerpt limits based on query complexity
-    excerpt_chars_simple: int = 8000  # Fast path for simple queries
-    excerpt_chars_complex: int = 40000  # Full coverage for complex queries
+    excerpt_chars_simple: int = 100_000  # Broader default prefix for legal docs
+    excerpt_chars_complex: int = 150_000  # Broader default prefix for complex legal docs
+    targeted_read_max_chars: int = 700_000  # Hard cap for explicit scoped reads
+    search_context_lines: int = 5
+    search_analysis_max_hits: int = 80
+    search_analysis_max_context_chars: int = 800
+    evidence_current_facts_budget: int = 80_000
+    evidence_cached_facts_budget: int = 15_000
+    pinned_region_total_budget: int = 300_000
     parallel_reads: int = 3  # Reduced from 5
     checkpoint_dir: Optional[str] = None
     checkpoint_interval: int = 5
@@ -93,6 +100,7 @@ class RLMConfig:
 class InvestigationCache:
     """Cache to avoid redundant work."""
     extracted_docs: set = field(default_factory=set)  # Docs we've extracted facts from
+    extracted_scopes: set = field(default_factory=set)  # Scope-aware read identities
     searched_terms: set = field(default_factory=set)  # Search terms we've used
     irrelevant_docs: set = field(default_factory=set)  # Docs marked IRRELEVANT by LLM
     consecutive_read_failures: int = 0  # Track consecutive read failures
@@ -109,13 +117,18 @@ class InvestigationCache:
         self.total_read_failures += 1
         return self.consecutive_read_failures >= self.MAX_CONSECUTIVE_FAILURES
 
-    def has_extracted(self, filepath: str) -> bool:
+    def has_extracted(self, filepath: str, scope_key: Optional[str] = None) -> bool:
         """Check if we've already extracted facts from this doc."""
+        if scope_key:
+            return scope_key in self.extracted_scopes
         return filepath in self.extracted_docs
 
-    def mark_extracted(self, filepath: str):
+    def mark_extracted(self, filepath: str, scope_key: Optional[str] = None, whole_doc: bool = True):
         """Mark a doc as extracted."""
-        self.extracted_docs.add(filepath)
+        if scope_key:
+            self.extracted_scopes.add(scope_key)
+        if whole_doc:
+            self.extracted_docs.add(filepath)
 
     def mark_irrelevant(self, filepath: str):
         """Mark a doc as irrelevant (skip in future ranking)."""
@@ -142,6 +155,46 @@ class InvestigationCache:
     def add_search(self, term: str):
         """Record a search term."""
         self.searched_terms.add(term.lower())
+
+
+@dataclass(frozen=True)
+class ReadScope:
+    """Explicit document read scope requested by the agent."""
+    filepath: str
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
+    char_start: Optional[int] = None
+    char_end: Optional[int] = None
+    max_chars: Optional[int] = None
+    target: str = ""
+    reason: str = ""
+
+    @property
+    def is_targeted(self) -> bool:
+        return any(v is not None for v in (self.page_start, self.page_end, self.char_start, self.char_end))
+
+    def cache_key(self, default_max_chars: int) -> str:
+        max_chars = self.max_chars or default_max_chars
+        return "|".join([
+            self.filepath,
+            f"p={self.page_start or ''}-{self.page_end or ''}",
+            f"c={self.char_start or ''}-{self.char_end or ''}",
+            f"m={max_chars}",
+            f"t={self.target}",
+            f"r={self.reason}",
+        ])
+
+    def label(self) -> str:
+        parts = []
+        if self.page_start or self.page_end:
+            parts.append(f"pages {self.page_start or 1}-{self.page_end or self.page_start or ''}".rstrip("-"))
+        if self.char_start is not None or self.char_end is not None:
+            parts.append(f"chars {self.char_start or 0}-{self.char_end or ''}".rstrip("-"))
+        if self.target:
+            parts.append(f"target: {self.target}")
+        if self.reason:
+            parts.append(f"reason: {self.reason}")
+        return "; ".join(parts) if parts else "prefix"
 
 
 class RLMEngine:
@@ -180,6 +233,137 @@ class RLMEngine:
         # Lead lifecycle tracking
         self._lead_start_times: dict[str, float] = {}
 
+    def _default_excerpt_limit(self) -> int:
+        return (
+            self.config.excerpt_chars_simple
+            if getattr(self, '_is_simple_query', False)
+            else self.config.excerpt_chars_complex
+        )
+
+    @staticmethod
+    def _coerce_int(value: Any) -> Optional[int]:
+        if value is None or value == "":
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _read_scope_from_entry(self, entry: Any) -> Optional[ReadScope]:
+        """Accept legacy string or structured read-lead dict."""
+        if isinstance(entry, str):
+            filepath = entry.strip()
+            return ReadScope(filepath=filepath) if filepath else None
+        if not isinstance(entry, dict):
+            return None
+        filepath = (
+            entry.get("filepath") or entry.get("file_path") or entry.get("file")
+            or entry.get("path") or entry.get("document") or entry.get("filename")
+        )
+        if not filepath:
+            return None
+        target = entry.get("target") or entry.get("section") or entry.get("article") or entry.get("clause") or ""
+        return ReadScope(
+            filepath=str(filepath),
+            page_start=self._coerce_int(entry.get("page_start")),
+            page_end=self._coerce_int(entry.get("page_end")),
+            char_start=self._coerce_int(entry.get("char_start")),
+            char_end=self._coerce_int(entry.get("char_end")),
+            max_chars=self._coerce_int(entry.get("max_chars")),
+            target=str(target or ""),
+            reason=str(entry.get("reason") or ""),
+        )
+
+    def _read_scope_from_lead(self, lead: Lead) -> ReadScope:
+        params = dict(lead.params or {})
+        if params:
+            scope = self._read_scope_from_entry(params)
+            if scope:
+                return scope
+        filepath = lead.description.replace("Read document:", "").replace("Read:", "").strip()
+        return ReadScope(filepath=filepath)
+
+    def _read_lead_description(self, scope: ReadScope) -> str:
+        suffix = f" [{scope.label()}]" if scope.label() != "prefix" else ""
+        return f"Read document: {scope.filepath}{suffix}"
+
+    def _add_read_lead(
+        self,
+        state: InvestigationState,
+        entry: Any,
+        source: str,
+        parent_lead_id: Optional[str] = None,
+    ) -> Optional[Lead]:
+        scope = self._read_scope_from_entry(entry)
+        if not scope:
+            return None
+        params = {
+            "filepath": scope.filepath,
+            "page_start": scope.page_start,
+            "page_end": scope.page_end,
+            "char_start": scope.char_start,
+            "char_end": scope.char_end,
+            "max_chars": scope.max_chars,
+            "target": scope.target,
+            "reason": scope.reason,
+        }
+        params = {k: v for k, v in params.items() if v not in (None, "")}
+        return state.add_lead(
+            self._read_lead_description(scope),
+            source=source,
+            parent_lead_id=parent_lead_id,
+            params=params,
+        )
+
+    def _search_params_from_entry(self, entry: Any) -> Optional[dict[str, Any]]:
+        if isinstance(entry, str):
+            query = entry.strip()
+            return {"query": query} if query else None
+        if not isinstance(entry, dict):
+            return None
+        query = entry.get("query") or entry.get("term") or entry.get("search")
+        if not query:
+            return None
+        return {
+            "query": str(query),
+            "files": entry.get("files") or entry.get("documents") or entry.get("document_subset") or [],
+            "case_sensitive": bool(entry.get("case_sensitive", False)),
+            "context_lines": self._coerce_int(entry.get("context_lines")) or self.config.search_context_lines,
+        }
+
+    def _search_params_from_lead(self, lead: Lead) -> dict[str, Any]:
+        params = self._search_params_from_entry(lead.params or {})
+        if params:
+            return params
+        return {"query": self._extract_search_term(lead.description), "files": [], "case_sensitive": False, "context_lines": self.config.search_context_lines}
+
+    def _add_search_lead(
+        self,
+        state: InvestigationState,
+        entry: Any,
+        source: str,
+        parent_lead_id: Optional[str] = None,
+    ) -> Optional[Lead]:
+        params = self._search_params_from_entry(entry)
+        if not params:
+            return None
+        query = params["query"]
+        return state.add_lead(
+            f"Search for: {query}",
+            source=source,
+            parent_lead_id=parent_lead_id,
+            params={k: v for k, v in params.items() if v not in (None, "", [])},
+        )
+
+    @staticmethod
+    def _format_file_for_plan(file_info: dict) -> str:
+        meta = [f"{file_info['size_kb']}KB", file_info["type"]]
+        if file_info.get("page_count") is not None:
+            meta.append(f"{file_info['page_count']} pages")
+        if file_info.get("extracted_chars") is not None:
+            meta.append(f"{file_info['extracted_chars']:,} chars")
+        return f"  - {file_info['filename']} ({', '.join(meta)})"
+
     async def _emit_lead_started(self, state: InvestigationState, lead: Lead):
         """Emit lead.started event and track timing."""
         self._lead_start_times[lead.id] = time.monotonic()
@@ -190,6 +374,7 @@ class RLMEngine:
                 "lead_id": lead.id,
                 "type": lead.lead_type,
                 "description": lead.description,
+                "params": lead.params,
                 "parent_lead_id": lead.parent_lead_id,
             },
         )
@@ -571,7 +756,7 @@ class RLMEngine:
             research_context = ResearchContext(
                 gap=gap or "",
                 reasoning=assessment.get("reasoning", "") or "",
-                cached_facts=state.findings.get("accumulated_facts", [])[:15],
+                cached_facts=self._pack_current_facts(state).splitlines(),
                 triggers_summary="",
                 source_path="small_repo",
             )
@@ -760,7 +945,7 @@ class RLMEngine:
         if not self.external_search or not self.config.enable_external_search:
             return
 
-        facts = state.findings.get("accumulated_facts", [])[:15]
+        facts = self._pack_current_facts(state).splitlines()
         triggers_summary = ""
         if hasattr(state, "get_trigger_summary"):
             try:
@@ -809,10 +994,7 @@ class RLMEngine:
         file_list = repo.get_file_list()
 
         # Format file list for LLM - show filenames so it can prioritize
-        file_list_str = "\n".join(
-            f"  - {f['filename']} ({f['size_kb']}KB, {f['type']})"
-            for f in file_list[:50]  # Limit to 50 files for context
-        )
+        file_list_str = "\n".join(self._format_file_for_plan(f) for f in file_list[:50])
         if len(file_list) > 50:
             file_list_str += f"\n  ... and {len(file_list) - 50} more files"
 
@@ -847,21 +1029,17 @@ class RLMEngine:
                         if display_name.startswith(filepath.split("...")[0].rstrip(". ")):
                             resolved = path
                             break
-                state.add_lead(
-                    f"Read document: {resolved or filepath}",
-                    source="initial_plan",
-                )
+                self._add_read_lead(state, resolved or filepath, source="initial_plan")
 
         # Then create leads from search terms
         for term in plan.get("search_terms", [])[:3]:
-            if isinstance(term, str):
-                state.add_lead(f"Search for: {term}", source="initial_plan")
+            self._add_search_lead(state, term, source="initial_plan")
 
         # Fallback if no leads
         if not state.leads:
             terms = await decisions.extract_search_terms(state.query, self.client)
             for term in terms[:2]:
-                state.add_lead(f"Search for: {term}", source="fallback")
+                self._add_search_lead(state, term, source="fallback")
 
         # Emit structured plan event
         await self._emit_step_async(
@@ -895,10 +1073,7 @@ class RLMEngine:
         file_list = repo.get_file_list()
 
         # Format file list for LLM - show filenames so it can prioritize
-        file_list_str = "\n".join(
-            f"  - {f['filename']} ({f['size_kb']}KB, {f['type']})"
-            for f in file_list[:50]  # Limit to 50 files for context
-        )
+        file_list_str = "\n".join(self._format_file_for_plan(f) for f in file_list[:50])
         if len(file_list) > 50:
             file_list_str += f"\n  ... and {len(file_list) - 50} more files"
 
@@ -940,19 +1115,17 @@ class RLMEngine:
         # PRIORITY: Create leads for priority files FIRST (read before searching)
         priority_files = assessment.get("priority_files", [])
         for filepath in priority_files[:3]:  # Limit to top 3 priority files
-            if isinstance(filepath, str):
-                state.add_lead(f"Read document: {filepath}", source="initial_plan")
+            self._add_read_lead(state, filepath, source="initial_plan")
 
         # Then create leads from search terms
         for term in assessment.get("search_terms", [])[:3]:
-            if isinstance(term, str):
-                state.add_lead(f"Search for: {term}", source="initial_plan")
+            self._add_search_lead(state, term, source="initial_plan")
 
         # Fallback if no leads
         if not state.leads:
             terms = await decisions.extract_search_terms(state.query, self.client)
             for term in terms[:2]:
-                state.add_lead(f"Search for: {term}", source="fallback")
+                self._add_search_lead(state, term, source="fallback")
 
         # Emit structured plan event
         await self._emit_step_async(
@@ -1287,26 +1460,21 @@ class RLMEngine:
 
             iteration += 1
             facts_count = len(state.findings.get("accumulated_facts", []))
-            findings_summary = self._format_findings(state)
             plan_summary = state.findings.get("initial_plan", {}).get("reasoning", "")
 
             # === CONSOLIDATED CHECKPOINT ===
             # Single LLM call replaces is_sufficient + should_replan
             if facts_count >= self.config.early_exit_facts or iteration > 1:
-                # Get cached facts for checkpoint evaluation
-                cached_facts_str = ""
-                if self.fact_store and len(self.fact_store) > 0:
-                    relevant_facts = self.fact_store.get_relevant(state.query)
-                    if relevant_facts:
-                        cached_facts_str = self.fact_store.format_for_llm(relevant_facts)
+                # Build the same selected evidence package used by synthesis.
+                evidence_context = await self._build_evidence_context(state)
 
                 t_step_ck = self._telemetry.begin_step("sufficiency_check", "investigation_loop") if self._telemetry else None
                 checkpoint_result = await decisions.checkpoint(
                     query=state.query,
-                    findings=findings_summary,
+                    findings=evidence_context["checkpoint_findings"],
                     plan=plan_summary,
                     client=self.client,
-                    cached_facts=cached_facts_str,
+                    cached_facts=evidence_context["cached_facts"],
                     active_step=t_step_ck,
                 )
                 if t_step_ck:
@@ -1341,13 +1509,19 @@ class RLMEngine:
                     # Add new leads from checkpoint
                     newly_added_leads = []
                     for term in new_search_terms:
-                        if not cache.is_similar_search(term):
-                            new_lead = state.add_lead(f"Search for: {term}", source="checkpoint")
+                        params = self._search_params_from_entry(term)
+                        query = params.get("query") if params else None
+                        if query and not cache.is_similar_search(query):
+                            new_lead = self._add_search_lead(state, term, source="checkpoint")
                             if new_lead:
                                 newly_added_leads.append(new_lead)
                     for filepath in files_to_check:
-                        if not cache.has_extracted(filepath) and not cache.is_irrelevant(filepath):
-                            new_lead = state.add_lead(f"Read document: {filepath}", source="checkpoint")
+                        scope = self._read_scope_from_entry(filepath)
+                        if not scope:
+                            continue
+                        scope_key = scope.cache_key(self._default_excerpt_limit())
+                        if not cache.has_extracted(scope.filepath, scope_key) and not cache.is_irrelevant(scope.filepath):
+                            new_lead = self._add_read_lead(state, filepath, source="checkpoint")
                             if new_lead:
                                 newly_added_leads.append(new_lead)
 
@@ -1463,6 +1637,258 @@ class RLMEngine:
 
         return None
 
+    def _resolve_search_files(self, repo: MatterRepository, requested: Any) -> Optional[list[Path]]:
+        """Validate an agent-requested document subset; fall back by returning None."""
+        if not requested:
+            return None
+        if isinstance(requested, (str, Path)):
+            requested_items = [str(requested)]
+        elif isinstance(requested, list):
+            requested_items = [str(item) for item in requested if item]
+        else:
+            return None
+
+        file_infos = repo.list_files()
+        lookup: dict[str, Path] = {}
+        for info in file_infos:
+            keys = {
+                info.filename,
+                info.relative_path,
+                str(info.path),
+                Path(info.relative_path).name,
+            }
+            for key in keys:
+                lookup[key.lower()] = info.path
+
+        resolved: list[Path] = []
+        seen: set[Path] = set()
+        for item in requested_items:
+            path = lookup.get(item.lower())
+            if path and path not in seen:
+                resolved.append(path)
+                seen.add(path)
+
+        return resolved or None
+
+    async def _add_current_facts(
+        self,
+        state: InvestigationState,
+        facts: list[str],
+        source_doc: str,
+        origin: str,
+        scope: Optional[ReadScope] = None,
+        lead_id: Optional[str] = None,
+    ) -> None:
+        """Store current-session facts as strings plus lightweight provenance."""
+        if not facts:
+            return
+        records = state.findings.setdefault("current_fact_records", [])
+        for fact in facts:
+            if not isinstance(fact, str) or not fact.strip():
+                continue
+            if state.add_fact(fact):
+                record = {
+                    "text": fact,
+                    "source": source_doc,
+                    "origin": origin,
+                }
+                if scope:
+                    record["scope"] = scope.label()
+                    record["page_start"] = scope.page_start
+                    record["page_end"] = scope.page_end
+                    record["char_start"] = scope.char_start
+                    record["char_end"] = scope.char_end
+                    record["target"] = scope.target
+                records.append({k: v for k, v in record.items() if v not in (None, "")})
+                if lead_id:
+                    await self._emit_lead_update(
+                        state,
+                        lead_id,
+                        "fact",
+                        {"fact": fact, "source_doc": source_doc, "origin": origin},
+                    )
+
+    def _pin_scope(self, state: InvestigationState, scope: ReadScope, reason: str = "") -> None:
+        """Remember a decisive region/scope for synthesis instead of just a filename."""
+        pinned = state.findings.setdefault("pinned_regions", [])
+        item = {
+            "filepath": scope.filepath,
+            "page_start": scope.page_start,
+            "page_end": scope.page_end,
+            "char_start": scope.char_start,
+            "char_end": scope.char_end,
+            "max_chars": scope.max_chars,
+            "target": scope.target,
+            "reason": scope.reason or reason,
+        }
+        item = {k: v for k, v in item.items() if v not in (None, "")}
+        identity = tuple(sorted(item.items()))
+        existing = {tuple(sorted((p or {}).items())) for p in pinned if isinstance(p, dict)}
+        if identity not in existing:
+            pinned.append(item)
+
+        # Keep legacy key for UI/source counts while moving synthesis to pinned_regions.
+        legacy = state.findings.setdefault("pinned_documents", [])
+        if scope.filepath not in legacy:
+            legacy.append(scope.filepath)
+
+    def _record_read_scope(self, state: InvestigationState, doc: Any, scope: ReadScope, chars: int) -> None:
+        scopes = state.findings.setdefault("read_scopes", [])
+        item = {
+            "filepath": scope.filepath,
+            "filename": getattr(doc, "filename", Path(scope.filepath).name),
+            "scope": scope.label(),
+            "origin": "targeted_read" if scope.is_targeted else "prefix_read",
+            "chars": chars,
+            "page_start": scope.page_start,
+            "page_end": scope.page_end,
+            "char_start": scope.char_start,
+            "char_end": scope.char_end,
+            "target": scope.target,
+            "reason": scope.reason,
+        }
+        scopes.append({k: v for k, v in item.items() if v not in (None, "")})
+
+    def _content_for_scope(self, doc: Any, scope: ReadScope) -> tuple[str, int]:
+        default_limit = self._default_excerpt_limit()
+        max_chars = scope.max_chars or (self.config.targeted_read_max_chars if scope.is_targeted else default_limit)
+        max_chars = min(max_chars, self.config.targeted_read_max_chars if scope.is_targeted else max_chars)
+
+        if scope.page_start is not None or scope.page_end is not None:
+            start = scope.page_start or 1
+            end = scope.page_end or start
+            content = doc.get_page_range(start, end)
+        elif scope.char_start is not None or scope.char_end is not None:
+            text = doc.full_text
+            start = max(scope.char_start or 0, 0)
+            end = scope.char_end if scope.char_end is not None else len(text)
+            content = text[start:max(start, end)]
+        else:
+            content = doc.get_excerpt(max_chars)
+            return content, max_chars
+
+        if len(content) > max_chars:
+            content = content[:max_chars] + f"\n\n[...truncated scoped read to {max_chars} chars...]"
+        return content, max_chars
+
+    @staticmethod
+    def _fact_line(record: dict[str, Any]) -> str:
+        text = record.get("text") or record.get("fact") or str(record)
+        source = record.get("source") or "unknown source"
+        origin = record.get("origin") or "current_session"
+        scope = f"; {record.get('scope')}" if record.get("scope") else ""
+        return f"- [{origin}; {source}{scope}] {text}"
+
+    def _pack_current_facts(self, state: InvestigationState) -> str:
+        """Budget-aware deterministic packing for current-session facts."""
+        records = state.findings.get("current_fact_records") or []
+        if not records:
+            records = [{"text": f, "origin": "current_session"} for f in state.findings.get("accumulated_facts", [])]
+
+        lines = [self._fact_line(r) for r in records]
+        joined = "\n".join(lines)
+        budget = self.config.evidence_current_facts_budget
+        if len(joined) <= budget:
+            return joined or "- No current-session facts selected."
+
+        def score(record: dict[str, Any]) -> int:
+            origin = record.get("origin", "")
+            value = 0
+            if origin == "targeted_read":
+                value += 30
+            elif origin == "prefix_read":
+                value += 20
+            elif origin == "search_snippet":
+                value += 10
+            if record.get("page_start") or record.get("char_start") is not None:
+                value += 5
+            if record.get("source"):
+                value += 2
+            return value
+
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for record in records:
+            grouped.setdefault(record.get("source") or "unknown", []).append(record)
+        for source_records in grouped.values():
+            source_records.sort(key=score, reverse=True)
+
+        packed: list[str] = []
+        used = 0
+        while grouped and used < budget:
+            exhausted = []
+            for source, source_records in grouped.items():
+                if not source_records:
+                    exhausted.append(source)
+                    continue
+                line = self._fact_line(source_records.pop(0))
+                if used + len(line) + 1 <= budget:
+                    packed.append(line)
+                    used += len(line) + 1
+                if not source_records:
+                    exhausted.append(source)
+            for source in exhausted:
+                grouped.pop(source, None)
+        return "\n".join(packed) or "- Current facts exceeded budget but none fit."
+
+    @staticmethod
+    def _format_read_scope_summary(state: InvestigationState) -> str:
+        scopes = state.findings.get("read_scopes", [])
+        if not scopes:
+            return "- No document read scopes recorded yet."
+        lines = []
+        for item in scopes[-30:]:
+            filename = item.get("filename") or Path(item.get("filepath", "")).name
+            origin = item.get("origin", "read")
+            scope = item.get("scope", "prefix")
+            chars = item.get("chars", 0)
+            lines.append(f"- {filename}: {scope} ({origin}, {chars:,} chars)")
+        return "\n".join(lines)
+
+    async def _build_evidence_context(
+        self,
+        state: InvestigationState,
+        emit_pinned: bool = False,
+    ) -> dict[str, str]:
+        """Shared context package for both checkpoint and synthesis."""
+        current_facts = self._pack_current_facts(state)
+
+        cached_facts = ""
+        if self.fact_store and len(self.fact_store) > 0:
+            relevant_facts = self.fact_store.get_relevant(state.query)
+            if relevant_facts:
+                cached_facts = self.fact_store.format_for_llm(
+                    relevant_facts,
+                    max_chars=self.config.evidence_cached_facts_budget,
+                )
+
+        coverage = self._format_read_scope_summary(state)
+        pinned_content = await self._load_pinned_documents(state, emit=emit_pinned)
+
+        checkpoint_findings = (
+            "=== SELECTED CURRENT-SESSION FACTS ===\n"
+            f"{current_facts}\n\n"
+            "=== COVERAGE / READ SCOPES ===\n"
+            f"{coverage}\n\n"
+            "=== PINNED REGIONS AVAILABLE TO SYNTHESIS ===\n"
+            f"{pinned_content or 'No pinned regions.'}"
+        )
+        synthesis_evidence = (
+            "=== SELECTED CURRENT-SESSION FACTS ===\n"
+            f"{current_facts}\n\n"
+            "=== SELECTED CACHED FACTS ===\n"
+            f"{cached_facts or 'No cached facts selected.'}\n\n"
+            "=== COVERAGE / READ SCOPES ===\n"
+            f"{coverage}"
+        )
+        return {
+            "current_facts": current_facts,
+            "cached_facts": cached_facts,
+            "coverage": coverage,
+            "pinned_content": pinned_content,
+            "checkpoint_findings": checkpoint_findings,
+            "synthesis_evidence": synthesis_evidence,
+        }
+
     async def _investigate_lead(
         self,
         state: InvestigationState,
@@ -1480,11 +1906,17 @@ class RLMEngine:
 
         # Determine if this is a search or read lead
         if lead.description.startswith("Read document:"):
-            filepath = lead.description.replace("Read document:", "").strip()
+            scope = self._read_scope_from_lead(lead)
+            filepath = scope.filepath
+            scope_key = scope.cache_key(self._default_excerpt_limit())
 
             # OPTIMIZATION: Skip if already extracted or marked irrelevant
-            if cache.has_extracted(filepath):
-                await self._emit_step_async(state, StepType.THINKING, f"Skip read (already extracted): {filepath}", visible=False)
+            if cache.has_extracted(filepath, scope_key):
+                await self._emit_step_async(
+                    state, StepType.THINKING,
+                    f"Skip read (already extracted): {filepath} [{scope.label()}]",
+                    visible=False,
+                )
                 state.mark_lead_investigated(lead.id, "Already extracted")
                 return
             if cache.is_irrelevant(filepath):
@@ -1494,15 +1926,16 @@ class RLMEngine:
 
             await self._emit_lead_started(state, lead)
             try:
-                await self._read_document(state, repo, filepath, cache, lead_id=lead.id)
+                await self._read_document(state, repo, filepath, cache, lead_id=lead.id, scope=scope)
                 state.mark_lead_investigated(lead.id, "Document read")
             except Exception as e:
                 await self._emit_lead_error(state, lead.id, str(e))
                 raise
             await self._emit_lead_done(state, lead.id)
         else:
-            # Extract search term
-            search_term = self._extract_search_term(lead.description)
+            # Extract structured search parameters (legacy string leads still work)
+            search_params = self._search_params_from_lead(lead)
+            search_term = search_params["query"]
 
             # OPTIMIZATION: Skip similar searches
             if self.config.skip_similar_searches and cache.is_similar_search(search_term):
@@ -1518,7 +1951,24 @@ class RLMEngine:
                 # Run in thread to avoid blocking the asyncio event loop —
                 # large repositories can produce 10k+ hits, and the sync
                 # search/rank work would starve heartbeat delivery.
-                results = await asyncio.to_thread(repo.smart_search, search_term, context_lines=2)
+                files_subset = self._resolve_search_files(repo, search_params.get("files") or [])
+                context_lines = search_params.get("context_lines") or self.config.search_context_lines
+                case_sensitive = bool(search_params.get("case_sensitive", False))
+                if files_subset:
+                    results = await asyncio.to_thread(
+                        repo.smart_search_files,
+                        search_term,
+                        files_subset,
+                        case_sensitive=case_sensitive,
+                        context_lines=context_lines,
+                    )
+                else:
+                    results = await asyncio.to_thread(
+                        repo.smart_search,
+                        search_term,
+                        case_sensitive=case_sensitive,
+                        context_lines=context_lines,
+                    )
                 state.searches_performed += 1
 
                 if not results.hits:
@@ -1569,6 +2019,8 @@ class RLMEngine:
             results=results,
             already_read=already_read,
             client=self.client,
+            max_hits=self.config.search_analysis_max_hits,
+            max_context_chars=self.config.search_analysis_max_context_chars,
             active_step=t_step_as,
         )
         if t_step_as:
@@ -1576,10 +2028,13 @@ class RLMEngine:
 
         # Store facts and emit per-fact updates
         facts = analysis.get("facts", [])
-        state.add_facts(facts)
-        if lead_id:
-            for f in facts:
-                await self._emit_lead_update(state, lead_id, "fact", {"fact": f, "source_doc": results.query})
+        await self._add_current_facts(
+            state,
+            facts,
+            source_doc=f"search:{results.query}",
+            origin="search_snippet",
+            lead_id=lead_id,
+        )
 
         # Emit rankings
         ranked_docs = analysis.get("ranked_documents", [])
@@ -1611,18 +2066,21 @@ class RLMEngine:
                 self.on_citation(citation)
 
         # Add leads for docs to read deeper — with parent tracking
-        for filepath in read_deeper:
-            if isinstance(filepath, str) and not cache.has_extracted(filepath):
-                new_lead = state.add_lead(f"Read document: {filepath}", source="analysis", parent_lead_id=lead_id)
+        for entry in read_deeper:
+            scope = self._read_scope_from_entry(entry)
+            if scope and not cache.has_extracted(scope.filepath, scope.cache_key(self._default_excerpt_limit())):
+                new_lead = self._add_read_lead(state, entry, source="analysis", parent_lead_id=lead_id)
                 if new_lead and lead_id:
                     await self._emit_lead_update(state, lead_id, "spawned", {
                         "new_lead_id": new_lead.id, "type": new_lead.lead_type, "description": new_lead.description,
                     })
 
         # Add additional search leads — with parent tracking
-        for term in additional_searches:
-            if isinstance(term, str) and not cache.is_similar_search(term):
-                new_lead = state.add_lead(f"Search for: {term}", source="analysis", parent_lead_id=lead_id)
+        for entry in additional_searches:
+            params = self._search_params_from_entry(entry)
+            query = params.get("query") if params else None
+            if query and not cache.is_similar_search(query):
+                new_lead = self._add_search_lead(state, entry, source="analysis", parent_lead_id=lead_id)
                 if new_lead and lead_id:
                     await self._emit_lead_update(state, lead_id, "spawned", {
                         "new_lead_id": new_lead.id, "type": new_lead.lead_type, "description": new_lead.description,
@@ -1633,7 +2091,7 @@ class RLMEngine:
 
         # Filter to unread, non-irrelevant files and extract top ones
         # Use set to deduplicate and preserve order
-        top_files = []
+        top_read_scopes = []
         seen_files = set()
         for doc in ranked_docs:
             filepath = doc.get("file") if isinstance(doc, dict) else doc
@@ -1649,44 +2107,56 @@ class RLMEngine:
                 continue
 
             # Skip duplicates, already-extracted, and previously marked irrelevant files
-            if not filepath or filepath in seen_files or cache.has_extracted(filepath) or cache.is_irrelevant(filepath):
+            read_scope = self._read_scope_from_entry(doc if isinstance(doc, dict) else filepath)
+            scope_key = read_scope.cache_key(self._default_excerpt_limit()) if read_scope else None
+            if (
+                not filepath or filepath in seen_files
+                or (scope_key and cache.has_extracted(filepath, scope_key))
+                or cache.is_irrelevant(filepath)
+            ):
                 continue
 
             seen_files.add(filepath)
-            top_files.append(filepath)
+            if read_scope:
+                top_read_scopes.append(read_scope)
 
             # Mark DECISIVE documents for potential pinning
             if criticality == "DECISIVE":
-                if "pinned_documents" not in state.findings:
-                    state.findings["pinned_documents"] = []
-                if filepath not in state.findings["pinned_documents"]:
-                    state.findings["pinned_documents"].append(filepath)
+                self._pin_scope(state, read_scope or ReadScope(filepath=filepath), reason="DECISIVE search ranking")
 
-        await self._batch_read(state, repo, top_files[:self.config.parallel_reads], cache, lead_id=lead_id)
+        await self._batch_read(state, repo, top_read_scopes[:self.config.parallel_reads], cache, lead_id=lead_id)
 
     async def _batch_read(
         self,
         state: InvestigationState,
         repo: MatterRepository,
-        file_paths: list[str],
+        file_paths: list[Any],
         cache: InvestigationCache,
         lead_id: Optional[str] = None,
     ):
         """Read multiple documents in parallel."""
-        # Filter out already extracted docs
-        to_read = [fp for fp in file_paths if not cache.has_extracted(fp)]
+        # Filter out already extracted scopes
+        scopes = [fp if isinstance(fp, ReadScope) else self._read_scope_from_entry(fp) for fp in file_paths]
+        scopes = [scope for scope in scopes if scope]
+        to_read = [
+            scope for scope in scopes
+            if not cache.has_extracted(scope.filepath, scope.cache_key(self._default_excerpt_limit()))
+        ]
 
         if not to_read:
             return
 
-        doc_names = [Path(fp).name for fp in to_read]
+        doc_names = [Path(scope.filepath).name for scope in to_read]
         self._emit_step(
             state,
             StepType.READING,
             f"Reading: {_fmt_list(doc_names, 3, 30)}",
         )
 
-        tasks = [self._read_document(state, repo, fp, cache, lead_id=lead_id) for fp in to_read]
+        tasks = [
+            self._read_document(state, repo, scope.filepath, cache, lead_id=lead_id, scope=scope)
+            for scope in to_read
+        ]
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _read_document(
@@ -1696,14 +2166,18 @@ class RLMEngine:
         file_path: str,
         cache: InvestigationCache,
         lead_id: Optional[str] = None,
+        scope: Optional[ReadScope] = None,
     ) -> bool:
         """Read and extract facts from a document.
 
         Returns:
             True if document was read successfully, False otherwise.
         """
-        # OPTIMIZATION: Skip if already extracted
-        if cache.has_extracted(file_path):
+        scope = scope or ReadScope(filepath=file_path)
+        scope_key = scope.cache_key(self._default_excerpt_limit())
+
+        # OPTIMIZATION: Skip if already extracted for this exact scope
+        if cache.has_extracted(file_path, scope_key):
             logger.debug(f"Skipping already extracted: {file_path}")
             return True  # Already extracted = success
 
@@ -1718,7 +2192,7 @@ class RLMEngine:
         try:
             doc, ocr_meta = await repo.read_async(file_path)
             state.documents_read += 1
-            cache.mark_extracted(file_path)  # Mark as extracted
+            cache.mark_extracted(file_path, scope_key=scope_key, whole_doc=not scope.is_targeted)
             cache.record_read_success()  # Reset consecutive failure counter
 
             # Attach OCR telemetry if Mistral was called for this file
@@ -1736,16 +2210,12 @@ class RLMEngine:
                 ))
                 self._telemetry.end_step(t_step_ocr)
 
-            # Dynamic excerpt limit based on query complexity
-            excerpt_limit = (
-                self.config.excerpt_chars_simple
-                if getattr(self, '_is_simple_query', False)
-                else self.config.excerpt_chars_complex
-            )
-            content = doc.get_excerpt(excerpt_limit)
+            content, effective_limit = self._content_for_scope(doc, scope)
+            self._record_read_scope(state, doc, scope, len(content))
 
             # Dynamic extraction limit (matching excerpt)
-            extraction_limit = 10000 if getattr(self, '_is_simple_query', False) else 35000
+            extraction_limit = effective_limit
+            scope_context = f"Read scope: {scope.label()}" if scope.label() != "prefix" else "Read scope: prefix"
 
             # Use decisions layer to extract facts
             t_step_ef = self._telemetry.begin_step("extract_facts", "investigation_loop") if self._telemetry else None
@@ -1755,6 +2225,7 @@ class RLMEngine:
                 content=content,
                 client=self.client,
                 max_content_chars=extraction_limit,
+                scope_context=scope_context,
                 active_step=t_step_ef,
             )
             if t_step_ef:
@@ -1762,11 +2233,15 @@ class RLMEngine:
 
             # Store facts and emit per-fact updates
             facts = extraction.get("facts", [])
-            state.add_facts(facts)
-            if lead_id:
-                for f in facts:
-                    await self._emit_lead_update(state, lead_id, "fact", {"fact": f, "source_doc": doc.filename})
-            elif facts:
+            await self._add_current_facts(
+                state,
+                facts,
+                source_doc=doc.filename,
+                origin="targeted_read" if scope.is_targeted else "prefix_read",
+                scope=scope,
+                lead_id=lead_id,
+            )
+            if not lead_id and facts:
                 self._emit_step(state, StepType.FINDING, f"Extracted {len(facts)} facts from {doc.filename}")
 
             # Save facts to persistent store for future queries
@@ -1914,8 +2389,8 @@ class RLMEngine:
         )
 
         # SOURCE 1: Local document evidence
-        facts = state.findings.get("accumulated_facts", [])
-        evidence = "\n".join(f"- {fact}" for fact in facts[:20])
+        evidence_context = await self._build_evidence_context(state, emit_pinned=True)
+        evidence = evidence_context["synthesis_evidence"]
         # Note: Citations tracked in state for UI/downstream, not passed to synthesis
 
         # SOURCE 4: Pinned content - either from small repo (all docs) or DECISIVE docs
@@ -1926,7 +2401,7 @@ class RLMEngine:
             logger.info(f"Using small repo content: {len(small_repo_content)} chars")
         else:
             # Large repo mode - load DECISIVE pinned documents
-            pinned_content = await self._load_pinned_documents(state)
+            pinned_content = evidence_context["pinned_content"]
 
         # SOURCE 3: External research (case law + web)
         external_formatted = self._format_external_research()
@@ -1978,14 +2453,14 @@ class RLMEngine:
             },
         )
 
-    async def _load_pinned_documents(self, state: InvestigationState) -> str:
-        """Load content from DECISIVE pinned documents for synthesis.
+    async def _load_pinned_documents(self, state: InvestigationState, emit: bool = False) -> str:
+        """Load content from DECISIVE pinned regions/scopes for synthesis."""
+        pinned_regions = state.findings.get("pinned_regions") or []
+        if not pinned_regions:
+            # Backward-compatible fallback for states created before pinned regions.
+            pinned_regions = [{"filepath": fp} for fp in state.findings.get("pinned_documents", [])]
 
-        Respects a 100k character budget with max 30k per document.
-        Returns formatted content string or empty string if none.
-        """
-        pinned_docs = state.findings.get("pinned_documents", [])
-        if not pinned_docs:
+        if not pinned_regions:
             return ""
 
         # Safety check - repo must be set
@@ -1993,20 +2468,24 @@ class RLMEngine:
             logger.warning("Cannot load pinned documents - repo not initialized")
             return ""
 
-        TOTAL_BUDGET = 100_000  # 100k total budget
-        MAX_PER_DOC = 30_000   # Max 30k per document
+        TOTAL_BUDGET = self.config.pinned_region_total_budget
         HEADER_OVERHEAD = 50   # Approximate overhead for "=== DECISIVE: filename ===" header
 
         pinned_content_parts = []
         budget_remaining = TOTAL_BUDGET
-        docs_loaded = 0
-        seen_files = set()  # Deduplicate pinned docs
+        regions_loaded = 0
+        seen_scopes = set()  # Deduplicate pinned scopes
 
-        for filepath in pinned_docs:
-            # Skip duplicates
-            if filepath in seen_files:
+        for item in pinned_regions:
+            scope = self._read_scope_from_entry(item)
+            if not scope:
                 continue
-            seen_files.add(filepath)
+            filepath = scope.filepath
+            # Skip duplicates
+            scope_key = scope.cache_key(self._default_excerpt_limit())
+            if scope_key in seen_scopes:
+                continue
+            seen_scopes.add(scope_key)
 
             if budget_remaining <= HEADER_OVERHEAD:
                 logger.info(f"Pinned document budget exhausted, skipping remaining docs")
@@ -2015,30 +2494,29 @@ class RLMEngine:
             try:
                 doc, _ = await self.repo.read_async(filepath)
                 if doc:
-                    # Get excerpt respecting both per-doc and remaining budget limits
-                    # Account for header overhead in budget
-                    max_chars = min(MAX_PER_DOC, budget_remaining - HEADER_OVERHEAD)
+                    content, _ = self._content_for_scope(doc, scope)
+                    max_chars = min(len(content), budget_remaining - HEADER_OVERHEAD)
                     if max_chars <= 0:
                         break
-                    excerpt = doc.get_excerpt(max_chars)
+                    excerpt = content[:max_chars]
 
                     if excerpt:
                         filename = doc.filename or filepath.split("/")[-1].split("\\")[-1]
-                        header = f"\n=== DECISIVE: {filename} ===\n"
+                        header = f"\n=== DECISIVE REGION: {filename} [{scope.label()}] ===\n"
                         pinned_content_parts.append(f"{header}{excerpt}")
                         budget_remaining -= (len(header) + len(excerpt))
-                        docs_loaded += 1
-                        logger.info(f"Loaded pinned document: {filename} ({len(excerpt)} chars)")
+                        regions_loaded += 1
+                        logger.info(f"Loaded pinned region: {filename} [{scope.label()}] ({len(excerpt)} chars)")
             except Exception as e:
-                logger.warning(f"Failed to load pinned document {filepath}: {e}")
+                logger.warning(f"Failed to load pinned region {filepath} [{scope.label()}]: {e}")
 
-        if pinned_content_parts:
+        if emit and pinned_content_parts:
             total_chars = sum(len(p) for p in pinned_content_parts)
-            doc_names = [Path(f).name for f in list(seen_files)[:docs_loaded]]
+            doc_names = [Path((p or {}).get("filepath", "")).name for p in pinned_regions[:regions_loaded] if isinstance(p, dict)]
             self._emit_step(
                 state,
                 StepType.FINDING,
-                f"Decisive docs ({total_chars:,} chars): {_fmt_list(doc_names, 3, 30)}"
+                f"Decisive regions ({total_chars:,} chars): {_fmt_list(doc_names, 3, 30)}"
             )
 
         return "".join(pinned_content_parts)
@@ -2124,8 +2602,9 @@ class RLMEngine:
             "Key facts found:",
         ]
 
-        for fact in facts[:15]:  # Limit facts in summary
-            lines.append(f"- {fact}")
+        packed_facts = self._pack_current_facts(state).splitlines()
+        for fact in packed_facts:
+            lines.append(fact)
 
         if not facts:
             lines.append("- No facts extracted yet")
