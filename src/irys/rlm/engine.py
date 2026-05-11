@@ -1772,12 +1772,24 @@ class RLMEngine:
         return content, max_chars
 
     @staticmethod
+    def _origin_label(origin: str) -> str:
+        labels = {
+            "search_snippet": "SEARCH_SNIPPET_ONLY",
+            "prefix_read": "DOCUMENT_PREFIX_READ",
+            "targeted_read": "DOCUMENT_TARGETED_READ",
+            "current_session": "CURRENT_SESSION_FACT",
+        }
+        return labels.get(origin, origin.upper() if origin else "CURRENT_SESSION_FACT")
+
+    @staticmethod
     def _fact_line(record: dict[str, Any]) -> str:
         text = record.get("text") or record.get("fact") or str(record)
         source = record.get("source") or "unknown source"
         origin = record.get("origin") or "current_session"
-        scope = f"; {record.get('scope')}" if record.get("scope") else ""
-        return f"- [{origin}; {source}{scope}] {text}"
+        label = RLMEngine._origin_label(origin)
+        scope = f"; SCOPE={record.get('scope')}" if record.get("scope") else ""
+        qualifier = "; USE=locator/context only, verify with read before relying on full-document meaning" if origin == "search_snippet" else ""
+        return f"- [{label}; SOURCE={source}{scope}{qualifier}] {text}"
 
     def _pack_current_facts(self, state: InvestigationState) -> str:
         """Budget-aware deterministic packing for current-session facts."""
@@ -1844,6 +1856,51 @@ class RLMEngine:
             lines.append(f"- {filename}: {scope} ({origin}, {chars:,} chars)")
         return "\n".join(lines)
 
+    def _record_extraction_gap(
+        self,
+        state: InvestigationState,
+        doc: Any,
+        scope: ReadScope,
+        gaps: Any,
+        next_steps: Any = "",
+    ) -> None:
+        """Persist extraction gaps so checkpoint/synthesis see coverage warnings."""
+        if not gaps:
+            return
+        gap_text = "; ".join(str(g) for g in gaps if g) if isinstance(gaps, list) else str(gaps)
+        next_text = "; ".join(str(s) for s in next_steps if s) if isinstance(next_steps, list) else str(next_steps or "")
+        if not gap_text.strip():
+            return
+
+        records = state.findings.setdefault("extraction_gaps", [])
+        item = {
+            "source": getattr(doc, "filename", scope.filepath),
+            "scope": scope.label(),
+            "origin": "targeted_read" if scope.is_targeted else "prefix_read",
+            "gap": gap_text.strip(),
+            "next_steps": next_text.strip(),
+        }
+        identity = tuple(sorted((k, v) for k, v in item.items() if v))
+        existing = {
+            tuple(sorted((k, v) for k, v in record.items() if v))
+            for record in records if isinstance(record, dict)
+        }
+        if identity not in existing:
+            records.append({k: v for k, v in item.items() if v})
+
+    def _format_extraction_gaps(self, state: InvestigationState) -> str:
+        gaps = state.findings.get("extraction_gaps", [])
+        if not gaps:
+            return "- No unresolved extraction gaps recorded."
+        lines = []
+        for gap in gaps[-20:]:
+            source = gap.get("source", "unknown source")
+            origin = self._origin_label(gap.get("origin", ""))
+            scope = gap.get("scope", "prefix")
+            next_steps = f" Next: {gap.get('next_steps')}" if gap.get("next_steps") else ""
+            lines.append(f"- [{origin}; SOURCE={source}; SCOPE={scope}] Gap: {gap.get('gap')}.{next_steps}")
+        return "\n".join(lines)
+
     async def _build_evidence_context(
         self,
         state: InvestigationState,
@@ -1862,28 +1919,38 @@ class RLMEngine:
                 )
 
         coverage = self._format_read_scope_summary(state)
+        unresolved_gaps = self._format_extraction_gaps(state)
         pinned_content = await self._load_pinned_documents(state, emit=emit_pinned)
 
         checkpoint_findings = (
+            "SOURCE LABELS: SEARCH_SNIPPET_ONLY facts are locator/context signals, not full-document reads. "
+            "DOCUMENT_PREFIX_READ and DOCUMENT_TARGETED_READ facts came from document content.\n\n"
             "=== SELECTED CURRENT-SESSION FACTS ===\n"
             f"{current_facts}\n\n"
             "=== COVERAGE / READ SCOPES ===\n"
             f"{coverage}\n\n"
+            "=== UNRESOLVED EXTRACTION GAPS / COVERAGE WARNINGS ===\n"
+            f"{unresolved_gaps}\n\n"
             "=== PINNED REGIONS AVAILABLE TO SYNTHESIS ===\n"
             f"{pinned_content or 'No pinned regions.'}"
         )
         synthesis_evidence = (
+            "SOURCE LABELS: SEARCH_SNIPPET_ONLY facts are locator/context signals, not full-document reads. "
+            "DOCUMENT_PREFIX_READ and DOCUMENT_TARGETED_READ facts came from document content.\n\n"
             "=== SELECTED CURRENT-SESSION FACTS ===\n"
             f"{current_facts}\n\n"
             "=== SELECTED CACHED FACTS ===\n"
             f"{cached_facts or 'No cached facts selected.'}\n\n"
             "=== COVERAGE / READ SCOPES ===\n"
-            f"{coverage}"
+            f"{coverage}\n\n"
+            "=== UNRESOLVED EXTRACTION GAPS / COVERAGE WARNINGS ===\n"
+            f"{unresolved_gaps}"
         )
         return {
             "current_facts": current_facts,
             "cached_facts": cached_facts,
             "coverage": coverage,
+            "unresolved_gaps": unresolved_gaps,
             "pinned_content": pinned_content,
             "checkpoint_findings": checkpoint_findings,
             "synthesis_evidence": synthesis_evidence,
@@ -2031,7 +2098,7 @@ class RLMEngine:
         await self._add_current_facts(
             state,
             facts,
-            source_doc=f"search:{results.query}",
+            source_doc=f"search snippets for query '{results.query}'",
             origin="search_snippet",
             lead_id=lead_id,
         )
@@ -2276,6 +2343,7 @@ class RLMEngine:
             insights = extraction.get("insights", "")
             gaps = extraction.get("gaps", "")
             next_steps_text = extraction.get("next_steps", "")
+            self._record_extraction_gap(state, doc, scope, gaps, next_steps_text)
             if lead_id and (insights or gaps):
                 await self._emit_lead_update(state, lead_id, "insight", {
                     "learned": insights or None,

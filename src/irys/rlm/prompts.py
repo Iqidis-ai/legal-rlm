@@ -489,6 +489,11 @@ TODAY'S DATE: {current_date}
 === EVIDENCE GATHERED ===
 {evidence}
 
+SOURCE DISCIPLINE:
+- SEARCH_SNIPPET_ONLY facts are locator/context signals and should not be treated as full-document review.
+- DOCUMENT_PREFIX_READ and DOCUMENT_TARGETED_READ facts came from document content.
+- Address unresolved extraction gaps when they bear on the answer; do not overclaim beyond read scopes.
+
 === EXTERNAL RESEARCH ===
 {external_research}
 """
@@ -726,6 +731,8 @@ CHECKPOINT
 Quick assessment:
 1. SUFFICIENT? Do we have enough to answer the query with citations?
    Consider BOTH current findings AND cached facts from previous investigations.
+   Treat SEARCH_SNIPPET_ONLY items as locator/context signals, not full-document reads.
+   Do not mark sufficient if unresolved extraction gaps directly affect the answer.
 2. PROGRESS? Is current approach finding relevant info or stalled?
 3. NEXT? If not sufficient, what specific actions?
 

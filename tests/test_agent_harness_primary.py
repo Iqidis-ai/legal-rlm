@@ -89,6 +89,43 @@ async def test_current_fact_records_keep_provenance_and_pack_by_budget():
 
     packed = engine._pack_current_facts(state)
 
-    assert "targeted_read" in packed
+    assert "DOCUMENT_TARGETED_READ" in packed
     assert "Article 13" in packed
     assert state.findings["current_fact_records"][0]["page_start"] == 65
+
+
+@pytest.mark.asyncio
+async def test_evidence_context_includes_extraction_gaps_and_source_labels():
+    engine = _engine()
+    state = InvestigationState.create("What is Article 13?", "repo")
+    scope = ReadScope(filepath="agreement.pdf", page_start=65, page_end=75, target="Article 13")
+    doc = DocumentContent(
+        path="agreement.pdf",
+        filename="agreement.pdf",
+        file_type="pdf",
+        page_count=80,
+        pages=[],
+        total_chars=0,
+    )
+
+    await engine._add_current_facts(
+        state,
+        ["Snippet says Article 13 mentions default."],
+        source_doc="search snippets for query 'Article 13'",
+        origin="search_snippet",
+    )
+    await engine._add_current_facts(
+        state,
+        ["Article 13 creates an event of default."],
+        source_doc="agreement.pdf",
+        origin="targeted_read",
+        scope=scope,
+    )
+    engine._record_extraction_gap(state, doc, scope, "Need surrounding defined terms.", "Read definitions section.")
+
+    context = await engine._build_evidence_context(state)
+
+    assert "SEARCH_SNIPPET_ONLY" in context["synthesis_evidence"]
+    assert "DOCUMENT_TARGETED_READ" in context["synthesis_evidence"]
+    assert "UNRESOLVED EXTRACTION GAPS" in context["checkpoint_findings"]
+    assert "Need surrounding defined terms" in context["checkpoint_findings"]
