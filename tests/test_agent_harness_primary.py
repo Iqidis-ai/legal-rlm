@@ -25,6 +25,60 @@ def test_investigation_cache_is_scope_aware():
     assert not cache.has_extracted("agreement.pdf", article.cache_key(100_000))
 
 
+def test_cache_key_ignores_target_and_reason():
+    """Two scopes with same range but different target/reason should share a cache key."""
+    scope_a = ReadScope(filepath="doc.pdf", page_start=1, page_end=10, target="schedules", reason="extract list")
+    scope_b = ReadScope(filepath="doc.pdf", page_start=1, page_end=10, target="assignment clause", reason="consent check")
+    scope_c = ReadScope(filepath="doc.pdf", page_start=1, page_end=10)
+
+    assert scope_a.cache_key(100_000) == scope_b.cache_key(100_000)
+    assert scope_a.cache_key(100_000) == scope_c.cache_key(100_000)
+
+
+def test_range_coverage_subsumption():
+    """Broad read of pages 1-30 should subsume requests for 1-5, 1-10, 3-5."""
+    cache = InvestigationCache()
+    cache.mark_range("agreement.pdf", 1, 30)
+
+    assert cache.covers_range("agreement.pdf", 1, 5)
+    assert cache.covers_range("agreement.pdf", 1, 10)
+    assert cache.covers_range("agreement.pdf", 3, 5)
+    assert cache.covers_range("agreement.pdf", 1, 30)
+    assert not cache.covers_range("agreement.pdf", 1, 31)
+    assert not cache.covers_range("agreement.pdf", 31, 40)
+
+
+def test_range_coverage_merges_adjacent_intervals():
+    """Adjacent/overlapping reads merge into a single covering interval."""
+    cache = InvestigationCache()
+    cache.mark_range("doc.pdf", 1, 10)
+    cache.mark_range("doc.pdf", 11, 20)
+
+    assert cache.covers_range("doc.pdf", 1, 20)
+    assert cache.covers_range("doc.pdf", 5, 15)
+    assert not cache.covers_range("doc.pdf", 1, 21)
+
+
+def test_range_coverage_case_and_slash_normalization():
+    """File path casing and slashes should not affect range lookups."""
+    cache = InvestigationCache()
+    cache.mark_range("Docs\\Agreement.pdf", 1, 10)
+
+    assert cache.covers_range("docs/agreement.pdf", 1, 5)
+
+
+def test_scope_covered_by_range_allows_prefix_reads():
+    """Prefix reads (page_start=None) should not be blocked by range coverage."""
+    cache = InvestigationCache()
+    cache.mark_range("doc.pdf", 1, 30)
+
+    prefix_scope = ReadScope(filepath="doc.pdf")
+    targeted_scope = ReadScope(filepath="doc.pdf", page_start=1, page_end=5)
+
+    assert not RLMEngine._scope_covered_by_range(cache, prefix_scope)
+    assert RLMEngine._scope_covered_by_range(cache, targeted_scope)
+
+
 def test_content_for_scope_reads_requested_page_range_not_prefix():
     doc = DocumentContent(
         path="agreement.pdf",
@@ -70,6 +124,28 @@ def test_smart_search_files_limits_to_validated_subset(tmp_path: Path):
 
     assert results.total_matches == 1
     assert results.hits[0].filename == "wanted.txt"
+
+
+def test_pinned_regions_merge_overlapping_page_ranges_before_synthesis():
+    engine = _engine()
+
+    merged = engine._merge_pinned_regions([
+        {"filepath": "Lion.pdf", "page_start": 1, "page_end": 30, "target": "all schedules"},
+        {"filepath": "Lion.pdf", "page_start": 1, "page_end": 7, "target": "Schedule A"},
+        {"filepath": "Lion.pdf", "page_start": 3, "page_end": 5, "reason": "search hit duplicate"},
+        {"filepath": "ARKS.pdf", "page_start": 1, "page_end": 5},
+        {"filepath": "ARKS.pdf", "page_start": 6, "page_end": 10},
+    ])
+
+    by_file = {item["filepath"]: item for item in merged}
+
+    assert len(merged) == 2
+    assert by_file["Lion.pdf"]["page_start"] == 1
+    assert by_file["Lion.pdf"]["page_end"] == 30
+    assert "all schedules" in by_file["Lion.pdf"]["target"]
+    assert "Schedule A" in by_file["Lion.pdf"]["target"]
+    assert by_file["ARKS.pdf"]["page_start"] == 1
+    assert by_file["ARKS.pdf"]["page_end"] == 10
 
 
 @pytest.mark.asyncio

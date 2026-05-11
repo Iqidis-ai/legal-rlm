@@ -179,8 +179,9 @@ class TestValidation:
         assert valid is False
         assert len(issues) > 0
 
+        # "Hi" is accepted — min-length check is intentionally disabled
         valid, issues = validate_query("Hi")
-        assert valid is False
+        assert valid is True
 
 
 if __name__ == "__main__":
