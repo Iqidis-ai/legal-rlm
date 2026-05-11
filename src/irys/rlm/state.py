@@ -324,6 +324,7 @@ class Lead:
     id: str
     description: str
     source: str
+    params: dict[str, Any] = field(default_factory=dict)
     investigated: bool = False
     findings: Optional[str] = None
     lead_type: str = "search"
@@ -332,11 +333,18 @@ class Lead:
     finished_at: Optional[datetime] = None
 
     @classmethod
-    def create(cls, description: str, source: str, parent_lead_id: Optional[str] = None) -> "Lead":
+    def create(
+        cls,
+        description: str,
+        source: str,
+        parent_lead_id: Optional[str] = None,
+        params: Optional[dict[str, Any]] = None,
+    ) -> "Lead":
         return cls(
             id=str(uuid.uuid4())[:8],
             description=description,
             source=source,
+            params=params or {},
             lead_type=_derive_lead_type(description),
             parent_lead_id=parent_lead_id,
         )
@@ -456,16 +464,30 @@ class InvestigationState:
         self.citations.append(citation)
         return citation
 
-    def add_lead(self, description: str, source: str, parent_lead_id: Optional[str] = None) -> Optional[Lead]:
+    def add_lead(
+        self,
+        description: str,
+        source: str,
+        parent_lead_id: Optional[str] = None,
+        params: Optional[dict[str, Any]] = None,
+    ) -> Optional[Lead]:
         """Add a lead to investigate if not duplicate."""
+        params = params or {}
         desc_normalized = " ".join(description.lower().split())
+        scope_normalized = " ".join(f"{k}={v}" for k, v in sorted(params.items()))
 
         for existing in self.leads:
             existing_normalized = " ".join(existing.description.lower().split())
-            if self._word_overlap(desc_normalized, existing_normalized) > 0.8:
+            existing_scope = " ".join(
+                f"{k}={v}" for k, v in sorted((existing.params or {}).items())
+            )
+            if (
+                self._word_overlap(desc_normalized, existing_normalized) > 0.8
+                and scope_normalized == existing_scope
+            ):
                 return None
 
-        lead = Lead.create(description, source, parent_lead_id=parent_lead_id)
+        lead = Lead.create(description, source, parent_lead_id=parent_lead_id, params=params)
         self.leads.append(lead)
         return lead
 
@@ -965,6 +987,7 @@ class InvestigationState:
                     "id": l.id,
                     "description": l.description,
                     "source": l.source,
+                    "params": l.params,
                     "lead_type": l.lead_type,
                     "investigated": l.investigated,
                     "findings": l.findings,
@@ -1076,6 +1099,7 @@ class InvestigationState:
                 id=l["id"],
                 description=l["description"],
                 source=l["source"],
+                params=l.get("params") or {},
                 lead_type=l.get("lead_type", "search"),
                 investigated=l.get("investigated", False),
                 findings=l.get("findings"),

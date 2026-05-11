@@ -154,6 +154,21 @@ def _coerce_int(value: any) -> int | None:
     return None
 
 
+def _format_fact_lines(facts: list[str], max_chars: int = 15000, empty: str = "None yet") -> str:
+    """Format facts by character budget rather than arbitrary item count."""
+    if not facts:
+        return empty
+    lines = []
+    used = 0
+    for fact in facts:
+        line = f"- {fact}"
+        if used + len(line) + 1 > max_chars:
+            break
+        lines.append(line)
+        used += len(line) + 1
+    return "\n".join(lines) if lines else empty
+
+
 # =============================================================================
 # CONTEXT FORMATTING HELPERS
 # =============================================================================
@@ -1031,6 +1046,7 @@ async def extract_facts(
     content: str,
     client: GeminiClient,
     max_content_chars: int = 35000,  # Increased for full legal doc coverage
+    scope_context: str = "",
     active_step: Optional["InvestigationStep"] = None,
     trace_ctx: Optional["TracingContext"] = None,
 ) -> dict:
@@ -1046,6 +1062,7 @@ async def extract_facts(
     prompt = prompts.P_EXTRACT_FACTS.format(
         query=query,
         filename=filename,
+        scope_context=scope_context,
         content=content,
     )
 
@@ -1200,7 +1217,7 @@ async def should_search_external(
 
     prompt = prompts.P_SHOULD_SEARCH_EXTERNAL.format(
         query=query,
-        facts_found="\n".join(f"- {fact}" for fact in facts_found[:15]) if facts_found else "None yet",
+        facts_found=_format_fact_lines(facts_found, empty="None yet"),
         key_issues="\n".join(f"- {issue}" for issue in key_issues) if key_issues else "None identified",
     )
 
@@ -1317,7 +1334,7 @@ async def generate_external_queries(
     logger.info(f"🔍 generate_external_queries: analyzing {len(facts)} facts + {trigger_count} trigger categories")
 
     # Format facts and entities
-    facts_text = "\n".join(f"- {fact}" for fact in facts[:15]) if facts else "No facts gathered yet"
+    facts_text = _format_fact_lines(facts, empty="No facts gathered yet")
     entities_text = "\n".join(f"- {entity}" for entity in entities[:10]) if entities else "None identified"
     triggers_text = triggers if triggers else "None identified"
 
@@ -1476,6 +1493,8 @@ async def analyze_search(
     results,  # SearchResults object
     already_read: list[str],
     client: GeminiClient,
+    max_hits: int = 80,
+    max_context_chars: int = 800,
     active_step: Optional["InvestigationStep"] = None,
     trace_ctx: Optional["TracingContext"] = None,
 ) -> dict:
@@ -1487,11 +1506,30 @@ async def analyze_search(
     start_time = time.time()
     logger.info(f"🔍 analyze_search: combined analysis of {len(results.hits)} hits")
 
-    # Format results for the prompt
+    # Format results for the prompt. Preserve diversity across documents/pages
+    # instead of blindly taking the first hits from one large document.
+    grouped: dict[str, list] = {}
+    for hit in results.hits:
+        grouped.setdefault(hit.file_path, []).append(hit)
+
+    selected = []
+    while len(selected) < max_hits and grouped:
+        exhausted = []
+        for file_path, hits in grouped.items():
+            if hits and len(selected) < max_hits:
+                selected.append(hits.pop(0))
+            if not hits:
+                exhausted.append(file_path)
+        for file_path in exhausted:
+            grouped.pop(file_path, None)
+
     results_text = []
-    for i, hit in enumerate(results.hits[:30], 1):  # Limit to 30 hits
-        context = hit.context[:200] if hit.context else ""
-        results_text.append(f"[{i}] {hit.file_path} (p.{hit.page_num}): {hit.match_text[:100]}... Context: {context}")
+    for i, hit in enumerate(selected, 1):
+        context = hit.context[:max_context_chars] if hit.context else ""
+        results_text.append(
+            f"[{i}] {hit.file_path} (p.{hit.page_num}): "
+            f"{hit.match_text[:200]}... Context: {context}"
+        )
 
     prompt = prompts.P_ANALYZE_SEARCH.format(
         query=query,
@@ -1511,8 +1549,8 @@ async def analyze_search(
         relevant_hits = []
         for num in hit_numbers:
             coerced = _coerce_int(num)
-            if coerced is not None and 1 <= coerced <= len(results.hits):
-                relevant_hits.append(results.hits[coerced - 1])
+            if coerced is not None and 1 <= coerced <= len(selected):
+                relevant_hits.append(selected[coerced - 1])
         result["relevant_hits"] = relevant_hits
 
         _log_llm_result("analyze_search", f"{len(relevant_hits)} hits, {len(result.get('ranked_documents', []))} docs ranked", time.time() - start_time)
@@ -1594,7 +1632,7 @@ async def should_research_externally(
     Returns: {"needed": bool, "reason": str}
     """
     start_time = time.time()
-    facts_text = "\n".join(f"- {f}" for f in (facts or [])[:15]) or "(none)"
+    facts_text = _format_fact_lines(facts or [], empty="(none)")
     trig = (triggers_summary or "").strip() or "(none)"
     prompt = prompts.P_SHOULD_RESEARCH.format(
         query=query,
@@ -1636,7 +1674,7 @@ async def decide_next_action(
     Returns: {"reasoning": str, "actions": [{"tool": str, "args": dict}], "done_after_this": bool}
     """
     start_time = time.time()
-    facts_text = "\n".join(f"- {f}" for f in (facts or [])[:15]) or "(none)"
+    facts_text = _format_fact_lines(facts or [], empty="(none)")
     trig = (triggers_summary or "").strip() or "(none)"
     schemas_text = json.dumps(tool_schemas, indent=2)
     log_text = (research_log or "").strip() or "(empty — this is turn 1)"
