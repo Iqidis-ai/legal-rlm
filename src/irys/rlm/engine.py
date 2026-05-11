@@ -107,6 +107,11 @@ class InvestigationCache:
     total_read_failures: int = 0  # Track total read failures
     MAX_CONSECUTIVE_FAILURES: int = 5  # Abort after this many consecutive failures
 
+    # Range-based coverage tracking — prevents redundant reads of already-
+    # covered page ranges regardless of target/reason.
+    # Maps normalized filepath → list of (start, end) page ranges already read.
+    _covered_ranges: dict = field(default_factory=dict)
+
     def record_read_success(self):
         """Record a successful document read."""
         self.consecutive_read_failures = 0
@@ -137,6 +142,43 @@ class InvestigationCache:
     def is_irrelevant(self, filepath: str) -> bool:
         """Check if doc was marked irrelevant."""
         return filepath in self.irrelevant_docs
+
+    # ------------------------------------------------------------------
+    # Range coverage — interval subsumption
+    # ------------------------------------------------------------------
+
+    def mark_range(self, filepath: str, page_start: int, page_end: int) -> None:
+        """Record that *pages page_start..page_end* of *filepath* have been read.
+
+        Merges overlapping/adjacent ranges so the list stays compact.
+        """
+        key = filepath.lower().replace("\\", "/")
+        ranges: list[tuple[int, int]] = self._covered_ranges.setdefault(key, [])
+        ranges.append((page_start, page_end))
+        # Merge overlapping / adjacent intervals
+        ranges.sort()
+        merged: list[tuple[int, int]] = [ranges[0]]
+        for lo, hi in ranges[1:]:
+            prev_lo, prev_hi = merged[-1]
+            if lo <= prev_hi + 1:  # overlapping or adjacent
+                merged[-1] = (prev_lo, max(prev_hi, hi))
+            else:
+                merged.append((lo, hi))
+        self._covered_ranges[key] = merged
+
+    def covers_range(self, filepath: str, page_start: int, page_end: int) -> bool:
+        """Return True if every page in [page_start, page_end] is covered."""
+        key = filepath.lower().replace("\\", "/")
+        ranges = self._covered_ranges.get(key, [])
+        for lo, hi in ranges:
+            if lo <= page_start and hi >= page_end:
+                return True
+        return False
+
+    def get_covered_ranges(self, filepath: str) -> list[tuple[int, int]]:
+        """Return the merged coverage intervals for *filepath*."""
+        key = filepath.lower().replace("\\", "/")
+        return list(self._covered_ranges.get(key, []))
 
     def is_similar_search(self, term: str) -> bool:
         """Check if we've done a similar search."""
@@ -174,14 +216,18 @@ class ReadScope:
         return any(v is not None for v in (self.page_start, self.page_end, self.char_start, self.char_end))
 
     def cache_key(self, default_max_chars: int) -> str:
+        """Content-identity key — intentionally excludes target/reason.
+
+        Two reads of the same file+range return the same content regardless of
+        what the caller *wanted* to look for.  Deduplication should be based on
+        content identity, not extraction intent.
+        """
         max_chars = self.max_chars or default_max_chars
         return "|".join([
             self.filepath,
             f"p={self.page_start or ''}-{self.page_end or ''}",
             f"c={self.char_start or ''}-{self.char_end or ''}",
             f"m={max_chars}",
-            f"t={self.target}",
-            f"r={self.reason}",
         ])
 
     def label(self) -> str:
@@ -1786,6 +1832,52 @@ class RLMEngine:
         scopes.append({k: v for k, v in item.items() if v not in (None, "")})
 
     @staticmethod
+    def _mark_range_from_read(
+        cache: InvestigationCache,
+        scope: ReadScope,
+        content: str,
+        doc: Any,
+    ) -> None:
+        """Record the page range actually covered by a completed read.
+
+        For explicit page-range scopes we use the scope bounds directly.
+        For prefix reads (no page_start/page_end) we detect the last
+        ``--- PAGE N ---`` marker in the returned content.  If the content
+        contains the full document text we record ``(1, page_count)``.
+        """
+        filepath = scope.filepath
+
+        if scope.page_start is not None:
+            start = scope.page_start
+            end = scope.page_end or start
+            cache.mark_range(filepath, start, end)
+            return
+
+        # Prefix or full-doc read — detect from content markers
+        page_markers = re.findall(r"--- PAGE (\d+) ---", content)
+        if page_markers:
+            pages_seen = [int(p) for p in page_markers]
+            cache.mark_range(filepath, min(pages_seen), max(pages_seen))
+        elif hasattr(doc, "page_count") and doc.page_count:
+            # Fallback: single-page doc or no markers
+            cache.mark_range(filepath, 1, doc.page_count)
+
+    @staticmethod
+    def _scope_covered_by_range(cache: "InvestigationCache", scope: "ReadScope") -> bool:
+        """Return True if the scope's page range is already covered.
+
+        Prefix reads (page_start=None) are conservatively treated as page 1
+        onward; since we don't know how many pages the prefix will span we
+        can't guarantee coverage, so we return False (allow the read).
+        """
+        if scope.page_start is not None:
+            start = scope.page_start
+            end = scope.page_end or start
+            return cache.covers_range(scope.filepath, start, end)
+        # Prefix read — no explicit range, cannot determine coverage
+        return False
+
+    @staticmethod
     def _combine_labels(*values: str) -> str:
         seen = []
         for value in values:
@@ -2109,6 +2201,17 @@ class RLMEngine:
                 state.mark_lead_investigated(lead.id, "Marked irrelevant")
                 return
 
+            # OPTIMIZATION: Skip if page range is already covered by a prior read,
+            # UNLESS this lead was generated by a checkpoint replan (explicit re-read).
+            if lead.source != "checkpoint" and self._scope_covered_by_range(cache, scope):
+                await self._emit_step_async(
+                    state, StepType.THINKING,
+                    f"Skip read (range already covered): {filepath} [{scope.label()}]",
+                    visible=False,
+                )
+                state.mark_lead_investigated(lead.id, "Range already covered")
+                return
+
             await self._emit_lead_started(state, lead)
             try:
                 await self._read_document(state, repo, filepath, cache, lead_id=lead.id, scope=scope)
@@ -2194,7 +2297,16 @@ class RLMEngine:
     ):
         """Consolidated search analysis - single FLASH call replaces 3 separate calls."""
         key_issues = state.findings.get("issues", [])
-        already_read = list(cache.extracted_docs)
+        # Include page-range coverage so FLASH knows what's already been read
+        # and avoids generating read_deeper for already-covered ranges.
+        already_read = []
+        for doc_path in cache.extracted_docs:
+            ranges = cache.get_covered_ranges(doc_path)
+            if ranges:
+                range_strs = [f"pages {s}-{e}" for s, e in ranges]
+                already_read.append(f"{doc_path} ({', '.join(range_strs)})")
+            else:
+                already_read.append(doc_path)
 
         # Single consolidated call: pick_relevant_hits + analyze_results + prioritize_documents
         t_step_as = self._telemetry.begin_step("analyze_search", "investigation_loop") if self._telemetry else None
@@ -2253,12 +2365,17 @@ class RLMEngine:
         # Add leads for docs to read deeper — with parent tracking
         for entry in read_deeper:
             scope = self._read_scope_from_entry(entry)
-            if scope and not cache.has_extracted(scope.filepath, scope.cache_key(self._default_excerpt_limit())):
-                new_lead = self._add_read_lead(state, entry, source="analysis", parent_lead_id=lead_id)
-                if new_lead and lead_id:
-                    await self._emit_lead_update(state, lead_id, "spawned", {
-                        "new_lead_id": new_lead.id, "type": new_lead.lead_type, "description": new_lead.description,
-                    })
+            if not scope:
+                continue
+            if cache.has_extracted(scope.filepath, scope.cache_key(self._default_excerpt_limit())):
+                continue
+            if self._scope_covered_by_range(cache, scope):
+                continue
+            new_lead = self._add_read_lead(state, entry, source="analysis", parent_lead_id=lead_id)
+            if new_lead and lead_id:
+                await self._emit_lead_update(state, lead_id, "spawned", {
+                    "new_lead_id": new_lead.id, "type": new_lead.lead_type, "description": new_lead.description,
+                })
 
         # Add additional search leads — with parent tracking
         for entry in additional_searches:
@@ -2291,13 +2408,14 @@ class RLMEngine:
                     cache.mark_irrelevant(filepath)
                 continue
 
-            # Skip duplicates, already-extracted, and previously marked irrelevant files
+            # Skip duplicates, already-extracted, range-covered, and irrelevant files
             read_scope = self._read_scope_from_entry(doc if isinstance(doc, dict) else filepath)
             scope_key = read_scope.cache_key(self._default_excerpt_limit()) if read_scope else None
             if (
                 not filepath or filepath in seen_files
                 or (scope_key and cache.has_extracted(filepath, scope_key))
                 or cache.is_irrelevant(filepath)
+                or (read_scope and self._scope_covered_by_range(cache, read_scope))
             ):
                 continue
 
@@ -2320,12 +2438,13 @@ class RLMEngine:
         lead_id: Optional[str] = None,
     ):
         """Read multiple documents in parallel."""
-        # Filter out already extracted scopes
+        # Filter out already extracted scopes and range-covered scopes
         scopes = [fp if isinstance(fp, ReadScope) else self._read_scope_from_entry(fp) for fp in file_paths]
         scopes = [scope for scope in scopes if scope]
         to_read = [
             scope for scope in scopes
             if not cache.has_extracted(scope.filepath, scope.cache_key(self._default_excerpt_limit()))
+            and not self._scope_covered_by_range(cache, scope)
         ]
 
         if not to_read:
@@ -2397,6 +2516,9 @@ class RLMEngine:
 
             content, effective_limit = self._content_for_scope(doc, scope)
             self._record_read_scope(state, doc, scope, len(content))
+
+            # Track page-range coverage for subsumption-based dedup
+            self._mark_range_from_read(cache, scope, content, doc)
 
             # Dynamic extraction limit (matching excerpt)
             extraction_limit = effective_limit
