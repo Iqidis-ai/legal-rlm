@@ -1686,20 +1686,22 @@ class RLMEngine:
         for fact in facts:
             if not isinstance(fact, str) or not fact.strip():
                 continue
+            record = {
+                "text": fact,
+                "source": source_doc,
+                "origin": origin,
+            }
+            if scope:
+                record["scope"] = scope.label()
+                record["page_start"] = scope.page_start
+                record["page_end"] = scope.page_end
+                record["char_start"] = scope.char_start
+                record["char_end"] = scope.char_end
+                record["target"] = scope.target
+            record = {k: v for k, v in record.items() if v not in (None, "")}
+
             if state.add_fact(fact):
-                record = {
-                    "text": fact,
-                    "source": source_doc,
-                    "origin": origin,
-                }
-                if scope:
-                    record["scope"] = scope.label()
-                    record["page_start"] = scope.page_start
-                    record["page_end"] = scope.page_end
-                    record["char_start"] = scope.char_start
-                    record["char_end"] = scope.char_end
-                    record["target"] = scope.target
-                records.append({k: v for k, v in record.items() if v not in (None, "")})
+                records.append(record)
                 if lead_id:
                     await self._emit_lead_update(
                         state,
@@ -1707,6 +1709,40 @@ class RLMEngine:
                         "fact",
                         {"fact": fact, "source_doc": source_doc, "origin": origin},
                     )
+            else:
+                self._merge_fact_provenance(records, record)
+
+    @staticmethod
+    def _fact_key(fact: str) -> str:
+        return " ".join((fact or "").lower().split())
+
+    @staticmethod
+    def _origin_priority(origin: str) -> int:
+        return {"targeted_read": 3, "prefix_read": 2, "search_snippet": 1}.get(origin, 0)
+
+    def _merge_fact_provenance(self, records: list[dict[str, Any]], new_record: dict[str, Any]) -> None:
+        """Upgrade provenance for duplicate fact text without duplicating the fact."""
+        new_key = self._fact_key(new_record.get("text", ""))
+        for idx, existing in enumerate(records):
+            if self._fact_key(existing.get("text", "")) != new_key:
+                continue
+
+            old_origin = existing.get("origin", "")
+            new_origin = new_record.get("origin", "")
+            old_label = self._origin_label(old_origin)
+            new_label = self._origin_label(new_origin)
+
+            if self._origin_priority(new_origin) > self._origin_priority(old_origin):
+                merged = dict(new_record)
+                seen = set(existing.get("also_seen_in", []))
+                seen.add(old_label)
+                merged["also_seen_in"] = sorted(seen)
+                records[idx] = merged
+            elif new_label != old_label:
+                seen = set(existing.get("also_seen_in", []))
+                seen.add(new_label)
+                existing["also_seen_in"] = sorted(seen)
+            return
 
     def _pin_scope(self, state: InvestigationState, scope: ReadScope, reason: str = "") -> None:
         """Remember a decisive region/scope for synthesis instead of just a filename."""
@@ -1788,7 +1824,9 @@ class RLMEngine:
         origin = record.get("origin") or "current_session"
         label = RLMEngine._origin_label(origin)
         scope = f"; SCOPE={record.get('scope')}" if record.get("scope") else ""
-        return f"- [{label}; SOURCE={source}{scope}] {text}"
+        also_seen = record.get("also_seen_in") or []
+        also_seen_text = f"; ALSO_SEEN_IN={', '.join(also_seen)}" if also_seen else ""
+        return f"- [{label}; SOURCE={source}{scope}{also_seen_text}] {text}"
 
     def _pack_current_facts(self, state: InvestigationState) -> str:
         """Budget-aware deterministic packing for current-session facts."""

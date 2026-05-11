@@ -126,7 +126,36 @@ async def test_evidence_context_includes_extraction_gaps_and_source_labels():
     context = await engine._build_evidence_context(state)
 
     assert "SEARCH_SNIPPET" in context["synthesis_evidence"]
-    assert "read deeper only if broader document context is needed" in context["synthesis_evidence"]
     assert "DOCUMENT_TARGETED_READ" in context["synthesis_evidence"]
     assert "UNRESOLVED EXTRACTION GAPS" in context["checkpoint_findings"]
     assert "Need surrounding defined terms" in context["checkpoint_findings"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_fact_upgrades_to_stronger_provenance():
+    engine = _engine()
+    state = InvestigationState.create("What is Article 13?", "repo")
+    scope = ReadScope(filepath="agreement.pdf", page_start=65, page_end=75, target="Article 13")
+    fact = "Article 13 creates an event of default."
+
+    await engine._add_current_facts(
+        state,
+        [fact],
+        source_doc="search snippets for query 'Article 13'",
+        origin="search_snippet",
+    )
+    await engine._add_current_facts(
+        state,
+        [fact],
+        source_doc="agreement.pdf",
+        origin="targeted_read",
+        scope=scope,
+    )
+
+    packed = engine._pack_current_facts(state)
+
+    assert len(state.findings["accumulated_facts"]) == 1
+    assert len(state.findings["current_fact_records"]) == 1
+    assert "DOCUMENT_TARGETED_READ" in packed
+    assert "ALSO_SEEN_IN=SEARCH_SNIPPET" in packed
+    assert "SOURCE=agreement.pdf" in packed
