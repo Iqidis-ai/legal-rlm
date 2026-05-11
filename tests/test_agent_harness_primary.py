@@ -125,7 +125,8 @@ async def test_evidence_context_includes_extraction_gaps_and_source_labels():
 
     context = await engine._build_evidence_context(state)
 
-    assert "SEARCH_SNIPPET_ONLY" in context["synthesis_evidence"]
+    assert "SEARCH_SNIPPET" in context["synthesis_evidence"]
+    assert "read deeper only if broader document context is needed" in context["synthesis_evidence"]
     assert "DOCUMENT_TARGETED_READ" in context["synthesis_evidence"]
     assert "UNRESOLVED EXTRACTION GAPS" in context["checkpoint_findings"]
     assert "Need surrounding defined terms" in context["checkpoint_findings"]

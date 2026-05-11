@@ -1774,7 +1774,7 @@ class RLMEngine:
     @staticmethod
     def _origin_label(origin: str) -> str:
         labels = {
-            "search_snippet": "SEARCH_SNIPPET_ONLY",
+            "search_snippet": "SEARCH_SNIPPET",
             "prefix_read": "DOCUMENT_PREFIX_READ",
             "targeted_read": "DOCUMENT_TARGETED_READ",
             "current_session": "CURRENT_SESSION_FACT",
@@ -1788,7 +1788,7 @@ class RLMEngine:
         origin = record.get("origin") or "current_session"
         label = RLMEngine._origin_label(origin)
         scope = f"; SCOPE={record.get('scope')}" if record.get("scope") else ""
-        qualifier = "; USE=locator/context only, verify with read before relying on full-document meaning" if origin == "search_snippet" else ""
+        qualifier = "; EVIDENCE=visible search-result context; read deeper only if broader document context is needed" if origin == "search_snippet" else ""
         return f"- [{label}; SOURCE={source}{scope}{qualifier}] {text}"
 
     def _pack_current_facts(self, state: InvestigationState) -> str:
@@ -1923,7 +1923,7 @@ class RLMEngine:
         pinned_content = await self._load_pinned_documents(state, emit=emit_pinned)
 
         checkpoint_findings = (
-            "SOURCE LABELS: SEARCH_SNIPPET_ONLY facts are locator/context signals, not full-document reads. "
+            "SOURCE LABELS: SEARCH_SNIPPET facts came from visible search-result context and may be used when directly supported. "
             "DOCUMENT_PREFIX_READ and DOCUMENT_TARGETED_READ facts came from document content.\n\n"
             "=== SELECTED CURRENT-SESSION FACTS ===\n"
             f"{current_facts}\n\n"
@@ -1935,7 +1935,7 @@ class RLMEngine:
             f"{pinned_content or 'No pinned regions.'}"
         )
         synthesis_evidence = (
-            "SOURCE LABELS: SEARCH_SNIPPET_ONLY facts are locator/context signals, not full-document reads. "
+            "SOURCE LABELS: SEARCH_SNIPPET facts came from visible search-result context and may be used when directly supported. "
             "DOCUMENT_PREFIX_READ and DOCUMENT_TARGETED_READ facts came from document content.\n\n"
             "=== SELECTED CURRENT-SESSION FACTS ===\n"
             f"{current_facts}\n\n"
