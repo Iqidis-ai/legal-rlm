@@ -1785,6 +1785,87 @@ class RLMEngine:
         }
         scopes.append({k: v for k, v in item.items() if v not in (None, "")})
 
+    @staticmethod
+    def _combine_labels(*values: str) -> str:
+        seen = []
+        for value in values:
+            if value and value not in seen:
+                seen.append(value)
+        return "; ".join(seen)
+
+    @staticmethod
+    def _scope_to_dict(scope: ReadScope) -> dict[str, Any]:
+        item = {
+            "filepath": scope.filepath,
+            "page_start": scope.page_start,
+            "page_end": scope.page_end,
+            "char_start": scope.char_start,
+            "char_end": scope.char_end,
+            "max_chars": scope.max_chars,
+            "target": scope.target,
+            "reason": scope.reason,
+        }
+        return {k: v for k, v in item.items() if v not in (None, "")}
+
+    def _merge_pinned_regions(self, pinned_regions: list[Any]) -> list[dict[str, Any]]:
+        """Merge overlapping/adjacent pinned page ranges per file before synthesis."""
+        page_groups: dict[str, list[ReadScope]] = {}
+        other_scopes: dict[tuple, ReadScope] = {}
+
+        for item in pinned_regions:
+            scope = self._read_scope_from_entry(item)
+            if not scope:
+                continue
+
+            if scope.page_start is not None or scope.page_end is not None:
+                start = scope.page_start or 1
+                end = scope.page_end or start
+                scope = ReadScope(
+                    filepath=scope.filepath,
+                    page_start=min(start, end),
+                    page_end=max(start, end),
+                    max_chars=scope.max_chars,
+                    target=scope.target,
+                    reason=scope.reason,
+                )
+                page_groups.setdefault(scope.filepath.lower(), []).append(scope)
+                continue
+
+            key = (scope.filepath.lower(), scope.char_start, scope.char_end, scope.max_chars)
+            existing = other_scopes.get(key)
+            if existing:
+                other_scopes[key] = ReadScope(
+                    filepath=existing.filepath,
+                    char_start=existing.char_start,
+                    char_end=existing.char_end,
+                    max_chars=existing.max_chars,
+                    target=self._combine_labels(existing.target, scope.target),
+                    reason=self._combine_labels(existing.reason, scope.reason),
+                )
+            else:
+                other_scopes[key] = scope
+
+        merged: list[ReadScope] = list(other_scopes.values())
+        for scopes in page_groups.values():
+            scopes.sort(key=lambda s: (s.page_start or 1, s.page_end or s.page_start or 1))
+            current = scopes[0]
+            for scope in scopes[1:]:
+                if (scope.page_start or 1) <= (current.page_end or current.page_start or 1) + 1:
+                    current = ReadScope(
+                        filepath=current.filepath,
+                        page_start=current.page_start,
+                        page_end=max(current.page_end or current.page_start or 1, scope.page_end or scope.page_start or 1),
+                        max_chars=max(current.max_chars or 0, scope.max_chars or 0) or None,
+                        target=self._combine_labels(current.target, scope.target),
+                        reason=self._combine_labels(current.reason, scope.reason),
+                    )
+                else:
+                    merged.append(current)
+                    current = scope
+            merged.append(current)
+
+        return [self._scope_to_dict(scope) for scope in merged]
+
     def _content_for_scope(self, doc: Any, scope: ReadScope) -> tuple[str, int]:
         default_limit = self._default_excerpt_limit()
         max_chars = scope.max_chars or (self.config.targeted_read_max_chars if scope.is_targeted else default_limit)
@@ -2564,6 +2645,11 @@ class RLMEngine:
         if not pinned_regions:
             # Backward-compatible fallback for states created before pinned regions.
             pinned_regions = [{"filepath": fp} for fp in state.findings.get("pinned_documents", [])]
+
+        original_region_count = len(pinned_regions)
+        pinned_regions = self._merge_pinned_regions(pinned_regions)
+        if len(pinned_regions) < original_region_count:
+            logger.info(f"Merged pinned regions: {original_region_count} -> {len(pinned_regions)}")
 
         if not pinned_regions:
             return ""

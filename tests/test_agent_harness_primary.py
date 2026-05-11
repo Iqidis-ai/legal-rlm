@@ -72,6 +72,28 @@ def test_smart_search_files_limits_to_validated_subset(tmp_path: Path):
     assert results.hits[0].filename == "wanted.txt"
 
 
+def test_pinned_regions_merge_overlapping_page_ranges_before_synthesis():
+    engine = _engine()
+
+    merged = engine._merge_pinned_regions([
+        {"filepath": "Lion.pdf", "page_start": 1, "page_end": 30, "target": "all schedules"},
+        {"filepath": "Lion.pdf", "page_start": 1, "page_end": 7, "target": "Schedule A"},
+        {"filepath": "Lion.pdf", "page_start": 3, "page_end": 5, "reason": "search hit duplicate"},
+        {"filepath": "ARKS.pdf", "page_start": 1, "page_end": 5},
+        {"filepath": "ARKS.pdf", "page_start": 6, "page_end": 10},
+    ])
+
+    by_file = {item["filepath"]: item for item in merged}
+
+    assert len(merged) == 2
+    assert by_file["Lion.pdf"]["page_start"] == 1
+    assert by_file["Lion.pdf"]["page_end"] == 30
+    assert "all schedules" in by_file["Lion.pdf"]["target"]
+    assert "Schedule A" in by_file["Lion.pdf"]["target"]
+    assert by_file["ARKS.pdf"]["page_start"] == 1
+    assert by_file["ARKS.pdf"]["page_end"] == 10
+
+
 @pytest.mark.asyncio
 async def test_current_fact_records_keep_provenance_and_pack_by_budget():
     engine = _engine()
