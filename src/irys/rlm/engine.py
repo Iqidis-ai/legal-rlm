@@ -1788,8 +1788,7 @@ class RLMEngine:
         origin = record.get("origin") or "current_session"
         label = RLMEngine._origin_label(origin)
         scope = f"; SCOPE={record.get('scope')}" if record.get("scope") else ""
-        qualifier = "; EVIDENCE=visible search-result context; read deeper only if broader document context is needed" if origin == "search_snippet" else ""
-        return f"- [{label}; SOURCE={source}{scope}{qualifier}] {text}"
+        return f"- [{label}; SOURCE={source}{scope}] {text}"
 
     def _pack_current_facts(self, state: InvestigationState) -> str:
         """Budget-aware deterministic packing for current-session facts."""
