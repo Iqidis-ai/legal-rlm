@@ -629,11 +629,17 @@ USELESS_TERMS = {
 }
 
 
-def filter_search_terms(terms: list[str]) -> list[str]:
-    """Filter out useless search terms."""
+def filter_search_terms(terms: list) -> list:
+    """Filter out useless search terms. Entries may be plain strings or dicts with a 'query' key."""
     filtered = []
     for term in terms:
-        term_lower = term.lower().strip()
+        # Extract the string to evaluate; pass dicts through if their query string passes
+        if isinstance(term, dict):
+            query_str = str(term.get("query") or term.get("term") or term.get("search") or "")
+        else:
+            query_str = str(term)
+
+        term_lower = query_str.lower().strip()
         # Skip if it's a useless term
         if term_lower in USELESS_TERMS:
             continue
@@ -644,7 +650,7 @@ def filter_search_terms(terms: list[str]) -> list[str]:
         if term_lower.isdigit():
             continue
         # Skip template-style queries with brackets (e.g., "[specific claim]")
-        if '[' in term or ']' in term:
+        if '[' in query_str or ']' in query_str:
             logger.warning(f"Filtering out template-style query: {term}")
             continue
         filtered.append(term)
