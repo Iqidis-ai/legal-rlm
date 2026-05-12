@@ -102,6 +102,7 @@ class InlineCitationService:
         answer: str,
         citations: list,
         config,
+        trace_ctx=None,
     ) -> tuple[str, list, dict[str, Any]]:
         """Inject inline citation markers into the answer via single LLM pass.
 
@@ -128,7 +129,7 @@ class InlineCitationService:
             selected = cls._select_citations(citations)
             all_ids = {getattr(c, 'id', None) for c in citations} - {None}
 
-            final, diag = await cls._inject_single(answer, selected, config, all_ids)
+            final, diag = await cls._inject_single(answer, selected, config, all_ids, trace_ctx=trace_ctx)
 
             # Compute matched / unmatched from the final text (before renumbering)
             matched_ids = set(cls.CITATION_MARKER_PATTERN.findall(final))
@@ -268,6 +269,7 @@ class InlineCitationService:
         citations: list,
         config,
         all_valid_ids: set,
+        trace_ctx=None,
     ) -> tuple[str, dict[str, Any]]:
         """Sanitize, build prompt, call LLM once (GeminiClient handles retries/fallbacks).
 
@@ -294,7 +296,7 @@ class InlineCitationService:
             telemetry_step = None
 
         t0 = time.monotonic()
-        annotated = await cls._call_gemini_lite(prompt, config, active_step=telemetry_step)
+        annotated = await cls._call_gemini_lite(prompt, config, active_step=telemetry_step, trace_ctx=trace_ctx)
         diag["llm_latency_ms"] = int((time.monotonic() - t0) * 1000)
 
         if cls._validate_response(annotated, answer, all_valid_ids):
@@ -435,7 +437,7 @@ class InlineCitationService:
         return "\n\n".join(blocks)
 
     @classmethod
-    async def _call_gemini_lite(cls, prompt: str, config, active_step=None) -> str:
+    async def _call_gemini_lite(cls, prompt: str, config, active_step=None, trace_ctx=None) -> str:
         """Call Gemini Lite model for citation injection (async, non-blocking)."""
         from ..core.models import GeminiClient, ModelTier
 
@@ -486,6 +488,8 @@ Do not include explanations or commentary."""
             timeout=30.0,
             use_cache=False,
             active_step=active_step,
+            trace_ctx=trace_ctx,
+            generation_name="citation_injection",
         )
 
     # Pattern to detect comma-separated IDs in brackets (invalid format)

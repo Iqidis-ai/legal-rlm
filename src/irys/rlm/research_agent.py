@@ -37,6 +37,7 @@ from .state import InvestigationState, Lead
 if TYPE_CHECKING:
     from ..core.external_search import ExternalSearchManager
     from ..core.telemetry import InvestigationTelemetry, InvestigationStep
+    from ..core.tracing import TracingContext
 
 logger = logging.getLogger(__name__)
 
@@ -270,6 +271,7 @@ class ResearchAgent:
         external_research_store: dict,
         config: Optional[ResearchAgentConfig] = None,
         telemetry: Optional["InvestigationTelemetry"] = None,
+        trace_ctx: Optional["TracingContext"] = None,
     ) -> None:
         self.client = client
         self.external_search = external_search
@@ -277,6 +279,7 @@ class ResearchAgent:
         self.store = external_research_store
         self.config = config or ResearchAgentConfig()
         self.telemetry = telemetry
+        self._trace_ctx = trace_ctx
 
         # In-run cache keyed by (tool, normalized_args) to avoid duplicate calls.
         self._call_cache: dict[tuple, ToolResult] = {}
@@ -316,6 +319,7 @@ class ResearchAgent:
                         last_turn_content=last_turn_content,
                         client=self.client,
                         active_step=self._begin_step(f"research_turn_{turn}"),
+                        trace_ctx=self._trace_ctx,
                     ),
                     timeout=self.config.turn_timeout_s,
                 )
@@ -630,6 +634,7 @@ class ResearchAgent:
                 web_results=web_text,
                 client=self.client,
                 active_step=step,
+                trace_ctx=self._trace_ctx,
             )
         except Exception as e:
             logger.warning("build_research_brief failed: %s", e)

@@ -225,6 +225,38 @@ def create_app(config: Optional[ServiceConfig] = None) -> FastAPI:
 app = create_app()
 
 
+def _make_tracing_provider():
+    """Create a tracing provider from environment variables, or NoOp if not configured.
+
+    Tags every trace with:
+      - "ar-service" (service identifier)
+      - "env:<IRYS_ENV>" (e.g. "env:production", "env:staging", "env:local")
+    """
+    import os
+    from irys.core.tracing import LangfuseProvider, NoOpProvider
+    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
+    secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "")
+    if public_key and secret_key:
+        host = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
+        irys_env = os.environ.get("IRYS_ENV", "unknown")
+        default_tags = ["ar-service", f"env:{irys_env}"]
+        try:
+            return LangfuseProvider(
+                public_key=public_key, secret_key=secret_key, host=host,
+                default_tags=default_tags,
+            )
+        except ImportError:
+            import logging
+            logging.getLogger(__name__).warning(
+                "langfuse package not installed — tracing disabled. "
+                "Install with: pip install langfuse"
+            )
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Failed to init Langfuse tracing: %s", exc)
+    return NoOpProvider()
+
+
 def _make_irys(config: ServiceConfig, s3_prefix: Optional[str] = None):
     """Create an Irys instance wired with service S3 config."""
     from irys import Irys
@@ -235,6 +267,7 @@ def _make_irys(config: ServiceConfig, s3_prefix: Optional[str] = None):
         s3_prefix=s3_prefix,
         aws_access_key_id=config.aws_access_key_id,
         aws_secret_access_key=config.aws_secret_access_key,
+        tracing_provider=_make_tracing_provider(),
     )
 
 

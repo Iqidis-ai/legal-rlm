@@ -602,6 +602,8 @@ class GeminiClient:
         timeout: Optional[float] = None,
         use_cache: bool = True,
         active_step: Optional["InvestigationStep"] = None,
+        trace_ctx: Optional[Any] = None,
+        generation_name: Optional[str] = None,
     ) -> str:
         """Generate completion using specified tier with timeout.
 
@@ -613,6 +615,8 @@ class GeminiClient:
             timeout: Optional custom timeout
             use_cache: Whether to use response cache (default True)
             active_step: Optional telemetry step to record this operation on
+            trace_ctx: Optional TracingContext for Langfuse observability
+            generation_name: Label for this generation in traces (e.g. "create_plan")
 
         Returns:
             The model's response text
@@ -647,6 +651,16 @@ class GeminiClient:
                         cost_usd=0.0,
                         cached=True,
                     ))
+                # Record cache hit on trace too
+                if trace_ctx is not None:
+                    trace_ctx.record_generation(
+                        name=generation_name or f"{tier.value}_completion",
+                        model=mc.model_id,
+                        input=prompt,
+                        output=cached,
+                        usage={"input": 0, "output": 0, "total": 0, "unit": "TOKENS"},
+                        metadata={"tier": tier.value, "cached": True},
+                    )
                 return cached
 
         if tools:
@@ -724,6 +738,23 @@ class GeminiClient:
 
         response_text = response.text or ""
 
+        # Record generation on Langfuse trace (full prompt + response)
+        if trace_ctx is not None:
+            trace_ctx.record_generation(
+                name=generation_name or f"{tier.value}_completion",
+                model=mc.model_id,
+                input=prompt,
+                output=response_text,
+                usage={
+                    "input": input_tokens,
+                    "output": output_tokens,
+                    "total": total_tokens,
+                    "unit": "TOKENS",
+                },
+                metadata={"tier": tier.value, "cached_tokens": cached_tokens,
+                          "thinking_tokens": thinking_tokens},
+            )
+
         # Store in cache
         if cache_enabled and response_text:
             self._cache.set(cache_key_prompt, mc.model_id, response_text)
@@ -759,6 +790,8 @@ class GeminiClient:
         self,
         messages: list[dict],
         tier: ModelTier = ModelTier.FLASH,
+        trace_ctx: Optional[Any] = None,
+        generation_name: Optional[str] = None,
     ) -> str:
         """Generate completion with conversation history."""
         mc = MODEL_CONFIGS[tier]
@@ -789,6 +822,18 @@ class GeminiClient:
             raise TimeoutError(f"API call timed out after {self.timeout}s")
 
         self._usage[tier].requests += 1
+
+        # Record on trace
+        if trace_ctx is not None:
+            trace_ctx.record_generation(
+                name=generation_name or f"{tier.value}_chat",
+                model=mc.model_id,
+                input=messages,
+                output=response.text,
+                usage={},
+                metadata={"tier": tier.value},
+            )
+
         return response.text
 
     async def batch_complete(
