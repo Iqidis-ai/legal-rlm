@@ -242,6 +242,15 @@ class ReadScope:
             parts.append(f"reason: {self.reason}")
         return "; ".join(parts) if parts else "prefix"
 
+    def short_label(self) -> str:
+        """Compact label for streamed events — pages/chars only, no target/reason."""
+        parts = []
+        if self.page_start or self.page_end:
+            parts.append(f"pages {self.page_start or 1}-{self.page_end or self.page_start or ''}".rstrip("-"))
+        if self.char_start is not None or self.char_end is not None:
+            parts.append(f"chars {self.char_start or 0}-{self.char_end or ''}".rstrip("-"))
+        return "; ".join(parts) if parts else "prefix"
+
 
 class RLMEngine:
     """
@@ -330,7 +339,7 @@ class RLMEngine:
         return ReadScope(filepath=filepath)
 
     def _read_lead_description(self, scope: ReadScope) -> str:
-        suffix = f" [{scope.label()}]" if scope.label() != "prefix" else ""
+        suffix = f" [{scope.short_label()}]" if scope.short_label() != "prefix" else ""
         return f"Read document: {scope.filepath}{suffix}"
 
     def _add_read_lead(
