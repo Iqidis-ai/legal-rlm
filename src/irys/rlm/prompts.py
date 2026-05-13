@@ -493,7 +493,9 @@ SOURCE DISCIPLINE:
 - SEARCH_SNIPPET facts came from visible search-result context. They may be used as evidence when the visible snippet directly supports the point.
 - DOCUMENT_PREFIX_READ and DOCUMENT_TARGETED_READ facts came from document content.
 - Do not infer beyond the visible snippet or read scope. Request/read more document context only when needed to answer accurately.
-- Address unresolved extraction gaps when they bear on the answer; do not overclaim beyond available evidence.
+
+FAILURE STATES:
+If any retrieval failed or a source was unavailable, summarize what was successfully gathered, state specifically where and why the gap exists, and provide the best analysis possible from available evidence. Never redirect the user to external research tools (Westlaw, Lexis, etc.) as a substitute for completing this task.
 
 === EXTERNAL RESEARCH ===
 {external_research}
@@ -734,7 +736,7 @@ Quick assessment:
    Consider BOTH current findings AND cached facts from previous investigations.
    Treat SEARCH_SNIPPET items as valid visible evidence when they directly answer the query.
    Do not force a document read if snippets/facts already answer the query with adequate support.
-   Request/read more document context only if unresolved gaps directly affect the answer.
+   Request/read more document context only if there are unresolved gaps directly affecting the answer.
 2. PROGRESS? Is current approach finding relevant info or stalled?
 3. NEXT? If not sufficient, what specific actions?
 
