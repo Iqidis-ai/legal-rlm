@@ -1622,7 +1622,7 @@ async def should_research_externally(
         triggers=trig,
     )
     _log_llm_call("should_research_externally", ModelTier.LITE, prompt, start_time)
-    response = await client.complete(prompt, tier=ModelTier.LITE, active_step=active_step)
+    response = await client.complete(prompt, tier=ModelTier.LITE, active_step=active_step, overall_timeout=30.0)
     result = parse_json_safe(response)
 
     if result is not None and "needed" in result:
