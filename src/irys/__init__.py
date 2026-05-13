@@ -60,6 +60,9 @@ from .rlm.state import InvestigationState
 from .rlm.engine import RLMEngine, RLMConfig
 from .rlm.templates import get_template, suggest_template, get_template_names
 
+# Tracing / observability
+from .core.tracing import TracingProvider, NoOpProvider, LangfuseProvider, create_tracing_provider  # noqa: F401
+
 # Output formatters
 from .output import get_formatter
 
@@ -94,6 +97,11 @@ __all__ = [
     "get_template",
     "suggest_template",
     "get_template_names",
+    # Tracing
+    "TracingProvider",
+    "NoOpProvider",
+    "LangfuseProvider",
+    "create_tracing_provider",
     # Output
     "get_formatter",
 ]

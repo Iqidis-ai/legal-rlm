@@ -33,7 +33,7 @@ class TestDocumentReader:
         assert reader.can_read(Path("test.docx"))
         assert reader.can_read(Path("test.txt"))
         assert not reader.can_read(Path("test.xlsx"))
-        assert not reader.can_read(Path("test.jpg"))
+        assert reader.can_read(Path("test.jpg"))  # supported via async OCR
 
 
 class TestMatterRepository:

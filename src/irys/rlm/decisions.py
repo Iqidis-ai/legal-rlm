@@ -20,6 +20,7 @@ from . import prompts
 
 if TYPE_CHECKING:
     from ..core.telemetry import InvestigationStep
+    from ..core.tracing import TracingContext
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,21 @@ def _coerce_int(value: any) -> int | None:
     if isinstance(value, float):
         return int(value)
     return None
+
+
+def _format_fact_lines(facts: list[str], max_chars: int = 15000, empty: str = "None yet") -> str:
+    """Format facts by character budget rather than arbitrary item count."""
+    if not facts:
+        return empty
+    lines = []
+    used = 0
+    for fact in facts:
+        line = f"- {fact}"
+        if used + len(line) + 1 > max_chars:
+            break
+        lines.append(line)
+        used += len(line) + 1
+    return "\n".join(lines) if lines else empty
 
 
 # =============================================================================
@@ -614,11 +630,17 @@ USELESS_TERMS = {
 }
 
 
-def filter_search_terms(terms: list[str]) -> list[str]:
-    """Filter out useless search terms."""
+def filter_search_terms(terms: list) -> list:
+    """Filter out useless search terms. Entries may be plain strings or dicts with a 'query' key."""
     filtered = []
     for term in terms:
-        term_lower = term.lower().strip()
+        # Extract the string to evaluate; pass dicts through if their query string passes
+        if isinstance(term, dict):
+            query_str = str(term.get("query") or term.get("term") or term.get("search") or "")
+        else:
+            query_str = str(term)
+
+        term_lower = query_str.lower().strip()
         # Skip if it's a useless term
         if term_lower in USELESS_TERMS:
             continue
@@ -629,7 +651,7 @@ def filter_search_terms(terms: list[str]) -> list[str]:
         if term_lower.isdigit():
             continue
         # Skip template-style queries with brackets (e.g., "[specific claim]")
-        if '[' in term or ']' in term:
+        if '[' in query_str or ']' in query_str:
             logger.warning(f"Filtering out template-style query: {term}")
             continue
         filtered.append(term)
@@ -655,10 +677,12 @@ async def extract_search_terms(
     query: str,
     client: GeminiClient,
     active_step: Optional["InvestigationStep"] = None,
+    trace_ctx: Optional["TracingContext"] = None,
 ) -> list[str]:
     """Extract search terms from a query. Uses LITE model."""
     prompt = prompts.P_EXTRACT_SEARCH_TERMS.format(query=query)
-    response = await client.complete(prompt, tier=ModelTier.LITE, active_step=active_step)
+    response = await client.complete(prompt, tier=ModelTier.LITE, active_step=active_step,
+                                     trace_ctx=trace_ctx, generation_name="extract_search_terms")
     terms = extract_list_from_response(response)
     terms = filter_search_terms(terms)  # Filter out useless terms
     return terms[:10]  # Limit to 10 terms
@@ -718,6 +742,7 @@ async def assess_small_repo(
     cached_facts: str = "",
     context: Optional[Any] = None,
     active_step: Optional["InvestigationStep"] = None,
+    trace_ctx: Optional["TracingContext"] = None,
 ) -> dict:
     """Unified assessment for small repositories.
 
@@ -763,7 +788,8 @@ async def assess_small_repo(
 
     _log_llm_call("assess_small_repo", ModelTier.FLASH, prompt, start_time)
     # No timeout - let the model take as long as needed for full document assessment
-    response = await client.complete(prompt, tier=ModelTier.FLASH, timeout=0, active_step=active_step)
+    response = await client.complete(prompt, tier=ModelTier.FLASH, timeout=0, active_step=active_step,
+                                     trace_ctx=trace_ctx, generation_name="assess_small_repo")
     result = parse_json_safe(response)
 
     if result:
@@ -806,6 +832,7 @@ async def check_search_sufficiency(
     results_summary: str,
     client: GeminiClient,
     active_step: Optional["InvestigationStep"] = None,
+    trace_ctx: Optional["TracingContext"] = None,
 ) -> dict:
     """Check if external search results are sufficient or if more search is needed.
 
@@ -822,7 +849,8 @@ async def check_search_sufficiency(
     )
 
     _log_llm_call("check_search_sufficiency", ModelTier.FLASH, prompt, start_time)
-    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step)
+    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step,
+                                     trace_ctx=trace_ctx, generation_name="check_search_sufficiency")
     result = parse_json_safe(response)
 
     if result:
@@ -852,6 +880,7 @@ async def create_plan(
     total_files: int,
     client: GeminiClient,
     active_step: Optional["InvestigationStep"] = None,
+    trace_ctx: Optional["TracingContext"] = None,
 ) -> dict:
     """Create an investigation plan. Uses FLASH model."""
     start_time = time.time()
@@ -864,7 +893,8 @@ async def create_plan(
     )
 
     _log_llm_call("create_plan", ModelTier.FLASH, prompt, start_time)
-    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step)
+    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step,
+                                     trace_ctx=trace_ctx, generation_name="create_plan")
     result = parse_json_safe(response)
 
     if result:
@@ -899,6 +929,7 @@ async def assess_and_plan(
     cached_facts: str = "",
     context: Optional[Any] = None,
     active_step: Optional["InvestigationStep"] = None,
+    trace_ctx: Optional["TracingContext"] = None,
 ) -> dict:
     """Unified assessment and planning for large repositories.
 
@@ -939,7 +970,8 @@ async def assess_and_plan(
     )
 
     _log_llm_call("assess_and_plan", ModelTier.FLASH, prompt, start_time)
-    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step)
+    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step,
+                                     trace_ctx=trace_ctx, generation_name="assess_and_plan")
     result = parse_json_safe(response)
 
     if result:
@@ -1020,7 +1052,9 @@ async def extract_facts(
     content: str,
     client: GeminiClient,
     max_content_chars: int = 35000,  # Increased for full legal doc coverage
+    scope_context: str = "",
     active_step: Optional["InvestigationStep"] = None,
+    trace_ctx: Optional["TracingContext"] = None,
 ) -> dict:
     """Extract facts from a document. Uses LITE model for cost efficiency."""
     start_time = time.time()
@@ -1034,11 +1068,13 @@ async def extract_facts(
     prompt = prompts.P_EXTRACT_FACTS.format(
         query=query,
         filename=filename,
+        scope_context=scope_context,
         content=content,
     )
 
     _log_llm_call("extract_facts", ModelTier.LITE, prompt, start_time)
-    response = await client.complete(prompt, tier=ModelTier.LITE, active_step=active_step)
+    response = await client.complete(prompt, tier=ModelTier.LITE, active_step=active_step,
+                                     trace_ctx=trace_ctx, generation_name="extract_facts")
     result = parse_json_safe(response)
 
     if result:
@@ -1094,6 +1130,7 @@ async def synthesize(
     tier: ModelTier = ModelTier.PRO,
     context: Optional[Any] = None,
     active_step: Optional["InvestigationStep"] = None,
+    trace_ctx: Optional["TracingContext"] = None,
 ) -> str:
     """Synthesize final answer.
 
@@ -1137,7 +1174,8 @@ async def synthesize(
         logger.info(f"📝 Appending output_system_instructions ({len(output_system_instructions)} chars) to synthesis system prompt")
 
     # ALWAYS use PRO system prompt for synthesis, regardless of model tier
-    response = await client.complete(prompt, tier=tier, system_prompt=system_prompt, active_step=active_step)
+    response = await client.complete(prompt, tier=tier, system_prompt=system_prompt, active_step=active_step,
+                                     trace_ctx=trace_ctx, generation_name="synthesize")
 
     logger.info(f"✨ Synthesis complete: {len(response)} chars")
     _log_llm_result("synthesize", f"{len(response)} char response", time.time() - start_time)
@@ -1185,7 +1223,7 @@ async def should_search_external(
 
     prompt = prompts.P_SHOULD_SEARCH_EXTERNAL.format(
         query=query,
-        facts_found="\n".join(f"- {fact}" for fact in facts_found[:15]) if facts_found else "None yet",
+        facts_found=_format_fact_lines(facts_found, empty="None yet"),
         key_issues="\n".join(f"- {issue}" for issue in key_issues) if key_issues else "None identified",
     )
 
@@ -1275,6 +1313,7 @@ async def generate_external_queries(
     client: GeminiClient,
     triggers: str = "",
     active_step: Optional["InvestigationStep"] = None,
+    trace_ctx: Optional["TracingContext"] = None,
 ) -> dict:
     """Generate external search queries from accumulated facts and triggers. Uses LITE model.
 
@@ -1301,7 +1340,7 @@ async def generate_external_queries(
     logger.info(f"🔍 generate_external_queries: analyzing {len(facts)} facts + {trigger_count} trigger categories")
 
     # Format facts and entities
-    facts_text = "\n".join(f"- {fact}" for fact in facts[:15]) if facts else "No facts gathered yet"
+    facts_text = _format_fact_lines(facts, empty="No facts gathered yet")
     entities_text = "\n".join(f"- {entity}" for entity in entities[:10]) if entities else "None identified"
     triggers_text = triggers if triggers else "None identified"
 
@@ -1314,7 +1353,8 @@ async def generate_external_queries(
 
     _log_llm_call("generate_external_queries", ModelTier.LITE, prompt, start_time)
     try:
-        response = await client.complete(prompt, tier=ModelTier.LITE, active_step=active_step)
+        response = await client.complete(prompt, tier=ModelTier.LITE, active_step=active_step,
+                                         trace_ctx=trace_ctx, generation_name="generate_external_queries")
     except Exception as e:
         logger.warning(f"   generate_external_queries: LLM call failed ({e}) — skipping external search")
         return {"case_law_queries": [], "web_queries": [], "reasoning": "LLM unavailable"}
@@ -1396,6 +1436,7 @@ async def checkpoint(
     client: GeminiClient,
     cached_facts: str = "",
     active_step: Optional["InvestigationStep"] = None,
+    trace_ctx: Optional["TracingContext"] = None,
 ) -> dict:
     """Combined sufficiency + replan check. Uses LITE model.
 
@@ -1429,7 +1470,8 @@ async def checkpoint(
     )
 
     _log_llm_call("checkpoint", ModelTier.LITE, prompt, start_time)
-    response = await client.complete(prompt, tier=ModelTier.LITE, active_step=active_step)
+    response = await client.complete(prompt, tier=ModelTier.LITE, active_step=active_step,
+                                     trace_ctx=trace_ctx, generation_name="checkpoint")
     result = parse_json_safe(response)
 
     if result:
@@ -1457,7 +1499,10 @@ async def analyze_search(
     results,  # SearchResults object
     already_read: list[str],
     client: GeminiClient,
+    max_hits: int = 80,
+    max_context_chars: int = 800,
     active_step: Optional["InvestigationStep"] = None,
+    trace_ctx: Optional["TracingContext"] = None,
 ) -> dict:
     """Combined search analysis. Uses FLASH model for strategic decisions.
 
@@ -1467,11 +1512,30 @@ async def analyze_search(
     start_time = time.time()
     logger.info(f"🔍 analyze_search: combined analysis of {len(results.hits)} hits")
 
-    # Format results for the prompt
+    # Format results for the prompt. Preserve diversity across documents/pages
+    # instead of blindly taking the first hits from one large document.
+    grouped: dict[str, list] = {}
+    for hit in results.hits:
+        grouped.setdefault(hit.file_path, []).append(hit)
+
+    selected = []
+    while len(selected) < max_hits and grouped:
+        exhausted = []
+        for file_path, hits in grouped.items():
+            if hits and len(selected) < max_hits:
+                selected.append(hits.pop(0))
+            if not hits:
+                exhausted.append(file_path)
+        for file_path in exhausted:
+            grouped.pop(file_path, None)
+
     results_text = []
-    for i, hit in enumerate(results.hits[:30], 1):  # Limit to 30 hits
-        context = hit.context[:200] if hit.context else ""
-        results_text.append(f"[{i}] {hit.file_path} (p.{hit.page_num}): {hit.match_text[:100]}... Context: {context}")
+    for i, hit in enumerate(selected, 1):
+        context = hit.context[:max_context_chars] if hit.context else ""
+        results_text.append(
+            f"[{i}] {hit.file_path} (p.{hit.page_num}): "
+            f"{hit.match_text[:200]}... Context: {context}"
+        )
 
     prompt = prompts.P_ANALYZE_SEARCH.format(
         query=query,
@@ -1481,7 +1545,8 @@ async def analyze_search(
     )
 
     _log_llm_call("analyze_search", ModelTier.FLASH, prompt, start_time)
-    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step)
+    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step,
+                                     trace_ctx=trace_ctx, generation_name="analyze_search")
     result = parse_json_safe(response)
 
     if result:
@@ -1490,8 +1555,8 @@ async def analyze_search(
         relevant_hits = []
         for num in hit_numbers:
             coerced = _coerce_int(num)
-            if coerced is not None and 1 <= coerced <= len(results.hits):
-                relevant_hits.append(results.hits[coerced - 1])
+            if coerced is not None and 1 <= coerced <= len(selected):
+                relevant_hits.append(selected[coerced - 1])
         result["relevant_hits"] = relevant_hits
 
         _log_llm_result("analyze_search", f"{len(relevant_hits)} hits, {len(result.get('ranked_documents', []))} docs ranked", time.time() - start_time)
@@ -1518,6 +1583,7 @@ async def analyze_external(
     web_results: str,
     client: GeminiClient,
     active_step: Optional["InvestigationStep"] = None,
+    trace_ctx: Optional["TracingContext"] = None,
 ) -> dict:
     """Combined external research analysis. Uses FLASH model.
 
@@ -1534,7 +1600,8 @@ async def analyze_external(
     )
 
     _log_llm_call("analyze_external", ModelTier.FLASH, prompt, start_time)
-    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step)
+    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step,
+                                     trace_ctx=trace_ctx, generation_name="analyze_external")
     result = parse_json_safe(response)
 
     if result:
@@ -1564,13 +1631,14 @@ async def should_research_externally(
     triggers_summary: str,
     client: GeminiClient,
     active_step: Optional["InvestigationStep"] = None,
+    trace_ctx: Optional["TracingContext"] = None,
 ) -> dict:
     """LITE gate: decide whether the research agent should run at all.
 
     Returns: {"needed": bool, "reason": str}
     """
     start_time = time.time()
-    facts_text = "\n".join(f"- {f}" for f in (facts or [])[:15]) or "(none)"
+    facts_text = _format_fact_lines(facts or [], empty="(none)")
     trig = (triggers_summary or "").strip() or "(none)"
     prompt = prompts.P_SHOULD_RESEARCH.format(
         query=query,
@@ -1578,7 +1646,14 @@ async def should_research_externally(
         triggers=trig,
     )
     _log_llm_call("should_research_externally", ModelTier.LITE, prompt, start_time)
-    response = await client.complete(prompt, tier=ModelTier.LITE, active_step=active_step)
+    response = await client.complete(
+        prompt, 
+        tier=ModelTier.LITE, 
+        active_step=active_step,
+        trace_ctx=trace_ctx, 
+        generation_name="should_research_externally", 
+        overall_timeout=30.0
+    )
     result = parse_json_safe(response)
 
     if result is not None and "needed" in result:
@@ -1603,6 +1678,7 @@ async def decide_next_action(
     research_log: str,
     client: GeminiClient,
     active_step: Optional["InvestigationStep"] = None,
+    trace_ctx: Optional["TracingContext"] = None,
     last_turn_content: str = "",
 ) -> dict:
     """FLASH agent turn: pick the next batch of tool calls.
@@ -1610,7 +1686,7 @@ async def decide_next_action(
     Returns: {"reasoning": str, "actions": [{"tool": str, "args": dict}], "done_after_this": bool}
     """
     start_time = time.time()
-    facts_text = "\n".join(f"- {f}" for f in (facts or [])[:15]) or "(none)"
+    facts_text = _format_fact_lines(facts or [], empty="(none)")
     trig = (triggers_summary or "").strip() or "(none)"
     schemas_text = json.dumps(tool_schemas, indent=2)
     log_text = (research_log or "").strip() or "(empty — this is turn 1)"
@@ -1631,7 +1707,8 @@ async def decide_next_action(
         last_turn_section=last_turn_section,
     )
     _log_llm_call("decide_next_action", ModelTier.FLASH, prompt, start_time)
-    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step)
+    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step,
+                                     trace_ctx=trace_ctx, generation_name="decide_next_action")
     result = parse_json_safe(response)
 
     if not isinstance(result, dict):
@@ -1660,6 +1737,7 @@ async def build_research_brief(
     web_results: str,
     client: GeminiClient,
     active_step: Optional["InvestigationStep"] = None,
+    trace_ctx: Optional["TracingContext"] = None,
 ) -> dict:
     """FLASH: final research brief consumed by synthesis. Same output schema as the former analyze_external.
 
@@ -1672,7 +1750,8 @@ async def build_research_brief(
         web_results=web_results or "No web/regulatory results found.",
     )
     _log_llm_call("build_research_brief", ModelTier.FLASH, prompt, start_time)
-    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step)
+    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step,
+                                     trace_ctx=trace_ctx, generation_name="build_research_brief")
     result = parse_json_safe(response)
 
     if result:

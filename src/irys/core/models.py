@@ -128,7 +128,7 @@ Always consider the other side:
 - Where is the evidence weakest?
 - What's the best counterargument?
 
-Present your analysis with awareness of vulnerabilities. A partner who ignores weaknesses serves the client poorly.
+Present your analysis with awareness of vulnerabilities. A partner who ignores weaknesses serves the client poorly. This adversarial lens applies to strategic analysis and argument evaluation—not to tool failures or research gaps, where the task is to report what was found and continue.
 
 CONFIDENCE CALIBRATION:
 - HIGH CONFIDENCE: Strong textual support, no material counterargument
@@ -159,6 +159,7 @@ PROFESSIONAL VOICE:
 - Precise without being pedantic
 - Direct without being brusque
 - Acknowledge uncertainty without appearing weak
+- Challenge arguments and evidence, never the person—candid. Do not be condescending or rude
 
 ZERO TOLERANCE:
 - No filler phrases ("It is important to note that...")
@@ -426,10 +427,17 @@ class ThinkingCallback:
 class GeminiClient:
     """Tiered Gemini client for RLM operations with timeout, retry, and rate limiting."""
 
-    DEFAULT_TIMEOUT = 120.0  # 2 minutes
+    DEFAULT_TIMEOUT = 120.0  # 2 minutes (PRO)
     MAX_RETRIES = 3
     DEFAULT_RPM = 60  # Requests per minute
     DEFAULT_BURST = 10  # Burst size
+
+    # Per-step timeout per tier (each fallback attempt gets this budget)
+    TIER_TIMEOUTS: dict = {
+        ModelTier.LITE: 80.0,
+        ModelTier.FLASH: 100.0,
+        ModelTier.PRO: 120.0,
+    }
 
     # Class-level Vertex AI client (lazy initialized, shared across instances)
     _vertex_client: Optional[genai.Client] = None
@@ -600,8 +608,11 @@ class GeminiClient:
         system_prompt: Optional[str] = None,
         tools: Optional[list] = None,
         timeout: Optional[float] = None,
+        overall_timeout: Optional[float] = None,
         use_cache: bool = True,
         active_step: Optional["InvestigationStep"] = None,
+        trace_ctx: Optional[Any] = None,
+        generation_name: Optional[str] = None,
     ) -> str:
         """Generate completion using specified tier with timeout.
 
@@ -610,17 +621,20 @@ class GeminiClient:
             tier: Model tier to use (LITE, FLASH, PRO)
             system_prompt: Optional custom system prompt (uses tier default if None)
             tools: Optional tools for function calling
-            timeout: Optional custom timeout
+            timeout: Per-step timeout (each fallback attempt). None uses tier default.
+            overall_timeout: Hard cap across the entire fallback chain. None = no cap.
             use_cache: Whether to use response cache (default True)
             active_step: Optional telemetry step to record this operation on
+            trace_ctx: Optional TracingContext for Langfuse observability
+            generation_name: Label for this generation in traces (e.g. "create_plan")
 
         Returns:
             The model's response text
         """
         mc = MODEL_CONFIGS[tier]
         config = self._get_config(tier, system_prompt)  # Pass system_prompt to config
-        # timeout=0 means no timeout, None uses default
-        request_timeout = timeout if timeout is not None else self.timeout
+        # timeout=0 means no timeout, None uses per-tier default
+        request_timeout = timeout if timeout is not None else self.TIER_TIMEOUTS.get(tier, self.timeout)
         no_timeout = (request_timeout == 0)
 
         # Build cache key (only cache if no tools and cache enabled)
@@ -647,6 +661,16 @@ class GeminiClient:
                         cost_usd=0.0,
                         cached=True,
                     ))
+                # Record cache hit on trace too
+                if trace_ctx is not None:
+                    trace_ctx.record_generation(
+                        name=generation_name or f"{tier.value}_completion",
+                        model=mc.model_id,
+                        input=prompt,
+                        output=cached,
+                        usage={"input": 0, "output": 0, "total": 0, "unit": "TOKENS"},
+                        metadata={"tier": tier.value, "cached": True},
+                    )
                 return cached
 
         if tools:
@@ -669,10 +693,14 @@ class GeminiClient:
         # - Timeout:       Gemini(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
         # - Other errors (including 503): Gemini(primary) → Vertex(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
         call_start = time.monotonic()
-        response = await self._call_with_fallback(
+        fallback_coro = self._call_with_fallback(
             mc.model_id, mc.fallback_model_id, contents, config, request_timeout, no_timeout,
             secondary_fallback_model=mc.secondary_fallback_model_id,
         )
+        if overall_timeout is not None:
+            response = await asyncio.wait_for(fallback_coro, timeout=overall_timeout)
+        else:
+            response = await fallback_coro
         call_latency_ms = int((time.monotonic() - call_start) * 1000)
 
         # Track usage from actual response metadata
@@ -724,6 +752,23 @@ class GeminiClient:
 
         response_text = response.text or ""
 
+        # Record generation on Langfuse trace (full prompt + response)
+        if trace_ctx is not None:
+            trace_ctx.record_generation(
+                name=generation_name or f"{tier.value}_completion",
+                model=mc.model_id,
+                input=prompt,
+                output=response_text,
+                usage={
+                    "input": input_tokens,
+                    "output": output_tokens,
+                    "total": total_tokens,
+                    "unit": "TOKENS",
+                },
+                metadata={"tier": tier.value, "cached_tokens": cached_tokens,
+                          "thinking_tokens": thinking_tokens},
+            )
+
         # Store in cache
         if cache_enabled and response_text:
             self._cache.set(cache_key_prompt, mc.model_id, response_text)
@@ -759,6 +804,8 @@ class GeminiClient:
         self,
         messages: list[dict],
         tier: ModelTier = ModelTier.FLASH,
+        trace_ctx: Optional[Any] = None,
+        generation_name: Optional[str] = None,
     ) -> str:
         """Generate completion with conversation history."""
         mc = MODEL_CONFIGS[tier]
@@ -789,6 +836,18 @@ class GeminiClient:
             raise TimeoutError(f"API call timed out after {self.timeout}s")
 
         self._usage[tier].requests += 1
+
+        # Record on trace
+        if trace_ctx is not None:
+            trace_ctx.record_generation(
+                name=generation_name or f"{tier.value}_chat",
+                model=mc.model_id,
+                input=messages,
+                output=response.text,
+                usage={},
+                metadata={"tier": tier.value},
+            )
+
         return response.text
 
     async def batch_complete(
