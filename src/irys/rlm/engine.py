@@ -213,6 +213,11 @@ class ReadScope:
     target: str = ""
     reason: str = ""
 
+    def __post_init__(self):
+        # Coerce filepath to str — callers may pass a pathlib.Path (e.g. FileInfo.path)
+        if not isinstance(self.filepath, str):
+            object.__setattr__(self, "filepath", str(self.filepath))
+
     @property
     def is_targeted(self) -> bool:
         return any(v is not None for v in (self.page_start, self.page_end, self.char_start, self.char_end))
@@ -778,7 +783,7 @@ class RLMEngine:
                 read_lead = Lead.create(f"Read document: {doc.filename}", source="direct_answer")
                 state.leads.append(read_lead)
                 await self._emit_lead_started(state, read_lead)
-                await self._read_document(state, repo, doc.path, cache, lead_id=read_lead.id)
+                await self._read_document(state, repo, str(doc.path), cache, lead_id=read_lead.id)
                 await self._emit_lead_done(state, read_lead.id)
 
         # Step 1.6: Get cached facts for this query
