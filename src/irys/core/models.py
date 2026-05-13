@@ -128,7 +128,7 @@ Always consider the other side:
 - Where is the evidence weakest?
 - What's the best counterargument?
 
-Present your analysis with awareness of vulnerabilities. A partner who ignores weaknesses serves the client poorly.
+Present your analysis with awareness of vulnerabilities. A partner who ignores weaknesses serves the client poorly. This adversarial lens applies to strategic analysis and argument evaluation—not to tool failures or research gaps, where the task is to report what was found and continue.
 
 CONFIDENCE CALIBRATION:
 - HIGH CONFIDENCE: Strong textual support, no material counterargument
@@ -159,6 +159,7 @@ PROFESSIONAL VOICE:
 - Precise without being pedantic
 - Direct without being brusque
 - Acknowledge uncertainty without appearing weak
+- Challenge arguments and evidence, never the person—candid. Do not be condescending or rude
 
 ZERO TOLERANCE:
 - No filler phrases ("It is important to note that...")
@@ -426,10 +427,17 @@ class ThinkingCallback:
 class GeminiClient:
     """Tiered Gemini client for RLM operations with timeout, retry, and rate limiting."""
 
-    DEFAULT_TIMEOUT = 120.0  # 2 minutes
+    DEFAULT_TIMEOUT = 120.0  # 2 minutes (PRO)
     MAX_RETRIES = 3
     DEFAULT_RPM = 60  # Requests per minute
     DEFAULT_BURST = 10  # Burst size
+
+    # Per-step timeout per tier (each fallback attempt gets this budget)
+    TIER_TIMEOUTS: dict = {
+        ModelTier.LITE: 80.0,
+        ModelTier.FLASH: 100.0,
+        ModelTier.PRO: 120.0,
+    }
 
     # Class-level Vertex AI client (lazy initialized, shared across instances)
     _vertex_client: Optional[genai.Client] = None
@@ -600,6 +608,7 @@ class GeminiClient:
         system_prompt: Optional[str] = None,
         tools: Optional[list] = None,
         timeout: Optional[float] = None,
+        overall_timeout: Optional[float] = None,
         use_cache: bool = True,
         active_step: Optional["InvestigationStep"] = None,
         trace_ctx: Optional[Any] = None,
@@ -612,7 +621,8 @@ class GeminiClient:
             tier: Model tier to use (LITE, FLASH, PRO)
             system_prompt: Optional custom system prompt (uses tier default if None)
             tools: Optional tools for function calling
-            timeout: Optional custom timeout
+            timeout: Per-step timeout (each fallback attempt). None uses tier default.
+            overall_timeout: Hard cap across the entire fallback chain. None = no cap.
             use_cache: Whether to use response cache (default True)
             active_step: Optional telemetry step to record this operation on
             trace_ctx: Optional TracingContext for Langfuse observability
@@ -623,8 +633,8 @@ class GeminiClient:
         """
         mc = MODEL_CONFIGS[tier]
         config = self._get_config(tier, system_prompt)  # Pass system_prompt to config
-        # timeout=0 means no timeout, None uses default
-        request_timeout = timeout if timeout is not None else self.timeout
+        # timeout=0 means no timeout, None uses per-tier default
+        request_timeout = timeout if timeout is not None else self.TIER_TIMEOUTS.get(tier, self.timeout)
         no_timeout = (request_timeout == 0)
 
         # Build cache key (only cache if no tools and cache enabled)
@@ -683,10 +693,14 @@ class GeminiClient:
         # - Timeout:       Gemini(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
         # - Other errors (including 503): Gemini(primary) → Vertex(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
         call_start = time.monotonic()
-        response = await self._call_with_fallback(
+        fallback_coro = self._call_with_fallback(
             mc.model_id, mc.fallback_model_id, contents, config, request_timeout, no_timeout,
             secondary_fallback_model=mc.secondary_fallback_model_id,
         )
+        if overall_timeout is not None:
+            response = await asyncio.wait_for(fallback_coro, timeout=overall_timeout)
+        else:
+            response = await fallback_coro
         call_latency_ms = int((time.monotonic() - call_start) * 1000)
 
         # Track usage from actual response metadata

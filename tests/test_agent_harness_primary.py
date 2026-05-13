@@ -171,7 +171,7 @@ async def test_current_fact_records_keep_provenance_and_pack_by_budget():
 
 
 @pytest.mark.asyncio
-async def test_evidence_context_includes_extraction_gaps_and_source_labels():
+async def test_evidence_context_keeps_gaps_out_of_prompts_but_retains_source_labels():
     engine = _engine()
     state = InvestigationState.create("What is Article 13?", "repo")
     scope = ReadScope(filepath="agreement.pdf", page_start=65, page_end=75, target="Article 13")
@@ -203,8 +203,51 @@ async def test_evidence_context_includes_extraction_gaps_and_source_labels():
 
     assert "SEARCH_SNIPPET" in context["synthesis_evidence"]
     assert "DOCUMENT_TARGETED_READ" in context["synthesis_evidence"]
-    assert "UNRESOLVED EXTRACTION GAPS" in context["checkpoint_findings"]
-    assert "Need surrounding defined terms" in context["checkpoint_findings"]
+    assert "UNRESOLVED EXTRACTION GAPS" not in context["checkpoint_findings"]
+    assert "UNRESOLVED EXTRACTION GAPS" not in context["synthesis_evidence"]
+    assert "Need surrounding defined terms" not in context["checkpoint_findings"]
+    assert "Need surrounding defined terms" in context["unresolved_gaps"]
+
+
+def test_checkpoint_pinned_truncation_omits_middle_and_notes_synthesis_gets_full_content():
+    content = "A" * 20_000 + "MIDDLE_SHOULD_BE_OMITTED" + "Z" * 20_000
+
+    excerpt = RLMEngine._middle_truncate_for_checkpoint(content, 25_000)
+
+    assert excerpt.startswith("A" * 100)
+    assert excerpt.endswith("Z" * 100)
+    assert "MIDDLE_SHOULD_BE_OMITTED" not in excerpt
+    assert "CHECKPOINT TRUNCATION" in excerpt
+    assert "final synthesis receives the full omitted middle section/content" in excerpt
+    assert len(excerpt) <= 25_000
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_context_uses_truncated_pinned_regions_without_synthesis_full_text():
+    class FakeRepo:
+        async def read_async(self, filepath):
+            doc = DocumentContent(
+                path=filepath,
+                filename=filepath,
+                file_type="pdf",
+                page_count=1,
+                pages=[PageContent(1, "A" * 200 + "MIDDLE_SHOULD_BE_OMITTED" + "Z" * 200)],
+                total_chars=425,
+            )
+            return doc, None
+
+    engine = _engine()
+    engine.repo = FakeRepo()
+    engine.config.checkpoint_pinned_region_max_chars = 120
+    state = InvestigationState.create("What is pinned?", "repo")
+    state.findings["pinned_regions"] = [{"filepath": "long.pdf"}]
+
+    context = await engine._build_evidence_context(state, include_synthesis_pinned=False)
+
+    assert context["pinned_content"] == ""
+    assert "CHECKPOINT TRUNCATION" in context["checkpoint_findings"]
+    assert "MIDDLE_SHOULD_BE_OMITTED" not in context["checkpoint_findings"]
+    assert context["checkpoint_findings"].count("CHECKPOINT TRUNCATION") == 1
 
 
 @pytest.mark.asyncio

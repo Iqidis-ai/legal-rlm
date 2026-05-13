@@ -68,6 +68,7 @@ class RLMConfig:
     evidence_current_facts_budget: int = 80_000
     evidence_cached_facts_budget: int = 15_000
     pinned_region_total_budget: int = 300_000
+    checkpoint_pinned_region_max_chars: int = 25_000
     parallel_reads: int = 3  # Reduced from 5
     checkpoint_dir: Optional[str] = None
     checkpoint_interval: int = 5
@@ -1568,8 +1569,9 @@ class RLMEngine:
             # === CONSOLIDATED CHECKPOINT ===
             # Single LLM call replaces is_sufficient + should_replan
             if facts_count >= self.config.early_exit_facts or iteration > 1:
-                # Build the same selected evidence package used by synthesis.
-                evidence_context = await self._build_evidence_context(state)
+                # Build the compact checkpoint evidence package. Full pinned
+                # regions are reserved for synthesis to keep checkpoint latency low.
+                evidence_context = await self._build_evidence_context(state, include_synthesis_pinned=False)
 
                 t_step_ck = self._telemetry.begin_step("sufficiency_check", "investigation_loop") if self._telemetry else None
                 checkpoint_result = await decisions.checkpoint(
@@ -2174,6 +2176,8 @@ class RLMEngine:
         self,
         state: InvestigationState,
         emit_pinned: bool = False,
+        include_checkpoint_pinned: bool = True,
+        include_synthesis_pinned: bool = True,
     ) -> dict[str, str]:
         """Shared context package for both checkpoint and synthesis."""
         current_facts = self._pack_current_facts(state)
@@ -2189,7 +2193,16 @@ class RLMEngine:
 
         coverage = self._format_read_scope_summary(state)
         unresolved_gaps = self._format_extraction_gaps(state)
-        pinned_content = await self._load_pinned_documents(state, emit=emit_pinned)
+        pinned_content = ""
+        if include_synthesis_pinned:
+            pinned_content = await self._load_pinned_documents(state, emit=emit_pinned)
+        checkpoint_pinned_content = ""
+        if include_checkpoint_pinned:
+            checkpoint_pinned_content = await self._load_pinned_documents(
+                state,
+                per_region_max_chars=self.config.checkpoint_pinned_region_max_chars,
+                middle_truncate=True,
+            )
 
         checkpoint_findings = (
             "SOURCE LABELS: SEARCH_SNIPPET facts came from visible search-result context and may be used when directly supported. "
@@ -2198,10 +2211,8 @@ class RLMEngine:
             f"{current_facts}\n\n"
             "=== COVERAGE / READ SCOPES ===\n"
             f"{coverage}\n\n"
-            "=== UNRESOLVED EXTRACTION GAPS / COVERAGE WARNINGS ===\n"
-            f"{unresolved_gaps}\n\n"
-            "=== PINNED REGIONS AVAILABLE TO SYNTHESIS ===\n"
-            f"{pinned_content or 'No pinned regions.'}"
+            "=== PINNED REGIONS AVAILABLE TO SYNTHESIS (CHECKPOINT VIEW) ===\n"
+            f"{checkpoint_pinned_content or 'No pinned regions.'}"
         )
         synthesis_evidence = (
             "SOURCE LABELS: SEARCH_SNIPPET facts came from visible search-result context and may be used when directly supported. "
@@ -2211,9 +2222,7 @@ class RLMEngine:
             "=== SELECTED CACHED FACTS ===\n"
             f"{cached_facts or 'No cached facts selected.'}\n\n"
             "=== COVERAGE / READ SCOPES ===\n"
-            f"{coverage}\n\n"
-            "=== UNRESOLVED EXTRACTION GAPS / COVERAGE WARNINGS ===\n"
-            f"{unresolved_gaps}"
+            f"{coverage}"
         )
         return {
             "current_facts": current_facts,
@@ -2758,7 +2767,11 @@ class RLMEngine:
         )
 
         # SOURCE 1: Local document evidence
-        evidence_context = await self._build_evidence_context(state, emit_pinned=True)
+        evidence_context = await self._build_evidence_context(
+            state,
+            emit_pinned=True,
+            include_checkpoint_pinned=False,
+        )
         evidence = evidence_context["synthesis_evidence"]
         # Note: Citations tracked in state for UI/downstream, not passed to synthesis
 
@@ -2823,8 +2836,14 @@ class RLMEngine:
             },
         )
 
-    async def _load_pinned_documents(self, state: InvestigationState, emit: bool = False) -> str:
-        """Load content from DECISIVE pinned regions/scopes for synthesis."""
+    async def _load_pinned_documents(
+        self,
+        state: InvestigationState,
+        emit: bool = False,
+        per_region_max_chars: Optional[int] = None,
+        middle_truncate: bool = False,
+    ) -> str:
+        """Load content from DECISIVE pinned regions/scopes."""
         pinned_regions = state.findings.get("pinned_regions") or []
         if not pinned_regions:
             # Backward-compatible fallback for states created before pinned regions.
@@ -2871,9 +2890,14 @@ class RLMEngine:
                 if doc:
                     content, _ = self._content_for_scope(doc, scope)
                     max_chars = min(len(content), budget_remaining - HEADER_OVERHEAD)
+                    if per_region_max_chars is not None:
+                        max_chars = min(max_chars, per_region_max_chars)
                     if max_chars <= 0:
                         break
-                    excerpt = content[:max_chars]
+                    if middle_truncate:
+                        excerpt = self._middle_truncate_for_checkpoint(content, max_chars)
+                    else:
+                        excerpt = content[:max_chars]
 
                     if excerpt:
                         filename = doc.filename or filepath.split("/")[-1].split("\\")[-1]
@@ -2895,6 +2919,37 @@ class RLMEngine:
             )
 
         return "".join(pinned_content_parts)
+
+    @staticmethod
+    def _middle_truncate_for_checkpoint(content: str, max_chars: int) -> str:
+        """Middle-truncate pinned content for checkpoint latency only."""
+        if max_chars <= 0:
+            return ""
+        if len(content) <= max_chars:
+            return content
+
+        def build_note(omitted_chars: int) -> str:
+            return (
+                f"\n\n[CHECKPOINT TRUNCATION: {omitted_chars:,} chars omitted from the middle for latency. "
+                "Showing the start and end of this pinned region; final synthesis receives "
+                "the full omitted middle section/content.]\n\n"
+            )
+
+        note = build_note(max(0, len(content) - max_chars))
+        content_budget = max_chars - len(note)
+        if content_budget <= 0:
+            return note[:max_chars]
+
+        head_chars = content_budget // 2
+        tail_chars = content_budget - head_chars
+        omitted = len(content) - head_chars - tail_chars
+        note = build_note(omitted)
+        content_budget = max_chars - len(note)
+        if content_budget <= 0:
+            return note[:max_chars]
+        head_chars = content_budget // 2
+        tail_chars = content_budget - head_chars
+        return f"{content[:head_chars]}{note}{content[-tail_chars:]}"
 
     def _emit_step(
         self,
