@@ -333,3 +333,44 @@ class TestEvidencePacker:
     def test_empty_facts_returns_empty(self):
         from irys.core.evidence_packer import EvidencePacker
         assert EvidencePacker.pack([], query="anything", token_budget=5000) == ""
+
+
+class TestMigrationAndStats:
+    """stats() returns correct counts; migrate_from_jsonl migrates JSONL rows."""
+
+    def test_stats_returns_dataclass(self):
+        from irys.core.fact_store import FactStoreStats
+        store, _ = make_store()
+        s = store.stats()
+        assert isinstance(s, FactStoreStats)
+        assert s.total_facts == 0
+
+    def test_stats_counts_tiers(self):
+        from irys.core.fact_store import FactStoreStats
+        store, _ = make_store()
+        scope = type("S", (), {"is_targeted": True})()
+        store.add_facts_from_extraction(["Draft fact A"], "d.pdf", scope)
+        store._conn.execute(
+            "UPDATE facts SET tier='validated', importance=70 WHERE source='d.pdf'"
+        )
+        store._conn.commit()
+        s = store.stats()
+        assert s.draft_facts == 0
+        assert s.validated_facts == 1
+
+    def test_migrate_from_jsonl(self):
+        import json, tempfile
+        store, _ = make_store()
+        jsonl = tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False)
+        jsonl.write(json.dumps({
+            "fact": "Legacy fact about contract", "source": "old.pdf",
+            "page": 3, "quote": None, "category": None,
+            "extracted": "2026-01-01", "query_context": "contract review",
+        }) + "\n")
+        jsonl.flush()
+        jsonl.close()
+        count = store.migrate_from_jsonl(Path(jsonl.name))
+        assert count == 1
+        row = store._conn.execute("SELECT scope_type, tier FROM facts").fetchone()
+        assert row["scope_type"] == "snippet"
+        assert row["tier"] == "draft"

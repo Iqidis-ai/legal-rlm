@@ -691,6 +691,78 @@ class FactStore:
         facts = self.get_relevant(query, top_k=80)
         return EvidencePacker.pack(facts, query=query, token_budget=token_budget)
 
+    def stats(self) -> FactStoreStats:
+        """Return current fact counts and averages."""
+        row = self._conn.execute("""
+            SELECT
+                COUNT(*)                                       AS total,
+                SUM(CASE WHEN tier='core'      THEN 1 ELSE 0 END) AS core,
+                SUM(CASE WHEN tier='validated' THEN 1 ELSE 0 END) AS validated,
+                SUM(CASE WHEN tier='draft'     THEN 1 ELSE 0 END) AS draft,
+                AVG(importance)                                AS avg_imp
+            FROM facts
+        """).fetchone()
+        stubs = self._conn.execute("SELECT COUNT(*) FROM fact_stubs").fetchone()[0]
+        return FactStoreStats(
+            total_facts=row[0] or 0,
+            core_facts=row[1] or 0,
+            validated_facts=row[2] or 0,
+            draft_facts=row[3] or 0,
+            archived_stubs=stubs,
+            avg_importance=round(row[4] or 0.0, 2),
+        )
+
+    def migrate_from_jsonl(self, jsonl_path: Path) -> int:
+        """Migrate legacy facts.jsonl to facts.db.
+
+        All migrated facts get scope_type='snippet', importance=50.0, tier='draft'.
+        Renames jsonl_path -> jsonl_path.bak after migration.
+        Returns number of facts migrated.
+        """
+        if not jsonl_path.exists():
+            logger.warning("migrate_from_jsonl: %s does not exist", jsonl_path)
+            return 0
+
+        migrated = 0
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        with open(jsonl_path, encoding="utf-8") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError as e:
+                    logger.warning("migrate_from_jsonl: skipping malformed line %d: %s", line_num, e)
+                    continue
+                fact_text = data.get("fact", "")
+                source = data.get("source", "")
+                if not fact_text or not source:
+                    continue
+                content_hash = StoredFact.compute_hash(fact_text, source)
+                extracted = data.get("extracted") or now
+                try:
+                    self._conn.execute(
+                        """INSERT OR IGNORE INTO facts
+                           (fact, source, page, category, extracted, query_context,
+                            scope_type, importance, recency_updated, tier, content_hash)
+                           VALUES (?,?,?,?,?,?,'snippet',50.0,?,'draft',?)""",
+                        (fact_text, source,
+                         data.get("page"), data.get("category"),
+                         extracted, data.get("query_context"),
+                         extracted, content_hash),
+                    )
+                    migrated += 1
+                except sqlite3.Error as e:
+                    logger.warning("migrate_from_jsonl: insert failed line %d: %s", line_num, e)
+
+        self._conn.commit()
+        bak = jsonl_path.with_suffix(".jsonl.bak")
+        jsonl_path.rename(bak)
+        logger.info("Migrated %d facts from %s (original -> %s)", migrated, jsonl_path, bak)
+        return migrated
+
     def __bool__(self) -> bool:
         # Always return True so `if fact_store:` checks existence, not emptiness
         return True
