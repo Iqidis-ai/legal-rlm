@@ -1,180 +1,149 @@
-# Irys RLM - Project Instructions
+# CLAUDE.md
 
-## CRITICAL: Git Commit Rules
+## What this repo is
 
-**COMMIT AFTER EVERY LOGICAL CHANGE. NO EXCEPTIONS.**
+Irys is an AI-powered legal document analysis system. Given a legal question and a folder of documents, it runs a multi-phase investigation—searching, reading, and extracting facts—then synthesizes a polished answer with inline citations. "Epistemic attribution" is the design goal of assigning every document an authority weight based on its legal role (court order vs advocacy brief vs sworn declaration), so that more authoritative sources are ranked and weighted more heavily than self-serving documents. The classifier that assigns these weights is validated but not yet integrated into the main pipeline.
 
-A "logical change" is ONE of the following:
-- Fix a single bug
-- Add a single function
-- Update a single prompt
-- Add a single test
-- Fix imports in one file
-- Any change that can be described in ONE sentence
+## Repo structure
 
-**DO NOT:**
-- Bundle multiple fixes into one commit
-- Wait until "everything works" to commit
-- Make commits with 500+ lines of changes
-- Commit multiple unrelated changes together
-
-**Commit message format:**
 ```
-<short description of the ONE thing changed>
-
-Committed by Devansh
+src/irys/rlm/engine.py          — RLMEngine: main investigation loop, RLMConfig, small/large repo routing
+src/irys/rlm/decisions.py       — All LLM decision functions, organized by LITE/FLASH/PRO tier
+src/irys/rlm/prompts.py         — All prompt templates used by decisions layer
+src/irys/rlm/state.py           — InvestigationState, Citation, Lead, ThinkingStep, Entity dataclasses
+src/irys/rlm/research_agent.py  — ResearchAgent: tool-calling external search loop
+src/irys/core/search.py         — DocumentSearch, smart_search(), density scoring
+src/irys/core/fact_store.py     — FactStore, StoredFact, JSONL persistence (per-repository)
+src/irys/core/models.py         — GeminiClient, ModelTier, MODEL_CONFIGS, system prompts
+src/irys/core/reader.py         — PDF, DOCX, TXT, MHT document text extraction
+src/irys/core/repository.py     — MatterRepository: file discovery, metadata, small-repo check
+src/irys/core/external_search.py — ExternalSearchManager: CourtListener + Tavily wrappers
+src/irys/api.py                 — Irys high-level Python API, IrysConfig, InvestigationResult
+src/irys/service/api.py         — FastAPI REST service (S3/cloud path)
+src/irys/service/inline_citation_service.py — Post-synthesis inline citation injection
+src/irys/ui/chat_app.py         — Gradio multi-turn chat UI
+v2-dataset/waymo_dataset/classifier_experiments.py — Epistemic classifier (standalone, not integrated)
+scripts/eval_smart_search_mrr.py — End-to-end MRR eval harness (search/density-ranking-upgrade only)
 ```
 
-**Example good commits:**
-- "Fix citation text truncation - remove 200 char limit"
-- "Add on_citation callback for external sources"
-- "Filter out template-style queries with brackets"
+## How to run
 
-**Example BAD commits:**
-- "Various fixes and improvements" (too vague)
-- "External search integration with multiple fixes" (too many things)
+```bash
+# Required in .env:
+GEMINI_API_KEY=xxx
 
-**WHY THIS MATTERS:**
-- Easy to revert if something breaks
-- Clear history of what changed when
-- Proper code review possible
-- Isolate bugs to specific changes
+# Optional:
+COURTLISTENER_API_TOKEN=xxx   # case law search
+TAVILY_API_KEY=xxx            # web search
+VERTEXAI_CREDENTIALS_B64=xxx  # Vertex AI fallback (base64-encoded service account JSON)
+S3_BUCKET=xxx                 # S3-backed fact/checkpoint storage
+
+# Gradio UI (port 7862, all interfaces)
+python run_ui.py
+
+# FastAPI REST server (port 8000)
+python run_server.py
+```
+
+## Three-tier model stack
+
+All tiers use `temperature=0` for deterministic output. Fallback chain runs Gemini → Vertex AI → fallback model on 503/timeout.
+
+| Tier | Primary model | Fallback | Tasks |
+|---|---|---|---|
+| **LITE** | `gemini-2.5-flash-lite` | `gemini-3.1-flash-lite-preview` | Fact extraction, search hit selection, file picking, sufficiency checks, trigger extraction |
+| **FLASH** | `gemini-3-flash-preview` | `gemini-2.5-flash` | Planning, unified assessment, routing decisions, case law/web result analysis |
+| **PRO** | `gemini-3.1-pro-preview` | `gemini-2.5-pro` (then `gemini-2.5-flash`) | Final synthesis only — always uses PRO system prompt regardless of model |
+
+## Investigation pipeline — phase order
+
+1. **Routing** — `investigate()`: if `repo.is_small_repo`, go to `_direct_answer()`; otherwise go to full RLM path.
+2. **Assess and plan** — `_assess_and_create_plan()` → `decisions.assess_and_plan()` (FLASH): one call combines complexity classification, cached-fact sufficiency check, and lead/search-term generation. For small repos, `_direct_answer()` calls `decisions.assess_small_repo()` (FLASH) instead.
+3. **Investigation loop** — `_investigate_loop()`: iterative reads and searches; each lead calls `decisions.extract_facts()` (LITE); facts accumulate in `InvestigationState` and `FactStore`; external research triggers accumulate in `state.external_triggers`.
+4. **External research** (large-repo path, post-loop) — `_run_external_research_post_loop()`: gated by `decisions.should_research_externally()` (LITE); if needed, runs `_run_research_agent()` → `ResearchAgent`.
+5. **Synthesis** — `_synthesize()` → `decisions.synthesize()`: PRO model for complex queries, FLASH model with PRO system prompt for simple queries.
+
+## Search scoring — current formula
+
+`smart_search()` tries exact phrase match first. If no hits and query has multiple words, falls back to OR search across individual terms (> 2 chars), then deduplicates by `(file, page, line)` and accumulates `match_count`.
+
+Density scoring runs on **both** branches (exact and OR-fallback):
+
+```
+hit.score = hit.match_count / divisor
+
+where divisor =
+  doc.page_count            (PDFs with page_count > 1)
+  max(1.0, total_chars / 3000)  (all other formats: DOCX, TXT, MD, MHT, DOC)
+```
+
+`_CHARS_PER_PAGE = 3000` is an unvalidated constant. CONTEXT.md flags it as needing empirical calibration against the CITIOM DOCX corpus before production use on mixed-format matters.
+
+**Stance boost is not yet wired in.** The scoring formula in CONTEXT.md (`0.35 × term_coverage + 0.25 × match_density + 0.40 × epistemic_stance_boost`) is the design target, but `SearchHit.score` currently carries only match density. Stance boost integration is blocked on Experiments 1 and 2 (see CONTEXT.md Section 5).
+
+## Epistemic classifier — integration status
+
+**What it classifies:** Assigns `epistemic_category` (e.g., `authority_court_substantive`, `advocacy_plaintiff`, `evidence`) and `authority_weight` (0.0–10.0) to documents using filename/metadata regex rules — zero LLM calls.
+
+**Where it lives now:** Standalone experiment file at `v2-dataset/waymo_dataset/classifier_experiments.py`. It is not imported or called anywhere in the main pipeline (`engine.py`, `search.py`, `fact_store.py`, `external_search.py`).
+
+**What is NOT yet integrated:**
+- Classifier is not called during document ingestion or search
+- `StoredFact` does not have `epistemic_category` or `authority_weight` fields
+- `search.py` scoring does not apply stance boost
+- `external_search.py` does not attach `epistemic_category = "case_law_external"` at ingestion
+
+**Validation status:** 99.6% corpus coverage on 7,052-doc Waymo corpus. SME-reviewed May 1, 2026 (weight table in CONTEXT.md Section 4). Integration follows the merge sequence in CONTEXT.md Section 6.
+
+## StoredFact schema
+
+From `fact_store.py`:
+
+```python
+@dataclass
+class StoredFact:
+    fact: str                        # fact text
+    source: str                      # filename
+    page: Optional[int] = None
+    quote: Optional[str] = None      # verbatim quote if available
+    category: Optional[str] = None   # financial, timeline, entity, etc. (NOT epistemic category)
+    extracted: str = ""              # ISO date string
+    query_context: Optional[str] = None
+```
+
+`epistemic_category` and `authority_weight` do **not** exist on `StoredFact`. They are pending classifier integration (CONTEXT.md Section 6, Step 9).
+
+## Key config values
+
+From `RLMConfig` in `engine.py`:
+
+| Field | Default | Effect |
+|---|---|---|
+| `max_depth` | 3 | Max recursion depth |
+| `max_iterations` | 10 | Hard iteration cap on investigation loop |
+| `max_leads_per_level` | 3 | Leads created per planning cycle |
+| `excerpt_chars_simple` | 8000 | Document read limit for simple queries |
+| `excerpt_chars_complex` | 40000 | Document read limit for complex queries |
+| `parallel_reads` | 3 | Concurrent document reads |
+| `early_exit_facts` | 5 | Exit loop early when this many facts accumulated |
+| `max_research_turns` | 4 | Hard cap on ResearchAgent decide_next_action calls |
+| `max_research_actions_per_turn` | 6 | Parallel tool calls per research turn |
+| `research_tool_timeout_s` | 45.0 | Per-tool timeout in ResearchAgent |
+
+## Active branches
+
+| Branch | State | MRR | What it is |
+|---|---|---|---|
+| `search/density-ranking-upgrade` | **Current HEAD. Local only, not pushed.** | 0.164 | 3-commit density scoring chain (both branches scored) + MRR harness. Top of merge queue. |
+| `feat/search+` | PR open. Ready to merge. | 0.167 | Density scoring on OR-fallback only (12 lines). Prerequisite for the density-upgrade branch. |
+| `feat/rlm-improvements` | Remote. Production target. | 0.073 | Current production branch. Density scoring not yet applied. |
+| `feat/inline` | Local. | — | Inline citation work. |
+| `feat/bias-reduction` | Local. | — | Related to classifier/bias workstream. |
+| `multi-modal` | Local. | — | Multimodal (image/OCR) detection work. |
+| Remote: `feat/caselaw-agentic`, `feat/db-integration`, `feat/ocr-integration` | Remote only. | — | Workstream branches, not active locally. |
+
+## Do not touch without reading CONTEXT.md first
+
+Before making changes to `search.py`, `classifier_experiments.py`, or `fact_store.py`, read CONTEXT.md — these files have active experiment gates and a validated merge sequence.
 
 ---
-
-## Overview
-Irys RLM (Recursive Language Model) is a legal document analysis system that investigates queries against document repositories using multi-tier LLM reasoning.
-
-## Architecture
-
-```
-src/irys/
-├── __init__.py           # Public API exports
-├── api.py                # High-level API (Irys class, IrysConfig)
-├── core/
-│   ├── models.py         # GeminiClient (LITE/FLASH/PRO tiers, rate limiting)
-│   ├── repository.py     # MatterRepository (file discovery, search)
-│   ├── reader.py         # Document reading (PDF, DOCX, TXT, MHT)
-│   ├── search.py         # DocumentSearch (text search, smart_search)
-│   ├── cache.py          # LRUCache, DiskCache, ResponseCache
-│   ├── clustering.py     # TF-IDF document clustering
-│   ├── external_search.py # CourtListener + Tavily external search
-│   └── utils.py          # Retry logic, telemetry, validation, config
-├── rlm/
-│   ├── engine.py         # RLMEngine (main investigation loop)
-│   ├── decisions.py      # LLM decision functions (organized by tier)
-│   ├── prompts.py        # Prompt templates (organized by tier)
-│   ├── state.py          # InvestigationState, Citation, Lead, Entity
-│   └── templates.py      # Investigation templates (contract, litigation, etc.)
-├── service/
-│   ├── api.py            # FastAPI REST API for S3/cloud deployment
-│   ├── config.py         # ServiceConfig (env-based configuration)
-│   ├── models.py         # Pydantic request/response schemas
-│   └── s3_repository.py  # S3Repository (download, cleanup)
-├── output/
-│   └── formatters.py     # Markdown, HTML, JSON, PlainText formatters
-└── ui/
-    └── app.py            # Gradio web UI with real-time streaming
-```
-
-## Model Tiers
-
-- **LITE** (gemini-2.5-flash-lite): Quick decisions, file picking, sufficiency checks
-- **FLASH** (gemini-2.5-flash): Analysis, planning, fact extraction, simple synthesis
-- **PRO** (gemini-2.5-pro): Complex synthesis only
-
-## Test Repository
-- **Location**: `C:\Users\devan\Downloads\CITIOM v Gulfstream\documents`
-- **Case**: CITIOM v Gulfstream (aircraft 192-month inspection dispute)
-- **Evaluation Set**: `legal_queries.json` (100 queries across 6 categories)
-
-## Evaluation Categories
-1. `factual_extraction` (20 queries) - Simple fact lookups
-2. `multi_document_synthesis` (20 queries) - Cross-document analysis
-3. `timeline_construction` (15 queries) - Chronological analysis
-4. `contradiction_detection` (15 queries) - Finding inconsistencies
-5. `legal_analysis` (15 queries) - Legal reasoning
-6. `evidence_assessment` (15 queries) - Evidence evaluation
-
-## Environment
-
-```bash
-# Required
-GEMINI_API_KEY=xxx  # In .env file, never hardcode
-
-# Install
-pip install -r requirements.txt
-
-# Run UI
-python run_ui.py
-```
-
-## Improvement Workflow
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  1. BASELINE: Run eval set, record metrics                  │
-├─────────────────────────────────────────────────────────────┤
-│  2. ANALYZE: Identify failure patterns                      │
-│     - Which query types fail?                               │
-│     - Search not finding docs?                              │
-│     - Synthesis weak?                                       │
-├─────────────────────────────────────────────────────────────┤
-│  3. HYPOTHESIZE: Root cause analysis                        │
-│     - Search layer issues (PDF indexing, folder nav)        │
-│     - LLM decision issues (prompts, model selection)        │
-│     - Caching/efficiency issues                             │
-├─────────────────────────────────────────────────────────────┤
-│  4. IMPLEMENT: Make targeted fix                            │
-│     - Edit src/irys/rlm/engine.py                           │
-│     - Edit src/irys/rlm/decisions.py                        │
-│     - Edit src/irys/core/search.py                          │
-├─────────────────────────────────────────────────────────────┤
-│  5. VALIDATE: Test the fix                                  │
-├─────────────────────────────────────────────────────────────┤
-│  6. COMPARE: Run full eval, compare to baseline             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## Key Files for Modifications
-
-| Area | File | Purpose |
-|------|------|---------|
-| Search | `src/irys/core/search.py` | Document search logic, smart_search with OR fallback |
-| Engine | `src/irys/rlm/engine.py` | Main investigation loop (Plan → Investigate → Synthesize) |
-| Decisions | `src/irys/rlm/decisions.py` | All LLM decision functions organized by model tier |
-| Prompts | `src/irys/rlm/prompts.py` | All prompt templates organized by tier |
-| Reader | `src/irys/core/reader.py` | PDF/DOCX/TXT/MHT extraction |
-| External | `src/irys/core/external_search.py` | CourtListener (case law) + Tavily (web search) |
-| State | `src/irys/rlm/state.py` | Citation, Lead, Entity, Timeline tracking |
-| API | `src/irys/api.py` | High-level Python API (Irys class) |
-| REST API | `src/irys/service/api.py` | FastAPI REST endpoints for S3/cloud |
-
-## Entry Points
-
-| File | Purpose |
-|------|---------|
-| `run_ui.py` | Launch Gradio UI (port 7862) |
-| `run_server.py` | Launch FastAPI REST server (port 8000) |
-| `quick_test.py` | Quick local testing script |
-
-## External Search Integration
-
-The engine supports external search sources for enriching investigations:
-- **CourtListener**: Legal case law search (requires API token)
-- **Tavily**: Web search for current information (requires API key)
-
-Enable via environment variables:
-```bash
-COURTLISTENER_API_TOKEN=xxx  # Optional: case law search
-TAVILY_API_KEY=xxx           # Optional: web search
-```
-
-## RLMConfig Defaults
-
-Current defaults in `engine.py`:
-- `max_depth`: 3 (reduced from 5 for efficiency)
-- `max_iterations`: 10 (hard limit)
-- `max_leads_per_level`: 5
-- `min_lead_priority`: 0.3
-- `parallel_reads`: 5
