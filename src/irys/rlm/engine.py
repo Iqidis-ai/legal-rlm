@@ -2695,11 +2695,13 @@ class RLMEngine:
 
             # Save facts to persistent store for future queries
             if self.fact_store:
-                new_facts = self.fact_store.add_facts_from_extraction(
-                    extraction=extraction,
-                    source_filename=doc.filename,
+                new_fact_hashes = self.fact_store.add_facts_from_extraction(
+                    facts=extraction.get("facts", []),
+                    source=doc.filename,
+                    scope=scope,
                     query_context=state.query,
                 )
+                new_facts = len(new_fact_hashes)
                 self._emit_step(
                     state, StepType.THINKING,
                     f"Added {new_facts} facts from {doc.filename} (store total: {len(self.fact_store)})",
