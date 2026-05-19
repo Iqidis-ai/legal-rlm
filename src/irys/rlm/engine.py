@@ -305,7 +305,7 @@ def _derive_doc_label(filename: str) -> str:
             if fixed_label is not None:
                 return fixed_label
             # Generic: prepend first meaningful word from filename
-            first_word = re.sub(r'[^a-zA-Z0-9]', '', stem.split()[0])[:8]
+            first_word = re.sub(r'[^a-zA-Z0-9]', '', re.split(r'[\s_\-\.]+', stem)[0])[:8]
             return f"{first_word}-{generic_suffix}"
 
     # Fallback: first two non-stopword words, hyphenated
