@@ -233,3 +233,54 @@ class TestImportanceLifecycle:
         assert store._conn.execute(
             "SELECT id FROM facts WHERE content_hash=?", (h,)
         ).fetchone() is not None
+
+
+class TestGetRelevant:
+    """get_relevant returns scored, ranked StoredFact list."""
+
+    def _make_scope(self, targeted=True):
+        class S:
+            is_targeted = targeted
+        return S()
+
+    def test_returns_list_of_stored_facts(self):
+        store, _ = make_store()
+        scope = self._make_scope()
+        store.add_facts_from_extraction(["Contract value is $2.5M"], "A.pdf", scope)
+        results = store.get_relevant("contract value")
+        assert isinstance(results, list)
+        assert all(isinstance(f, StoredFact) for f in results)
+
+    def test_relevant_fact_ranked_first(self):
+        store, _ = make_store()
+        scope = self._make_scope()
+        store.add_facts_from_extraction(
+            ["Contract value is $2.5M", "Weather was sunny in Dallas"],
+            "A.pdf", scope,
+        )
+        results = store.get_relevant("contract value")
+        assert len(results) >= 1
+        assert "contract" in results[0].fact.lower() or "2.5" in results[0].fact
+
+    def test_empty_store_returns_empty(self):
+        store, _ = make_store()
+        assert store.get_relevant("anything") == []
+
+    def test_top_k_respected(self):
+        store, _ = make_store()
+        scope = self._make_scope()
+        store.add_facts_from_extraction(
+            [f"Fact about clause {i}" for i in range(30)],
+            "doc.pdf", scope,
+        )
+        results = store.get_relevant("clause", top_k=5)
+        assert len(results) <= 5
+
+    def test_stored_fact_fields_populated(self):
+        store, _ = make_store()
+        scope = self._make_scope(targeted=True)
+        store.add_facts_from_extraction(["Indemnification cap is $5M"], "MSA.pdf", scope)
+        results = store.get_relevant("indemnification")
+        assert results[0].source == "MSA.pdf"
+        assert results[0].scope_type == "targeted"
+        assert results[0].content_hash != ""

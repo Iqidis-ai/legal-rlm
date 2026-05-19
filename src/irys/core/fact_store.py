@@ -13,6 +13,7 @@ Storage: {repository_path}/.irys/facts.db
 import hashlib
 import json
 import logging
+import math
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass, asdict
@@ -394,16 +395,128 @@ class FactStore:
         rows = self._conn.execute("SELECT * FROM facts").fetchall()
         return [self._row_to_stored_fact(r) for r in rows]
 
-    def get_relevant(self, query: str, max_facts: int = 50) -> list[StoredFact]:
-        """Get all cached facts for context (LLM decides relevance).
+    def get_relevant(self, query: str, top_k: int = 40) -> list[StoredFact]:
+        """Return top_k facts ranked by multi-granularity RRF + compound score.
 
-        Falls back to _facts if set directly by legacy callers.
+        Three retrieval lanes fused via RRF (k=60):
+          q1: BM25 over individual fact rows
+          q2: BM25 over source synopses (expands to all facts from high-signal sources)
+          q3: Importance sweep (query-independent top facts)
         """
-        facts = self._facts if self._facts else self.get_all()
-        if not facts:
+        # Legacy compat: if _facts set directly, fall back to simple path
+        if self._facts:
+            facts_sorted = sorted(self._facts, key=lambda f: (f.source, _safe_page(f.page)))
+            return facts_sorted[:top_k]
+
+        try:
+            q1_hits = self._bm25_facts(query, top_k * 3)
+            q2_sources = self._bm25_synopses(query, top_m=10)
+            q3_hits = self._importance_sweep(top_k)
+        except sqlite3.OperationalError as e:
+            logger.warning("BM25 query failed (%s), falling back to importance sweep", e)
+            q1_hits, q2_sources = [], []
+            q3_hits = self._importance_sweep(top_k)
+
+        # q2 expansion: collect all fact IDs from top-M synopsis sources
+        q2_fact_ids: set[int] = set()
+        if q2_sources:
+            placeholders = ",".join("?" * len(q2_sources))
+            rows = self._conn.execute(
+                f"SELECT id FROM facts WHERE source IN ({placeholders})", q2_sources
+            ).fetchall()
+            q2_fact_ids = {r[0] for r in rows}
+
+        q1_ranks = {fid: rank for rank, (fid, _) in enumerate(q1_hits)}
+        q2_ranks = {fid: i for i, fid in enumerate(q2_fact_ids)}
+        q3_ranks = {fid: rank for rank, (fid, _) in enumerate(q3_hits)}
+
+        all_ids = (
+            {fid for fid, _ in q1_hits}
+            | q2_fact_ids
+            | {fid for fid, _ in q3_hits}
+        )
+        if not all_ids:
             return []
-        facts_sorted = sorted(facts, key=lambda f: (f.source, _safe_page(f.page)))
-        return facts_sorted[:max_facts]
+
+        K = 60
+        rrf_scores: dict[int, float] = {}
+        for fid in all_ids:
+            rrf = 0.0
+            if fid in q1_ranks:
+                rrf += 0.6 / (K + q1_ranks[fid])
+            if fid in q2_ranks:
+                rrf += 0.3 / (K + q2_ranks[fid])
+            if fid in q3_ranks:
+                rrf += 0.1 / (K + q3_ranks[fid])
+            rrf_scores[fid] = rrf
+
+        top_ids = sorted(rrf_scores, key=rrf_scores.__getitem__, reverse=True)[: top_k * 2]
+        placeholders = ",".join("?" * len(top_ids))
+        rows = self._conn.execute(
+            f"SELECT * FROM facts WHERE id IN ({placeholders})", top_ids
+        ).fetchall()
+
+        q1_score_map = {fid: abs(score) for fid, score in q1_hits}
+        max_bm25 = max(q1_score_map.values(), default=1.0) or 1.0
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        scored: list[tuple[float, StoredFact]] = []
+        for row in rows:
+            sf = self._row_to_stored_fact(row)
+            bm25_norm = q1_score_map.get(row["id"], 0.0) / max_bm25
+            compound = self._compound_score(sf, bm25_norm, today)
+            scored.append((compound, sf))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [sf for _, sf in scored[:top_k]]
+
+    def _bm25_facts(self, query: str, top_k: int) -> list[tuple[int, float]]:
+        """Return [(fact_id, bm25_score)] ordered best-first."""
+        rows = self._conn.execute(
+            """SELECT f.id, bm25(fact_fts) AS score
+               FROM fact_fts
+               JOIN facts f ON f.id = fact_fts.rowid
+               WHERE fact_fts MATCH ?
+               ORDER BY score
+               LIMIT ?""",
+            (query, top_k),
+        ).fetchall()
+        return [(r[0], r[1]) for r in rows]
+
+    def _bm25_synopses(self, query: str, top_m: int = 10) -> list[str]:
+        """Return source paths whose synopses best match the query."""
+        rows = self._conn.execute(
+            """SELECT s.source
+               FROM synopsis_fts
+               JOIN source_synopses s ON s.id = synopsis_fts.rowid
+               WHERE synopsis_fts MATCH ?
+               ORDER BY bm25(synopsis_fts)
+               LIMIT ?""",
+            (query, top_m),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def _importance_sweep(self, top_n: int) -> list[tuple[int, float]]:
+        """Return top-N facts by raw importance (query-independent lane)."""
+        rows = self._conn.execute(
+            "SELECT id, importance FROM facts ORDER BY importance DESC LIMIT ?",
+            (top_n,),
+        ).fetchall()
+        return [(r[0], r[1]) for r in rows]
+
+    @staticmethod
+    def _compound_score(sf: StoredFact, bm25_norm: float, today: str) -> float:
+        scope_bonus = {"targeted": 1.0, "prefix": 0.7, "snippet": 0.4}.get(sf.scope_type, 0.4)
+        importance_signal = (sf.importance / 100.0) * scope_bonus
+        try:
+            days_idle = (
+                datetime.fromisoformat(today) - datetime.fromisoformat(sf.recency_updated)
+            ).days
+        except (ValueError, TypeError):
+            days_idle = 0
+        recency = math.exp(-max(0, days_idle) / 14.0)
+        tier_boost = {"core": 1.15, "validated": 1.08, "draft": 1.0}.get(sf.tier, 1.0)
+        return (0.60 * bm25_norm + 0.25 * importance_signal + 0.15 * recency) * tier_boost
 
     def _row_to_stored_fact(self, row) -> StoredFact:
         return StoredFact(
