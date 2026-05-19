@@ -284,3 +284,52 @@ class TestGetRelevant:
         assert results[0].source == "MSA.pdf"
         assert results[0].scope_type == "targeted"
         assert results[0].content_hash != ""
+
+
+class TestEvidencePacker:
+    """EvidencePacker respects source budget cap and fills by density."""
+
+    def _make_facts(self, source_facts: dict) -> list:
+        facts = []
+        for source, count in source_facts.items():
+            for i in range(count):
+                facts.append(StoredFact(
+                    fact=f"[{source[:4]}, §2.{i}] Clause text number {i} for {source}",
+                    source=source,
+                    importance=60.0 - i,
+                    scope_type="targeted",
+                    tier="validated",
+                ))
+        return facts
+
+    def test_all_sources_appear_when_budget_is_sufficient(self):
+        from irys.core.evidence_packer import EvidencePacker
+        facts = self._make_facts({"ARKS.pdf": 10, "BSR.pdf": 10, "Delek.pdf": 10})
+        result = EvidencePacker.pack(facts, query="conditions precedent", token_budget=10_000)
+        assert "ARKS.pdf" in result
+        assert "BSR.pdf" in result
+        assert "Delek.pdf" in result
+
+    def test_source_cap_prevents_monopoly(self):
+        """One large source must not exceed 30% of the output."""
+        from irys.core.evidence_packer import EvidencePacker
+        facts = self._make_facts({"HUGE.pdf": 50, "SMALL_A.pdf": 1, "SMALL_B.pdf": 1})
+        result = EvidencePacker.pack(facts, query="clause", token_budget=3000)
+        assert "SMALL_A.pdf" in result
+        assert "SMALL_B.pdf" in result
+
+    def test_output_contains_quality_tags(self):
+        """Each fact line must be prefixed with [scope_type, tier]."""
+        from irys.core.evidence_packer import EvidencePacker
+        facts = [StoredFact(
+            fact="Contract value is $2.5M",
+            source="MSA.pdf",
+            scope_type="targeted",
+            tier="core",
+        )]
+        result = EvidencePacker.pack(facts, query="contract value", token_budget=5000)
+        assert "[targeted, core]" in result
+
+    def test_empty_facts_returns_empty(self):
+        from irys.core.evidence_packer import EvidencePacker
+        assert EvidencePacker.pack([], query="anything", token_budget=5000) == ""

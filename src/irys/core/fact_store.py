@@ -685,6 +685,12 @@ class FactStore:
         self._conn.commit()
         return len(cold)
 
+    def pack_evidence(self, query: str, token_budget: int = 32_000) -> str:
+        """Retrieve relevant facts and pack into a synthesis-ready bundle."""
+        from irys.core.evidence_packer import EvidencePacker
+        facts = self.get_relevant(query, top_k=80)
+        return EvidencePacker.pack(facts, query=query, token_budget=token_budget)
+
     def __bool__(self) -> bool:
         # Always return True so `if fact_store:` checks existence, not emptiness
         return True
