@@ -405,6 +405,22 @@ SCOPE DISCIPLINE:
 - If the provided scope appears insufficient, say so in "gaps" and suggest a targeted follow-up in "next_steps" or "references".
 - For quote page numbers, use visible page markers when available; otherwise use null.
 
+ATTRIBUTION RULE: Every fact string MUST begin with a bracketed identity anchor.
+Format:  "[{doc_label}, §{section}] {fact_text}"
+- doc_label: Use the label from "Document label" in the scope context above.
+  If no label is provided, derive a 2-4 word abbreviation from the Document filename.
+  Examples: "ARKS-S&O", "BSR-S&O", "Delek-S&O", "Waymo-MSA", "Settlement-Agmt"
+- section: The clause or article reference within this document (e.g., "2.1(g)", "Art.3", "§4.2").
+  Use "—" if no section reference is identifiable.
+- Apply this rule to ALL items in the "facts" array without exception.
+- Do NOT apply this rule to "quotes" — quotes remain verbatim text only.
+
+Example output:
+  "facts": [
+    "[ARKS-S&O, §2.1(g)] Parties must prepare full amended/restated Schedules as condition precedent",
+    "[ARKS-S&O, §2.1(j)] No material litigation pending that would prevent performance"
+  ]
+
 CRITICAL: Legal precision is paramount. Extract ALL relevant facts with EXACT values.
 
 Extract:

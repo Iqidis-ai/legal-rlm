@@ -80,3 +80,26 @@ class TestScopeContextLabel:
             f"Document label (use exactly this in attribution anchors): {label}"
         )
         assert "Delek-S&O" in scope_context
+
+
+class TestExtractFactsPromptAttribution:
+    """P_EXTRACT_FACTS must contain the ATTRIBUTION RULE block."""
+
+    def test_attribution_rule_present(self):
+        from irys.rlm.prompts import P_EXTRACT_FACTS
+        assert "ATTRIBUTION RULE" in P_EXTRACT_FACTS
+
+    def test_attribution_format_instruction(self):
+        from irys.rlm.prompts import P_EXTRACT_FACTS
+        assert "[{doc_label}, §{section}]" in P_EXTRACT_FACTS
+
+    def test_attribution_example_present(self):
+        from irys.rlm.prompts import P_EXTRACT_FACTS
+        # The example line illustrates the expected output format
+        assert "ARKS-S&O" in P_EXTRACT_FACTS
+
+    def test_quotes_exemption_stated(self):
+        from irys.rlm.prompts import P_EXTRACT_FACTS
+        # Quotes must be explicitly excluded from attribution tagging
+        assert "quotes" in P_EXTRACT_FACTS.lower()
+        assert "verbatim" in P_EXTRACT_FACTS.lower()
