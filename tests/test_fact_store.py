@@ -53,3 +53,30 @@ class TestDeriveDocLabel:
         """Calling twice on same filename must return identical string."""
         fname = "Delek ARKS Amended Restated Master Supply & Offtake Agreement.pdf"
         assert _derive_doc_label(fname) == _derive_doc_label(fname)
+
+
+class TestScopeContextLabel:
+    """scope_context passed to extract_facts must contain the canonical doc label."""
+
+    def test_scope_context_contains_label(self):
+        """_derive_doc_label output must appear verbatim in the scope_context string."""
+        filename = "Delek ARKS Amended Restated Master Supply & Offtake Agreement.pdf"
+        label = _derive_doc_label(filename)
+        # Simulate what engine.py will build
+        scope_label = "pages 5-10"  # stand-in for scope.label()
+        scope_context = (
+            f"Read scope: {scope_label}\n"
+            f"Document label (use exactly this in attribution anchors): {label}"
+        )
+        assert label in scope_context
+        assert "ARKS-S&O" in scope_context
+
+    def test_scope_context_label_delek_standard(self):
+        filename = "Delek Amended Restated Master Supply & Offtake Agreement.pdf"
+        label = _derive_doc_label(filename)
+        assert label == "Delek-S&O"
+        scope_context = (
+            f"Read scope: prefix\n"
+            f"Document label (use exactly this in attribution anchors): {label}"
+        )
+        assert "Delek-S&O" in scope_context

@@ -2659,7 +2659,11 @@ class RLMEngine:
 
             # Dynamic extraction limit (matching excerpt)
             extraction_limit = effective_limit
-            scope_context = f"Read scope: {scope.label()}" if scope.label() != "prefix" else "Read scope: prefix"
+            doc_label = _derive_doc_label(doc.filename)
+            scope_context = (
+                f"Read scope: {scope.label()}\n"
+                f"Document label (use exactly this in attribution anchors): {doc_label}"
+            )
 
             # Use decisions layer to extract facts
             t_step_ef = self._telemetry.begin_step("extract_facts", "investigation_loop") if self._telemetry else None
