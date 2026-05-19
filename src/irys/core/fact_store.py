@@ -1,56 +1,179 @@
-"""Fact Store - Persistent storage for extracted facts.
+"""Fact Store v2 — SQLite + FTS5 backed persistent storage for extracted facts.
 
-Stores facts in JSONL format for easy appending and line-by-line reading.
-Facts include source citations for traceability.
+facts.db schema:
+  facts          — StoredFact rows with compound scoring fields
+  fact_fts       — FTS5 BM25 over fact + source (Porter stemmer)
+  source_synopses— one ~300-token synopsis per source document
+  synopsis_fts   — FTS5 BM25 over synopsis text (Porter stemmer)
+  fact_stubs     — archived facts (importance < 35); BM25-searchable summaries
+
+Storage: {repository_path}/.irys/facts.db
 """
 
+import hashlib
 import json
 import logging
+import sqlite3
+from collections import defaultdict
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS facts (
+    id              INTEGER PRIMARY KEY,
+    fact            TEXT    NOT NULL,
+    source          TEXT    NOT NULL,
+    page            INTEGER,
+    quote           TEXT,
+    category        TEXT,
+    extracted       TEXT    NOT NULL,
+    query_context   TEXT,
+    scope_type      TEXT    NOT NULL DEFAULT 'snippet',
+    importance      REAL    NOT NULL DEFAULT 50.0,
+    recency_updated TEXT    NOT NULL,
+    tier            TEXT    NOT NULL DEFAULT 'draft',
+    content_hash    TEXT    NOT NULL,
+    UNIQUE(content_hash)
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS fact_fts USING fts5(
+    fact, source,
+    content      = 'facts',
+    content_rowid = 'id',
+    tokenize     = 'porter unicode61'
+);
+
+CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
+    INSERT INTO fact_fts(rowid, fact, source) VALUES (new.id, new.fact, new.source);
+END;
+CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
+    INSERT INTO fact_fts(fact_fts, rowid, fact, source)
+    VALUES ('delete', old.id, old.fact, old.source);
+END;
+CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
+    INSERT INTO fact_fts(fact_fts, rowid, fact, source)
+    VALUES ('delete', old.id, old.fact, old.source);
+    INSERT INTO fact_fts(rowid, fact, source) VALUES (new.id, new.fact, new.source);
+END;
+
+CREATE TABLE IF NOT EXISTS source_synopses (
+    id          INTEGER PRIMARY KEY,
+    source      TEXT    NOT NULL UNIQUE,
+    synopsis    TEXT    NOT NULL,
+    token_count INTEGER NOT NULL DEFAULT 0,
+    updated_at  TEXT    NOT NULL
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS synopsis_fts USING fts5(
+    synopsis, source,
+    content      = 'source_synopses',
+    content_rowid = 'id',
+    tokenize     = 'porter unicode61'
+);
+
+CREATE TRIGGER IF NOT EXISTS synopses_ai AFTER INSERT ON source_synopses BEGIN
+    INSERT INTO synopsis_fts(rowid, synopsis, source) VALUES (new.id, new.synopsis, new.source);
+END;
+CREATE TRIGGER IF NOT EXISTS synopses_ad AFTER DELETE ON source_synopses BEGIN
+    INSERT INTO synopsis_fts(synopsis_fts, rowid, synopsis, source)
+    VALUES ('delete', old.id, old.synopsis, old.source);
+END;
+CREATE TRIGGER IF NOT EXISTS synopses_au AFTER UPDATE OF synopsis ON source_synopses BEGIN
+    INSERT INTO synopsis_fts(synopsis_fts, rowid, synopsis, source)
+    VALUES ('delete', old.id, old.synopsis, old.source);
+    INSERT INTO synopsis_fts(rowid, synopsis, source) VALUES (new.id, new.synopsis, new.source);
+END;
+
+CREATE TABLE IF NOT EXISTS fact_stubs (
+    content_hash  TEXT PRIMARY KEY,
+    stub_summary  TEXT NOT NULL,
+    original_fact TEXT NOT NULL,
+    archived_at   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_facts_source      ON facts(source);
+CREATE INDEX IF NOT EXISTS idx_facts_tier        ON facts(tier);
+CREATE INDEX IF NOT EXISTS idx_facts_importance  ON facts(importance DESC);
+CREATE INDEX IF NOT EXISTS idx_facts_recency     ON facts(recency_updated);
+"""
+
 
 @dataclass
 class StoredFact:
-    """A single fact with source citation."""
-    fact: str
-    source: str  # filename
-    page: Optional[int] = None
-    quote: Optional[str] = None  # verbatim quote if available
-    category: Optional[str] = None  # financial, timeline, entity, etc.
-    extracted: str = ""  # ISO date string
-    query_context: Optional[str] = None  # what query led to this extraction
+    """A single fact with source citation and scoring metadata."""
+    fact:            str
+    source:          str
+    page:            Optional[int]   = None
+    quote:           Optional[str]   = None
+    category:        Optional[str]   = None
+    extracted:       str             = ""
+    query_context:   Optional[str]   = None
+    # v2 fields
+    scope_type:      str             = "snippet"
+    importance:      float           = 50.0
+    recency_updated: str             = ""
+    tier:            str             = "draft"
+    content_hash:    str             = ""
 
     def __post_init__(self):
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if not self.extracted:
-            self.extracted = datetime.now().strftime("%Y-%m-%d")
-        # Coerce page to int — LLM output or persisted data may have it as str
+            self.extracted = now
+        if not self.recency_updated:
+            self.recency_updated = now
         if self.page is not None:
             try:
                 self.page = int(self.page)
             except (ValueError, TypeError):
                 self.page = None
+        if not self.content_hash:
+            self.content_hash = StoredFact.compute_hash(self.fact, self.source)
 
-    def to_json_line(self) -> str:
-        """Convert to JSON line for JSONL storage."""
-        return json.dumps(asdict(self), ensure_ascii=False)
-
-    @classmethod
-    def from_json_line(cls, line: str) -> "StoredFact":
-        """Parse from JSON line."""
-        data = json.loads(line.strip())
-        return cls(**data)
+    @staticmethod
+    def compute_hash(fact: str, source: str) -> str:
+        return hashlib.sha256(f"{fact}\x00{source}".encode()).hexdigest()
 
     def matches_query(self, query_lower: str) -> bool:
         """Simple keyword matching for relevance filtering."""
         fact_lower = self.fact.lower()
-        # Check if any significant query words appear in the fact
         query_words = [w for w in query_lower.split() if len(w) > 3]
         return any(word in fact_lower for word in query_words)
+
+    def to_json_line(self) -> str:
+        """Legacy JSONL serialization shim."""
+        return json.dumps({
+            "fact": self.fact,
+            "source": self.source,
+            "page": self.page,
+            "quote": self.quote,
+            "category": self.category,
+            "extracted": self.extracted,
+            "query_context": self.query_context,
+        }, ensure_ascii=False)
+
+    @classmethod
+    def from_json_line(cls, line: str) -> "StoredFact":
+        """Legacy JSONL deserialization shim."""
+        data = json.loads(line.strip())
+        # Only pass known v1 fields; v2 fields will use defaults
+        known = {k: v for k, v in data.items() if k in {
+            "fact", "source", "page", "quote", "category", "extracted", "query_context"
+        }}
+        return cls(**known)
+
+
+@dataclass
+class FactStoreStats:
+    total_facts:     int
+    core_facts:      int
+    validated_facts: int
+    draft_facts:     int
+    archived_stubs:  int
+    avg_importance:  float
 
 
 def _coerce_page(value) -> Optional[int]:
@@ -74,172 +197,88 @@ def _safe_page(page) -> int:
 
 
 class FactStore:
-    """
-    Persistent fact storage using JSONL format.
+    """SQLite + FTS5 backed fact store.
 
-    Storage location: {repository_path}/.irys/facts.jsonl
+    Storage: {repository_path}/.irys/facts.db
 
-    Usage:
-        store = FactStore(repo_path)
-        store.load()
-
-        # Add facts
-        store.add_fact(StoredFact(fact="Contract value was $2.5M", source="Agreement.pdf", page=3))
-
-        # Get facts relevant to a query
-        relevant = store.get_relevant("What was the contract value?")
-
-        # Format for LLM context
-        fact_sheet = store.format_for_llm(relevant)
+    Legacy compatibility:
+      - _loaded and _facts attributes are maintained so existing callers and
+        tests that set them directly (store._loaded = True; store._facts = [...])
+        continue to work. format_for_llm() will use _facts when populated,
+        otherwise falls back to the SQLite store.
     """
 
     STORE_DIR = ".irys"
-    FACTS_FILE = "facts.jsonl"
+    DB_FILE   = "facts.db"
 
     def __init__(self, repository_path: Path, s3_config: Optional[dict] = None):
-        """
-        Args:
-            repository_path: Local path to repository (used for local fallback).
-            s3_config: Optional S3 config dict with keys: bucket, region, prefix,
-                       aws_access_key_id, aws_secret_access_key.
-                       When set, load/save use S3 as primary storage.
-        """
         self.repository_path = Path(repository_path)
-        self.store_dir = self.repository_path / self.STORE_DIR
-        self.facts_file = self.store_dir / self.FACTS_FILE
         self.s3_config = s3_config
         self._s3_client = None
-        self._facts: list[StoredFact] = []
-        self._loaded = False
-
-    def _ensure_store_dir(self):
-        """Create .irys directory if it doesn't exist."""
+        self.store_dir = self.repository_path / self.STORE_DIR
         self.store_dir.mkdir(parents=True, exist_ok=True)
+        db_path = self.store_dir / self.DB_FILE
+        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        self._init_schema()
+        # Legacy compat attributes — used by tests that set _facts directly
+        self._loaded: bool = False
+        self._facts: list = []
 
-    def _get_s3_client(self):
-        """Return a cached boto3 S3 client built from s3_config."""
-        if self._s3_client is None:
-            import boto3
-            cfg = self.s3_config or {}
-            kwargs = {"region_name": cfg.get("region", "us-east-1")}
-            if cfg.get("aws_access_key_id"):
-                kwargs["aws_access_key_id"] = cfg["aws_access_key_id"]
-            if cfg.get("aws_secret_access_key"):
-                kwargs["aws_secret_access_key"] = cfg["aws_secret_access_key"]
-            self._s3_client = boto3.client("s3", **kwargs)
-        return self._s3_client
+    def _init_schema(self) -> None:
+        self._conn.executescript(_SCHEMA)
+        # executescript issues an implicit COMMIT and may reset connection-level
+        # PRAGMAs, so set them explicitly afterward.
+        self._conn.execute("PRAGMA journal_mode = WAL")
+        self._conn.execute("PRAGMA foreign_keys = ON")
+        self._conn.commit()
 
-    def _s3_key(self) -> str:
-        """Return S3 object key for the facts file."""
-        prefix = (self.s3_config or {}).get("prefix", "").strip("/")
-        if prefix:
-            return f"{prefix}/{self.FACTS_FILE}"
-        return self.FACTS_FILE
+    # ------------------------------------------------------------------
+    # Core persistence
+    # ------------------------------------------------------------------
 
     def load(self) -> int:
-        """Load facts from JSONL file (S3 if configured, else local). Returns number of facts loaded."""
-        self._facts = []
-
-        if self.s3_config:
-            try:
-                s3 = self._get_s3_client()
-                key = self._s3_key()
-                response = s3.get_object(Bucket=self.s3_config["bucket"], Key=key)
-                content = response["Body"].read().decode("utf-8")
-                for line_num, line in enumerate(content.splitlines(), 1):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        self._facts.append(StoredFact.from_json_line(line))
-                    except (json.JSONDecodeError, TypeError) as e:
-                        logger.warning(f"Skipping malformed S3 line {line_num}: {e}")
-                logger.info(f"Loaded {len(self._facts)} facts from S3 key {key}")
-                self._loaded = True
-                return len(self._facts)
-            except Exception as e:
-                if "NoSuchKey" in str(e) or "404" in str(e):
-                    logger.info(f"No existing fact store in S3 at {self._s3_key()}")
-                else:
-                    logger.warning(f"Failed to load facts from S3, falling back to local: {e}")
-
-        if not self.facts_file.exists():
-            logger.info(f"No existing fact store at {self.facts_file}")
-            self._loaded = True
-            return 0
-
-        try:
-            with open(self.facts_file, "r", encoding="utf-8") as f:
-                for line_num, line in enumerate(f, 1):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        fact = StoredFact.from_json_line(line)
-                        self._facts.append(fact)
-                    except (json.JSONDecodeError, TypeError) as e:
-                        logger.warning(f"Skipping malformed line {line_num}: {e}")
-
-            logger.info(f"Loaded {len(self._facts)} facts from {self.facts_file}")
-            self._loaded = True
-            return len(self._facts)
-
-        except Exception as e:
-            logger.error(f"Failed to load fact store: {e}")
-            self._loaded = True
-            return 0
+        """Backward-compatible shim — v2 initialises in __init__. Returns row count."""
+        self._loaded = True
+        return len(self)
 
     def save(self) -> int:
-        """Save all facts to JSONL (S3 if configured, also local). Returns number of facts saved."""
-        content = "".join(fact.to_json_line() + "\n" for fact in self._facts)
+        """Flush any in-memory _facts (legacy shim) to SQLite, then return row count."""
+        if self._facts:
+            for fact in self._facts:
+                self._upsert_fact(fact)
+            self._conn.commit()
+        return len(self)
 
-        if self.s3_config:
-            try:
-                s3 = self._get_s3_client()
-                key = self._s3_key()
-                s3.put_object(
-                    Bucket=self.s3_config["bucket"],
-                    Key=key,
-                    Body=content.encode("utf-8"),
-                    ContentType="application/x-ndjson",
-                )
-                logger.info(f"Saved {len(self._facts)} facts to S3 key {key}")
-                return len(self._facts)
-            except Exception as e:
-                logger.error(f"Failed to save facts to S3: {e}")
-                return 0
-
-        self._ensure_store_dir()
-
+    def _upsert_fact(self, fact: StoredFact) -> bool:
+        """Insert a fact; silently ignore duplicates (same content_hash). Returns True if inserted."""
         try:
-            with open(self.facts_file, "w", encoding="utf-8") as f:
-                f.write(content)
+            self._conn.execute(
+                """INSERT OR IGNORE INTO facts
+                   (fact, source, page, quote, category, extracted, query_context,
+                    scope_type, importance, recency_updated, tier, content_hash)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    fact.fact, fact.source, fact.page, fact.quote,
+                    fact.category, fact.extracted, fact.query_context,
+                    fact.scope_type, fact.importance, fact.recency_updated,
+                    fact.tier, fact.content_hash,
+                ),
+            )
+            return self._conn.execute("SELECT changes()").fetchone()[0] == 1
+        except sqlite3.Error as exc:
+            logger.warning("Failed to upsert fact: %s", exc)
+            return False
 
-            logger.info(f"Saved {len(self._facts)} facts to {self.facts_file}")
-            return len(self._facts)
-
-        except Exception as e:
-            logger.error(f"Failed to save fact store: {e}")
-            return 0
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def add_fact(self, fact: StoredFact) -> bool:
-        """
-        Add a fact if not duplicate.
-        Returns True if added, False if duplicate.
-        """
-        if not self._loaded:
-            self.load()
-
-        # Check for duplicates (same fact text from same source)
-        fact_normalized = " ".join(fact.fact.lower().split())
-        for existing in self._facts:
-            existing_normalized = " ".join(existing.fact.lower().split())
-            if (existing_normalized == fact_normalized and
-                existing.source == fact.source):
-                return False
-
-        self._facts.append(fact)
-        return True
+        """Add a fact if not duplicate. Returns True if added, False if duplicate."""
+        inserted = self._upsert_fact(fact)
+        self._conn.commit()
+        return inserted
 
     def add_facts_from_extraction(
         self,
@@ -247,8 +286,7 @@ class FactStore:
         source_filename: str,
         query_context: Optional[str] = None,
     ) -> int:
-        """
-        Add facts from an extract_facts() result.
+        """Add facts from an extract_facts() result dict.
 
         Args:
             extraction: Result from decisions.extract_facts()
@@ -260,32 +298,21 @@ class FactStore:
         """
         added = 0
 
-        # Extract plain facts
         for fact_text in extraction.get("facts", []):
             if not fact_text or not isinstance(fact_text, str):
                 continue
-
-            fact = StoredFact(
-                fact=fact_text,
-                source=source_filename,
-                query_context=query_context,
-            )
-            if self.add_fact(fact):
+            fact = StoredFact(fact=fact_text, source=source_filename, query_context=query_context)
+            if self._upsert_fact(fact):
                 added += 1
 
-        # Extract facts from quotes (these have page numbers)
         for quote in extraction.get("quotes", []):
             if not isinstance(quote, dict):
                 continue
-
             quote_text = quote.get("text", "")
             if not quote_text:
                 continue
-
-            # Create a fact from the quote with its context
             relevance = quote.get("relevance", "")
             fact_text = f"{relevance}: \"{quote_text}\"" if relevance else quote_text
-
             fact = StoredFact(
                 fact=fact_text,
                 source=source_filename,
@@ -293,69 +320,80 @@ class FactStore:
                 quote=quote_text,
                 query_context=query_context,
             )
-            if self.add_fact(fact):
+            if self._upsert_fact(fact):
                 added += 1
 
+        self._conn.commit()
         return added
 
+    def get_source_for_hash(self, content_hash: str) -> Optional[str]:
+        """Return source filename for a fact identified by content_hash."""
+        row = self._conn.execute(
+            "SELECT source FROM facts WHERE content_hash = ?", (content_hash,)
+        ).fetchone()
+        return row["source"] if row else None
+
     def get_all(self) -> list[StoredFact]:
-        """Get all stored facts."""
-        if not self._loaded:
-            self.load()
-        return self._facts.copy()
+        """Return all facts from SQLite as StoredFact objects."""
+        rows = self._conn.execute("SELECT * FROM facts").fetchall()
+        return [self._row_to_stored_fact(r) for r in rows]
 
     def get_relevant(self, query: str, max_facts: int = 50) -> list[StoredFact]:
-        """
-        Get all cached facts for context.
-        Always returns all facts - the LLM decides what's relevant.
-        """
-        if not self._loaded:
-            self.load()
+        """Get all cached facts for context (LLM decides relevance).
 
-        if not self._facts:
+        Falls back to _facts if set directly by legacy callers.
+        """
+        facts = self._facts if self._facts else self.get_all()
+        if not facts:
             return []
+        facts_sorted = sorted(facts, key=lambda f: (f.source, _safe_page(f.page)))
+        return facts_sorted[:max_facts]
 
-        # Return all facts - they provide useful context regardless of query
-        facts = self._facts.copy()
-
-        # Sort by source to group facts from same document
-        facts.sort(key=lambda f: (f.source, _safe_page(f.page)))
-
-        return facts[:max_facts]
+    def _row_to_stored_fact(self, row) -> StoredFact:
+        return StoredFact(
+            fact=row["fact"],
+            source=row["source"],
+            page=row["page"],
+            quote=row["quote"],
+            category=row["category"],
+            extracted=row["extracted"] or "",
+            query_context=row["query_context"],
+            scope_type=row["scope_type"],
+            importance=row["importance"],
+            recency_updated=row["recency_updated"] or "",
+            tier=row["tier"],
+            content_hash=row["content_hash"],
+        )
 
     def format_for_llm(
         self,
-        facts: Optional[list["StoredFact"]] = None,
+        facts: Optional[list] = None,
         max_chars: int = 15_000,
     ) -> str:
         """Format facts as a string for LLM context.
 
         Budget is distributed proportionally across sources so that no single
-        source monopolises the context window (fixes the echo-chamber truncation
-        bug for matters with multiple structurally similar documents).
+        source monopolises the context window.
 
         Args:
-            facts: Facts to format (if None, uses all facts).
+            facts: Facts to format (if None, uses _facts if populated, else DB).
             max_chars: Total character budget across all sources.
 
         Returns:
             Formatted fact sheet string.
         """
         if facts is None:
-            facts = self.get_all()
+            # Legacy test helpers set _facts directly; respect that first.
+            facts = self._facts if self._facts else self.get_all()
 
         if not facts:
             return ""
 
-        # Group by source, preserving insertion order within each source
-        from collections import defaultdict
-        by_source: dict[str, list[StoredFact]] = defaultdict(list)
+        by_source: dict = defaultdict(list)
         for f in facts:
             by_source[f.source].append(f)
 
         n_sources = len(by_source)
-        # Each source gets an equal share; floor at 1000 chars so tiny sources
-        # don't distort allocation when one source dominates by count.
         budget_per_source = max(1_000, max_chars // n_sources)
 
         lines = ["=== CACHED FACTS FROM PREVIOUS INVESTIGATIONS ===", ""]
@@ -363,10 +401,9 @@ class FactStore:
 
         for source, source_facts in by_source.items():
             if total_chars >= max_chars:
-                break   # outer budget exhausted — skip remaining sources
+                break
 
-            header = f"\n[{source}]"
-            lines.append(header)
+            lines.append(f"\n[{source}]")
             source_chars = 0
 
             for idx, fact in enumerate(source_facts):
@@ -379,7 +416,6 @@ class FactStore:
                     break
 
                 if total_chars + len(fact_line) > max_chars:
-                    # Total budget reached — stop even if per-source budget not yet hit
                     lines.append(f"  ... ({len(source_facts) - idx} more facts truncated)")
                     break
 
@@ -391,28 +427,25 @@ class FactStore:
 
     def get_stats(self) -> dict:
         """Get statistics about the fact store."""
-        if not self._loaded:
-            self.load()
-
-        sources = set(f.source for f in self._facts)
-
+        all_facts = self.get_all()
+        sources = {f.source for f in all_facts}
         return {
-            "total_facts": len(self._facts),
+            "total_facts": len(all_facts),
             "unique_sources": len(sources),
             "sources": list(sources),
-            "store_path": str(self.facts_file),
-            "exists": self.facts_file.exists(),
+            "store_path": str(self.store_dir / self.DB_FILE),
+            "exists": (self.store_dir / self.DB_FILE).exists(),
         }
 
     def clear(self):
-        """Clear all facts (in memory only - call save() to persist)."""
+        """Clear all facts (both in-memory _facts and SQLite)."""
         self._facts = []
-
-    def __len__(self) -> int:
-        if not self._loaded:
-            self.load()
-        return len(self._facts)
+        self._conn.execute("DELETE FROM facts")
+        self._conn.commit()
 
     def __bool__(self) -> bool:
         # Always return True so `if fact_store:` checks existence, not emptiness
         return True
+
+    def __len__(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
