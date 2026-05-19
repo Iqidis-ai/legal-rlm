@@ -280,51 +280,107 @@ class FactStore:
         self._conn.commit()
         return inserted
 
+    # ── Tier thresholds ──────────────────────────────────────────────────────
+    _TIER_PROMOTE = {"draft": 65.0, "validated": 85.0, "core": float("inf")}
+    _TIER_DEMOTE  = {"core": 60.0, "validated": 35.0, "draft": 0.0}
+
     def add_facts_from_extraction(
         self,
-        extraction: dict,
-        source_filename: str,
-        query_context: Optional[str] = None,
-    ) -> int:
-        """Add facts from an extract_facts() result dict.
+        facts: list,
+        source: str,
+        scope,
+        query_context: str = "",
+        page: Optional[int] = None,
+        category: Optional[str] = None,
+    ) -> list:
+        """Insert facts and return their content_hash values.
 
-        Args:
-            extraction: Result from decisions.extract_facts()
-            source_filename: The document these facts came from
-            query_context: The query that led to this extraction
-
-        Returns:
-            Number of new facts added
+        scope.is_targeted → scope_type "targeted"; else "prefix".
+        Duplicate (same content_hash) increments importance by +5.
         """
-        added = 0
+        scope_type = "targeted" if getattr(scope, "is_targeted", False) else "prefix"
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        result_hashes: list = []
 
-        for fact_text in extraction.get("facts", []):
+        for fact_text in facts:
             if not fact_text or not isinstance(fact_text, str):
                 continue
-            fact = StoredFact(fact=fact_text, source=source_filename, query_context=query_context)
-            if self._upsert_fact(fact):
-                added += 1
-
-        for quote in extraction.get("quotes", []):
-            if not isinstance(quote, dict):
-                continue
-            quote_text = quote.get("text", "")
-            if not quote_text:
-                continue
-            relevance = quote.get("relevance", "")
-            fact_text = f"{relevance}: \"{quote_text}\"" if relevance else quote_text
-            fact = StoredFact(
-                fact=fact_text,
-                source=source_filename,
-                page=_coerce_page(quote.get("page")),
-                quote=quote_text,
-                query_context=query_context,
-            )
-            if self._upsert_fact(fact):
-                added += 1
+            content_hash = StoredFact.compute_hash(fact_text, source)
+            try:
+                self._conn.execute(
+                    """INSERT INTO facts
+                       (fact, source, page, category, extracted, query_context,
+                        scope_type, importance, recency_updated, tier, content_hash)
+                       VALUES (?,?,?,?,?,?,?,50.0,?,'draft',?)""",
+                    (fact_text, source, page, category, now, query_context or None,
+                     scope_type, now, content_hash),
+                )
+            except sqlite3.IntegrityError:
+                self._conn.execute(
+                    """UPDATE facts SET
+                           importance      = MIN(importance + 5, 100.0),
+                           recency_updated = ?
+                       WHERE content_hash  = ?""",
+                    (now, content_hash),
+                )
+                self._check_tier(content_hash)
+            result_hashes.append(content_hash)
 
         self._conn.commit()
-        return added
+
+        if facts and not self.get_synopsis(source):
+            self._build_synopsis(source, facts)
+
+        return result_hashes
+
+    def get_synopsis(self, source: str) -> Optional[str]:
+        """Return synopsis text for a source, or None if not built yet."""
+        row = self._conn.execute(
+            "SELECT synopsis FROM source_synopses WHERE source = ?", (source,)
+        ).fetchone()
+        return row["synopsis"] if row else None
+
+    def _build_synopsis(self, source: str, initial_facts: list) -> None:
+        """Build and store a deterministic synopsis for a source document."""
+        sample = initial_facts[:3]
+        sample_lines = "\n".join(f"  - {f[:80]}" for f in sample)
+        synopsis = f"Source: {source}\nSample facts:\n{sample_lines}"
+        token_count = len(synopsis.split())
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        self._conn.execute(
+            """INSERT OR IGNORE INTO source_synopses (source, synopsis, token_count, updated_at)
+               VALUES (?, ?, ?, ?)""",
+            (source, synopsis, token_count, now),
+        )
+        self._conn.commit()
+
+    def _check_tier(self, content_hash: str) -> None:
+        """Evaluate tier transitions after importance change. Does NOT commit."""
+        row = self._conn.execute(
+            "SELECT importance, tier FROM facts WHERE content_hash = ?",
+            (content_hash,),
+        ).fetchone()
+        if not row:
+            return
+        importance, tier = row["importance"], row["tier"]
+        new_tier = tier
+
+        if tier == "draft" and importance >= 65.0:
+            new_tier = "validated"
+        elif tier == "validated" and importance >= 85.0:
+            new_tier = "core"
+        elif tier == "core" and importance < 60.0:
+            new_tier = "validated"
+        elif tier == "validated" and importance < 35.0:
+            new_tier = "draft"
+
+        if new_tier != tier:
+            self._conn.execute(
+                "UPDATE facts SET tier = ? WHERE content_hash = ?",
+                (new_tier, content_hash),
+            )
+            logger.debug("Fact %s: %s → %s (importance=%.1f)",
+                         content_hash[:8], tier, new_tier, importance)
 
     def get_source_for_hash(self, content_hash: str) -> Optional[str]:
         """Return source filename for a fact identified by content_hash."""
