@@ -509,8 +509,13 @@ class InvestigationState:
         union = words1 | words2
         return len(intersection) / len(union)
 
-    def add_fact(self, fact: str) -> bool:
-        """Add a fact if not duplicate (O(1) hash-based dedup). Returns True if added."""
+    def add_fact(self, fact: str, content_hash: str = "") -> bool:
+        """Add a fact if not duplicate. Returns True if added.
+
+        Args:
+            fact:         The fact text to store.
+            content_hash: SHA-256 hash from FactStore (empty string if FactStore not used).
+        """
         if "accumulated_facts" not in self.findings:
             self.findings["accumulated_facts"] = []
 
@@ -520,8 +525,19 @@ class InvestigationState:
             return False
 
         self._fact_hashes.add(fact_normalized)
-        self.findings["accumulated_facts"].append(fact)
+        self.findings["accumulated_facts"].append((fact, content_hash))
         return True
+
+    def accumulated_fact_texts(self) -> list[str]:
+        """Return fact texts from accumulated_facts regardless of storage format."""
+        raw = self.findings.get("accumulated_facts", [])
+        result = []
+        for entry in raw:
+            if isinstance(entry, (list, tuple)):
+                result.append(entry[0])
+            else:
+                result.append(entry)
+        return result
 
     def add_facts(self, facts: list[str]) -> int:
         """Add multiple facts with deduplication. Returns count of added facts."""
@@ -894,7 +910,7 @@ class InvestigationState:
                 {"name": e.name, "type": e.entity_type, "mentions": e.mentions}
                 for e in self.get_top_entities(5)
             ],
-            "key_facts": self.findings.get("accumulated_facts", [])[:10],
+            "key_facts": self.accumulated_fact_texts()[:10],
         }
 
     def get_summary_text(self) -> str:
@@ -944,7 +960,7 @@ class InvestigationState:
             "docs_read": [s.details.get("file") for s in self.thinking_steps
                          if s.step_type == StepType.READING and s.details],
             "num_facts": len(self.findings.get("accumulated_facts", [])),
-            "findings_summary": "; ".join(self.findings.get("accumulated_facts", [])[:5]) or "None yet",
+            "findings_summary": "; ".join(self.accumulated_fact_texts()[:5]) or "None yet",
             "citations_count": len(self.citations),
             "leads_pending": len(self.get_pending_leads()),
         }
@@ -1158,8 +1174,12 @@ class InvestigationState:
         # Restore other fields
         state.findings = data.get("findings", {})
         # Rebuild _fact_hashes from restored facts
-        for fact in state.findings.get("accumulated_facts", []):
-            state._fact_hashes.add(" ".join(fact.lower().split()))
+        for entry in state.findings.get("accumulated_facts", []):
+            if isinstance(entry, (list, tuple)):
+                fact_text = entry[0]
+            else:
+                fact_text = entry   # legacy str format
+            state._fact_hashes.add(" ".join(fact_text.lower().split()))
         state.hypothesis = data.get("hypothesis")
         state.query_classification = data.get("query_classification")
 

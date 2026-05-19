@@ -20,7 +20,7 @@ from ..core.models import GeminiClient, ModelTier
 from ..core.repository import MatterRepository
 from ..core.search import SearchResults
 from ..core.external_search import ExternalSearchManager
-from ..core.fact_store import FactStore
+from ..core.fact_store import FactStore, StoredFact
 from ..core.telemetry import InvestigationTelemetry, StepOperation
 from ..core.tracing import TracingProvider, TracingContext, NoOpProvider, SpanHandle
 from .state import InvestigationState, StepType, ThinkingStep, Citation, Lead, classify_query
@@ -1875,7 +1875,8 @@ class RLMEngine:
                 record["target"] = scope.target
             record = {k: v for k, v in record.items() if v not in (None, "")}
 
-            if state.add_fact(fact):
+            h = StoredFact.compute_hash(fact, source_doc) if self.fact_store else ""
+            if state.add_fact(fact, content_hash=h):
                 records.append(record)
                 if lead_id:
                     await self._emit_lead_update(
@@ -2894,6 +2895,21 @@ class RLMEngine:
             self._telemetry.end_step(t_step_syn)
 
         state.findings["final_output"] = response
+
+        # Gap Fix 2: bump importance for facts whose source was cited in the answer.
+        if self.fact_store:
+            cited_filenames = {
+                c.document for c in state.citations
+                if getattr(c, "source_type", "document") == "document"
+            }
+            if cited_filenames:
+                for entry in state.findings.get("accumulated_facts", []):
+                    fact_text = entry[0] if isinstance(entry, (list, tuple)) else entry
+                    content_hash = entry[1] if isinstance(entry, (list, tuple)) and len(entry) > 1 else ""
+                    if content_hash:
+                        source = self.fact_store.get_source_for_hash(content_hash)
+                        if source in cited_filenames:
+                            self.fact_store.on_search_hit(content_hash)
 
         output_len = len(response)
         total_citations = len(state.citations)
