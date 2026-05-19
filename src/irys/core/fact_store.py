@@ -325,18 +325,21 @@ class FactStore:
 
     def format_for_llm(
         self,
-        facts: Optional[list[StoredFact]] = None,
-        max_chars: int = 15000,
+        facts: Optional[list["StoredFact"]] = None,
+        max_chars: int = 15_000,
     ) -> str:
-        """
-        Format facts as a string for LLM context.
+        """Format facts as a string for LLM context.
+
+        Budget is distributed proportionally across sources so that no single
+        source monopolises the context window (fixes the echo-chamber truncation
+        bug for matters with multiple structurally similar documents).
 
         Args:
-            facts: Facts to format (if None, uses all facts)
-            max_chars: Maximum characters to include
+            facts: Facts to format (if None, uses all facts).
+            max_chars: Total character budget across all sources.
 
         Returns:
-            Formatted fact sheet string
+            Formatted fact sheet string.
         """
         if facts is None:
             facts = self.get_all()
@@ -344,30 +347,45 @@ class FactStore:
         if not facts:
             return ""
 
+        # Group by source, preserving insertion order within each source
+        from collections import defaultdict
+        by_source: dict[str, list[StoredFact]] = defaultdict(list)
+        for f in facts:
+            by_source[f.source].append(f)
+
+        n_sources = len(by_source)
+        # Each source gets an equal share; floor at 1000 chars so tiny sources
+        # don't distort allocation when one source dominates by count.
+        budget_per_source = max(1_000, max_chars // n_sources)
+
         lines = ["=== CACHED FACTS FROM PREVIOUS INVESTIGATIONS ===", ""]
-        current_source = None
-        chars = 0
+        total_chars = len(lines[0])
 
-        for fact in facts:
-            # Group by source document
-            if fact.source != current_source:
-                source_header = f"\n[{fact.source}]"
-                if chars + len(source_header) > max_chars:
+        for source, source_facts in by_source.items():
+            if total_chars >= max_chars:
+                break   # outer budget exhausted — skip remaining sources
+
+            header = f"\n[{source}]"
+            lines.append(header)
+            source_chars = 0
+
+            for idx, fact in enumerate(source_facts):
+                page_ref = f" (p.{fact.page})" if fact.page else ""
+                fact_line = f"  - {fact.fact}{page_ref}"
+
+                if source_chars + len(fact_line) > budget_per_source:
+                    remaining = len(source_facts) - idx
+                    lines.append(f"  ... ({remaining} more facts from this source)")
                     break
-                lines.append(source_header)
-                current_source = fact.source
-                chars += len(source_header)
 
-            # Format the fact
-            page_ref = f" (p.{fact.page})" if fact.page else ""
-            fact_line = f"  - {fact.fact}{page_ref}"
+                if total_chars + len(fact_line) > max_chars:
+                    # Total budget reached — stop even if per-source budget not yet hit
+                    lines.append(f"  ... ({len(source_facts) - idx} more facts truncated)")
+                    break
 
-            if chars + len(fact_line) > max_chars:
-                lines.append(f"\n... and {len(facts) - len(lines)} more facts")
-                break
-
-            lines.append(fact_line)
-            chars += len(fact_line)
+                lines.append(fact_line)
+                source_chars += len(fact_line)
+                total_chars += len(fact_line)
 
         return "\n".join(lines)
 
