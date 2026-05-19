@@ -499,6 +499,79 @@ class FactStore:
         self._conn.execute("DELETE FROM facts")
         self._conn.commit()
 
+    def on_search_hit(self, content_hash: str) -> None:
+        """Increment importance by +3 when a source is re-encountered in search."""
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        self._conn.execute(
+            """UPDATE facts SET
+                   importance      = MIN(importance + 3, 100.0),
+                   recency_updated = ?
+               WHERE content_hash  = ?""",
+            (now, content_hash),
+        )
+        self._check_tier(content_hash)
+        self._conn.commit()
+
+    def on_re_extraction(self, content_hash: str) -> None:
+        """Increment importance by +5 on re-extraction."""
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        self._conn.execute(
+            """UPDATE facts SET
+                   importance      = MIN(importance + 5, 100.0),
+                   recency_updated = ?
+               WHERE content_hash  = ?""",
+            (now, content_hash),
+        )
+        self._check_tier(content_hash)
+        self._conn.commit()
+
+    def tick_decay(self) -> int:
+        """Apply idle decay: importance × 0.995^days_idle. Returns rows updated."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        rows = self._conn.execute(
+            "SELECT content_hash, importance, recency_updated FROM facts"
+        ).fetchall()
+        updated = 0
+        for row in rows:
+            try:
+                delta = (
+                    datetime.fromisoformat(today)
+                    - datetime.fromisoformat(row["recency_updated"])
+                ).days
+            except (ValueError, TypeError):
+                continue
+            if delta <= 0:
+                continue
+            new_imp = row["importance"] * (0.995 ** delta)
+            self._conn.execute(
+                "UPDATE facts SET importance = ? WHERE content_hash = ?",
+                (new_imp, row["content_hash"]),
+            )
+            self._check_tier(row["content_hash"])
+            updated += 1
+        self._conn.commit()
+        return updated
+
+    def archive_cold_facts(self) -> int:
+        """Archive draft facts with importance < 35 to fact_stubs. Returns count."""
+        cold = self._conn.execute(
+            "SELECT content_hash, fact, source FROM facts WHERE tier='draft' AND importance < 35"
+        ).fetchall()
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        for row in cold:
+            stub_summary = f"Archived fact from {row['source']}: {row['fact'][:150]}"
+            self._conn.execute(
+                """INSERT OR REPLACE INTO fact_stubs
+                   (content_hash, stub_summary, original_fact, archived_at)
+                   VALUES (?, ?, ?, ?)""",
+                (row["content_hash"], stub_summary, row["fact"], now),
+            )
+            self._conn.execute(
+                "DELETE FROM facts WHERE content_hash = ?", (row["content_hash"],)
+            )
+        self._conn.commit()
+        return len(cold)
+
     def __bool__(self) -> bool:
         # Always return True so `if fact_store:` checks existence, not emptiness
         return True

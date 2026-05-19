@@ -3,7 +3,7 @@ import sys
 import hashlib
 import tempfile
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -150,3 +150,86 @@ class TestAddFactsFromExtraction:
             "SELECT importance FROM facts WHERE content_hash=?", (h[0],)
         ).fetchone()["importance"]
         assert after == before + 5
+
+
+class TestImportanceLifecycle:
+    """on_search_hit, on_re_extraction, tick_decay, archive_cold_facts."""
+
+    def _insert_fact(self, store, text="Test fact", source="doc.pdf",
+                     importance=50.0, tier="draft", scope_type="targeted"):
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        content_hash = StoredFact.compute_hash(text, source)
+        store._conn.execute(
+            """INSERT OR IGNORE INTO facts
+               (fact, source, extracted, scope_type, importance, recency_updated, tier, content_hash)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (text, source, now, scope_type, importance, now, tier, content_hash),
+        )
+        store._conn.commit()
+        return content_hash
+
+    def test_on_search_hit_increments_importance(self):
+        store, _ = make_store()
+        h = self._insert_fact(store, importance=50.0)
+        store.on_search_hit(h)
+        imp = store._conn.execute(
+            "SELECT importance FROM facts WHERE content_hash=?", (h,)
+        ).fetchone()["importance"]
+        assert imp == 53.0
+
+    def test_on_search_hit_caps_at_100(self):
+        store, _ = make_store()
+        h = self._insert_fact(store, importance=99.0)
+        store.on_search_hit(h)
+        imp = store._conn.execute(
+            "SELECT importance FROM facts WHERE content_hash=?", (h,)
+        ).fetchone()["importance"]
+        assert imp == 100.0
+
+    def test_on_search_hit_promotes_tier(self):
+        store, _ = make_store()
+        h = self._insert_fact(store, importance=63.0, tier="draft")
+        store.on_search_hit(h)   # 63 + 3 = 66 >= 65 -> validated
+        tier = store._conn.execute(
+            "SELECT tier FROM facts WHERE content_hash=?", (h,)
+        ).fetchone()["tier"]
+        assert tier == "validated"
+
+    def test_tick_decay_reduces_importance(self):
+        store, _ = make_store()
+        content_hash = StoredFact.compute_hash("Old fact", "doc.pdf")
+        store._conn.execute(
+            """INSERT INTO facts
+               (fact, source, extracted, scope_type, importance, recency_updated, tier, content_hash)
+               VALUES ('Old fact','doc.pdf','2026-04-01','snippet',80.0,'2026-04-01','validated',?)""",
+            (content_hash,),
+        )
+        store._conn.commit()
+        updated = store.tick_decay()
+        assert updated >= 1
+        imp = store._conn.execute(
+            "SELECT importance FROM facts WHERE content_hash=?", (content_hash,)
+        ).fetchone()["importance"]
+        assert imp < 80.0
+
+    def test_archive_cold_facts_moves_to_stubs(self):
+        store, _ = make_store()
+        h = self._insert_fact(store, importance=20.0, tier="draft")
+        archived = store.archive_cold_facts()
+        assert archived == 1
+        assert store._conn.execute(
+            "SELECT id FROM facts WHERE content_hash=?", (h,)
+        ).fetchone() is None
+        stub = store._conn.execute(
+            "SELECT stub_summary FROM fact_stubs WHERE content_hash=?", (h,)
+        ).fetchone()
+        assert stub is not None
+
+    def test_archive_cold_facts_skips_validated(self):
+        store, _ = make_store()
+        h = self._insert_fact(store, importance=20.0, tier="validated")
+        archived = store.archive_cold_facts()
+        assert archived == 0
+        assert store._conn.execute(
+            "SELECT id FROM facts WHERE content_hash=?", (h,)
+        ).fetchone() is not None
