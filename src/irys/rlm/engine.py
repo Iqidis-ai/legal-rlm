@@ -852,13 +852,15 @@ class RLMEngine:
         # Step 1.6: Get cached facts for this query
         cached_facts_str = ""
         if self.fact_store and len(self.fact_store) > 0:
-            relevant_facts = self.fact_store.get_relevant(state.query)
-            if relevant_facts:
-                cached_facts_str = self.fact_store.format_for_llm(relevant_facts)
+            cached_facts_str = self.fact_store.pack_evidence(
+                state.query,
+                token_budget=self.config.evidence_cached_facts_budget,
+            )
+            if cached_facts_str:
                 await self._emit_step_async(
                     state,
                     StepType.THINKING,
-                    f"Found {len(relevant_facts)} potentially relevant cached facts",
+                    f"Found potentially relevant cached facts",
                 )
 
         # Step 2: Unified assessment - determines complexity AND external search need
@@ -1250,13 +1252,15 @@ class RLMEngine:
         # Get cached facts for this query
         cached_facts_str = ""
         if self.fact_store and len(self.fact_store) > 0:
-            relevant_facts = self.fact_store.get_relevant(state.query)
-            if relevant_facts:
-                cached_facts_str = self.fact_store.format_for_llm(relevant_facts)
+            cached_facts_str = self.fact_store.pack_evidence(
+                state.query,
+                token_budget=self.config.evidence_cached_facts_budget,
+            )
+            if cached_facts_str:
                 await self._emit_step_async(
                     state,
                     StepType.THINKING,
-                    f"Found {len(relevant_facts)} potentially relevant cached facts",
+                    f"Found potentially relevant cached facts",
                 )
 
         # Use unified assess_and_plan
@@ -2253,12 +2257,10 @@ class RLMEngine:
 
         cached_facts = ""
         if self.fact_store and len(self.fact_store) > 0:
-            relevant_facts = self.fact_store.get_relevant(state.query)
-            if relevant_facts:
-                cached_facts = self.fact_store.format_for_llm(
-                    relevant_facts,
-                    max_chars=self.config.evidence_cached_facts_budget,
-                )
+            cached_facts = self.fact_store.pack_evidence(
+                state.query,
+                token_budget=self.config.evidence_cached_facts_budget,
+            )
 
         coverage = self._format_read_scope_summary(state)
         unresolved_gaps = self._format_extraction_gaps(state)
