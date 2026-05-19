@@ -374,3 +374,15 @@ class TestMigrationAndStats:
         row = store._conn.execute("SELECT scope_type, tier FROM facts").fetchone()
         assert row["scope_type"] == "snippet"
         assert row["tier"] == "draft"
+
+
+class TestGapFix3ProPrompt:
+    """SYSTEM_PROMPT_PRO in models.py must instruct the model to interpret quality tags."""
+
+    def test_pro_prompt_references_targeted_core(self):
+        from irys.core.models import SYSTEM_PROMPT_PRO
+        assert "[targeted, core]" in SYSTEM_PROMPT_PRO
+
+    def test_pro_prompt_references_snippet_draft(self):
+        from irys.core.models import SYSTEM_PROMPT_PRO
+        assert "[snippet, draft]" in SYSTEM_PROMPT_PRO
