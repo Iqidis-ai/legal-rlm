@@ -259,69 +259,6 @@ class ReadScope:
         return "; ".join(parts) if parts else "prefix"
 
 
-def _derive_doc_label(filename: str) -> str:
-    """Derive a short, stable 2-4 word doc label from a filename.
-
-    Used to anchor extracted facts to their source document so that
-    structurally identical clauses from different agreements are
-    distinguishable in the fact store and LLM context.
-
-    Returns a hyphenated abbreviation, e.g. "ARKS-S&O", "BSR-S&O".
-
-    Each entry in LABEL_PATTERNS is a 3-tuple:
-        (regex_pattern, fixed_label, generic_suffix)
-
-    - fixed_label is returned verbatim when the pattern matches (e.g. "NDA").
-    - If fixed_label is None, generic_suffix is used and the first meaningful
-      word in the filename is prepended (e.g. "Delek" → "Delek-S&O").
-    - generic_suffix is ignored when fixed_label is set; use None for clarity.
-
-    Keeping the suffix co-located with its pattern eliminates the fragile
-    parallel-dict lookup that using a separate GENERIC_SUFFIXES dict required.
-    """
-    import re
-    stem = Path(filename).stem
-
-    # (pattern, fixed_label, generic_suffix)
-    # First match wins.  generic_suffix only used when fixed_label is None.
-    LABEL_PATTERNS = [
-        (r'\bARKS\b',                         'ARKS-S&O',     None),
-        (r'\bBSR\b',                          'BSR-S&O',      None),
-        (r'Supply.*Offtake|Offtake.*Supply',  None,           'S&O'),
-        (r'\bMSA\b',                          None,           'MSA'),
-        (r'Master.*Service|Service.*Agreement', None,         'MSA'),
-        (r'Settlement',                        'Settlement-Agmt', None),
-        (r'Deposition',                        'Deposition',  None),
-        (r'Complaint',                         'Complaint',   None),
-        (r'Motion',                            None,          'Motion'),
-        (r'Order\b',                           None,          'Order'),
-        (r'Amendment',                         'Amendment',   None),
-        (r'NDA|Non.Disclosure',                'NDA',         None),
-        (r'License',                           'License-Agmt', None),
-    ]
-
-    for pattern, fixed_label, generic_suffix in LABEL_PATTERNS:
-        if re.search(pattern, stem, re.IGNORECASE):
-            if fixed_label is not None:
-                return fixed_label
-            # Generic: prepend first meaningful word from filename
-            first_word = re.sub(r'[^a-zA-Z0-9]', '', re.split(r'[\s_\-\.]+', stem)[0])[:8]
-            return f"{first_word}-{generic_suffix}"
-
-    # Fallback: first two non-stopword words, hyphenated
-    STOPWORDS = {
-        'the', 'a', 'an', 'of', 'and', 'or', 'in', 'to', 'for',
-        'amended', 'restated', 'master', 'agreement', 'contract',
-        'between', 'by', 'with',
-    }
-    words = [
-        w for w in re.split(r'[\s_\-\.]+', stem)
-        if w.lower() not in STOPWORDS and len(w) > 1
-    ]
-    label_words = [re.sub(r'[^a-zA-Z0-9]', '', w) for w in words[:2]]
-    return '-'.join(w[:8] for w in label_words if w) or stem[:12]
-
-
 class RLMEngine:
     """
     Recursive Language Model investigation engine.
