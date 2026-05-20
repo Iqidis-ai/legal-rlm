@@ -73,7 +73,11 @@ async def _save_session(
         return
     store = SessionStore(config)
     existing = await store.load(session_id) or SessionData()
-    facts = result.state.findings.get("accumulated_facts", [])
+    raw_facts = result.state.findings.get("accumulated_facts", [])
+    facts = [
+        entry[0] if isinstance(entry, (list, tuple)) else entry
+        for entry in raw_facts
+    ]
     citations_serialized, _ = _serialize_result(result)
     session = SessionData(
         facts=facts,

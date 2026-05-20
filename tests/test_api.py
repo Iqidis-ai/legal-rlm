@@ -3,6 +3,7 @@
 import pytest
 import sys
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -145,6 +146,40 @@ class TestInvestigationResult:
         citation = result.citations[0]
         assert citation.url == "https://example.com/doc.pdf"
         assert citation.mime == "application/pdf"
+
+
+@pytest.mark.asyncio
+async def test_save_session_serialises_fact_texts_not_tuples():
+    """_save_session must store plain strings, not (fact, hash) tuples."""
+    from irys.service.config import ServiceConfig
+    from irys.service.api import _save_session
+
+    config = ServiceConfig(storage_mode="local", temp_dir="/tmp/irys_test_session")
+    result = MagicMock()
+    result.state.findings = {
+        "accumulated_facts": [
+            ("Clause 14 requires notice", "abc123"),
+            ("Damages capped at $5M", "def456"),
+        ]
+    }
+    result.citations = []
+    result.entities = {}
+
+    saved_data = {}
+
+    async def fake_save(session_id, data):
+        saved_data["facts"] = data.facts
+
+    with patch("irys.service.api.SessionStore") as MockStore:
+        instance = MockStore.return_value
+        instance.load = AsyncMock(return_value=None)
+        instance.save = fake_save
+        await _save_session(config, "sess-001", result)
+
+    assert saved_data["facts"] == [
+        "Clause 14 requires notice",
+        "Damages capped at $5M",
+    ]
 
 
 if __name__ == "__main__":
