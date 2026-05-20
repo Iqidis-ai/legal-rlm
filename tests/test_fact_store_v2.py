@@ -299,6 +299,28 @@ class TestGetRelevant:
         assert results[0].content_hash != ""
 
 
+    def test_legal_punctuation_query_does_not_raise(self):
+        """FTS5 metacharacters in legal queries must not cause OperationalError."""
+        from unittest.mock import MagicMock
+        scope = MagicMock()
+        scope.is_targeted = True
+        store, _ = make_store()
+        store.add_facts_from_extraction(
+            ["The indemnification clause limits liability to direct damages."],
+            source="MSA.pdf",
+            scope=scope,
+        )
+        for query in [
+            "14(b) notice requirements",
+            "damages: direct vs. consequential",
+            '"time is of the essence"',
+            "section 12-A obligations",
+            "party (defendant) obligations",
+        ]:
+            result = store.get_relevant(query)
+            assert isinstance(result, list)
+
+
 class TestEvidencePacker:
     """EvidencePacker respects source budget cap and fills by density."""
 

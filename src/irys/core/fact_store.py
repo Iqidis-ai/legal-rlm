@@ -475,8 +475,18 @@ class FactStore:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [sf for _, sf in scored[:top_k]]
 
+    @staticmethod
+    def _sanitise_fts_query(query: str) -> str:
+        """Strip FTS5 metacharacters that cause OperationalError on legal text queries."""
+        import re
+        sanitised = re.sub(r'[^\w\s]', ' ', query)
+        return ' '.join(sanitised.split())
+
     def _bm25_facts(self, query: str, top_k: int) -> list[tuple[int, float]]:
         """Return [(fact_id, bm25_score)] ordered best-first."""
+        safe_query = self._sanitise_fts_query(query)
+        if not safe_query:
+            return []
         rows = self._conn.execute(
             """SELECT f.id, bm25(fact_fts) AS score
                FROM fact_fts
@@ -484,12 +494,15 @@ class FactStore:
                WHERE fact_fts MATCH ?
                ORDER BY score
                LIMIT ?""",
-            (query, top_k),
+            (safe_query, top_k),
         ).fetchall()
         return [(r[0], r[1]) for r in rows]
 
     def _bm25_synopses(self, query: str, top_m: int = 10) -> list[str]:
         """Return source paths whose synopses best match the query."""
+        safe_query = self._sanitise_fts_query(query)
+        if not safe_query:
+            return []
         rows = self._conn.execute(
             """SELECT s.source
                FROM synopsis_fts
@@ -497,7 +510,7 @@ class FactStore:
                WHERE synopsis_fts MATCH ?
                ORDER BY bm25(synopsis_fts)
                LIMIT ?""",
-            (query, top_m),
+            (safe_query, top_m),
         ).fetchall()
         return [r[0] for r in rows]
 
