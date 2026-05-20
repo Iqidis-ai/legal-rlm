@@ -1070,9 +1070,6 @@ async def extract_facts(
         filename=filename,
         scope_context=scope_context,
         content=content,
-        doc_label="{doc_label}",
-        section="{section}",
-        fact_text="{fact text}",
     )
 
     _log_llm_call("extract_facts", ModelTier.LITE, prompt, start_time)
