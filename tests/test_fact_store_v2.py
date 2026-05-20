@@ -64,6 +64,19 @@ class TestSchema:
         assert cols["id"].upper() == "INTEGER"
 
 
+class TestFactStoreSchema:
+    """FactStore schema and property tests."""
+
+    def setup_method(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.store = FactStore(self.tmp)
+
+    def test_facts_file_property_returns_db_path(self):
+        store = FactStore(self.tmp)
+        assert store.facts_file == self.tmp / ".irys" / "facts.db"
+        assert store.facts_file.exists()
+
+
 class TestAddFactsFromExtraction:
     """add_facts_from_extraction inserts facts and returns content_hashes."""
 

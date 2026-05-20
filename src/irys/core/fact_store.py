@@ -226,6 +226,11 @@ class FactStore:
         self._loaded: bool = False
         self._facts: list = []
 
+    @property
+    def facts_file(self) -> Path:
+        """Path to the SQLite database file (used by engine.py log messages)."""
+        return self.store_dir / self.DB_FILE
+
     def _init_schema(self) -> None:
         self._conn.executescript(_SCHEMA)
         # executescript issues an implicit COMMIT and may reset connection-level
