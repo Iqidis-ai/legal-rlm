@@ -730,15 +730,17 @@ class FactStore:
         return "\n".join(lines)
 
     def get_stats(self) -> dict:
-        """Get statistics about the fact store."""
-        all_facts = self.get_all()
-        sources = {f.source for f in all_facts}
+        """Get statistics about the fact store (legacy dict API)."""
+        s = self.stats()
+        sources = [
+            r[0] for r in self._conn.execute("SELECT DISTINCT source FROM facts").fetchall()
+        ]
         return {
-            "total_facts": len(all_facts),
+            "total_facts": s.total_facts,
             "unique_sources": len(sources),
-            "sources": list(sources),
-            "store_path": str(self.store_dir / self.DB_FILE),
-            "exists": (self.store_dir / self.DB_FILE).exists(),
+            "sources": sources,
+            "store_path": str(self.facts_file),
+            "exists": self.facts_file.exists(),
         }
 
     def clear(self):
