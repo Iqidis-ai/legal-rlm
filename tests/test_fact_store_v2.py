@@ -574,6 +574,45 @@ class TestS3Persistence:
         assert count == 0  # empty store, no crash
 
 
+    def test_round_trip_preserves_tier_and_importance(self):
+        """Save then load must restore tier and importance faithfully."""
+        store1 = self._make_store()
+        scope = MagicMock()
+        scope.is_targeted = True
+
+        store1.add_facts_from_extraction(["Net-30 payment terms."], source="MSA.pdf", scope=scope)
+        content_hash = StoredFact.compute_hash("Net-30 payment terms.", "MSA.pdf")
+        # Bump importance to 70 (above validated threshold of 65)
+        for _ in range(4):
+            store1.on_search_hit(content_hash)  # +3 each = 62
+        store1.on_re_extraction(content_hash)   # +5 → 67 → promoted to validated
+
+        facts_before = store1.get_all()
+        assert facts_before[0].tier == "validated"
+        assert facts_before[0].importance >= 65.0
+
+        uploaded: dict = {}
+        with patch.object(store1, "_get_s3_client") as mock_s3_factory:
+            mock_s3 = MagicMock()
+            mock_s3_factory.return_value = mock_s3
+            mock_s3.put_object = lambda **kw: uploaded.update(kw)
+            store1.save()
+
+        store2 = self._make_store()
+        with patch.object(store2, "_get_s3_client") as mock_s3_factory:
+            mock_s3 = MagicMock()
+            mock_s3_factory.return_value = mock_s3
+            mock_s3.get_object.return_value = {
+                "Body": MagicMock(read=MagicMock(return_value=uploaded["Body"]))
+            }
+            count = store2.load()
+
+        assert count == 1
+        facts_after = store2.get_all()
+        assert facts_after[0].tier == "validated"
+        assert abs(facts_after[0].importance - facts_before[0].importance) < 0.01
+
+
 class TestGapFix3ProPrompt:
     """SYSTEM_PROMPT_PRO in models.py must instruct the model to interpret quality tags."""
 
