@@ -238,6 +238,28 @@ class TestImportanceLifecycle:
         ).fetchone()
         assert stub is not None
 
+    def test_tick_decay_reduces_importance_over_days(self):
+        """tick_decay must reduce importance proportionally to days idle."""
+        store, tmp = make_store()
+        scope = type("S", (), {"is_targeted": False})()
+        store.add_facts_from_extraction(
+            ["Plaintiff filed a motion on Day 1."],
+            source="Complaint.pdf",
+            scope=scope,
+        )
+        store._conn.execute(
+            "UPDATE facts SET recency_updated = date('now', '-10 days')"
+        )
+        store._conn.commit()
+
+        updated = store.tick_decay()
+        assert updated == 1
+
+        row = store._conn.execute("SELECT importance FROM facts").fetchone()
+        # 50.0 * (0.995 ^ 10) ≈ 47.56
+        assert row[0] < 50.0
+        assert row[0] > 40.0
+
     def test_archive_cold_facts_skips_validated(self):
         store, _ = make_store()
         h = self._insert_fact(store, importance=20.0, tier="validated")

@@ -603,6 +603,12 @@ class RLMEngine:
         self.fact_store = FactStore(Path(repository_path), s3_config=s3_facts_config)
         facts_loaded = await asyncio.to_thread(self.fact_store.load)
 
+        # Apply idle decay and archive cold facts once per session start.
+        # Runs in a thread so the event loop stays responsive.
+        if facts_loaded > 0:
+            await asyncio.to_thread(self.fact_store.tick_decay)
+            await asyncio.to_thread(self.fact_store.archive_cold_facts)
+
         # Emit fact store status to UI trace
         if facts_loaded > 0:
             await self._emit_step_async(
@@ -731,7 +737,7 @@ class RLMEngine:
                 self._emit_step(
                     state,
                     StepType.THINKING,
-                    f"DEBUG: fact_store has {fact_count} facts, _facts list: {len(self.fact_store._facts)}",
+                    f"Fact store: {fact_count} facts accumulated this session",
                     visible=False,
                 )
                 if fact_count > 0:
