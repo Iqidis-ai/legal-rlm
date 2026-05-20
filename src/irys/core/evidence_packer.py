@@ -4,7 +4,7 @@ Algorithm:
   Pass 1: Allocate token budget per source (<=MAX_SOURCE_SHARE=30%).
   Pass 2: Within each source, sort by density DESC and fill until budget exhausted.
   Final: Emit all selected facts sorted by compound_score DESC across sources,
-         each prefixed with [scope_type, tier] quality tags.
+         each formatted as [LABEL; SOURCE=...; PAGE=...; TIER=...] fact text.
 """
 
 import math
@@ -79,8 +79,9 @@ class EvidencePacker:
 
     @staticmethod
     def _format_fact(fact: "StoredFact") -> str:
-        page_ref = f"  p.{fact.page}" if fact.page else ""
-        return (
-            f"[{fact.scope_type}, {fact.tier}]   {fact.fact}\n"
-            f"                   Source: {fact.source}{page_ref}"
+        label = {"targeted": "DOCUMENT_TARGETED_READ", "prefix": "DOCUMENT_PREFIX_READ"}.get(
+            fact.scope_type, "SEARCH_SNIPPET"
         )
+        page_ref = f"; PAGE={fact.page}" if fact.page else ""
+        tier_tag = f"; TIER={fact.tier}" if fact.tier else ""
+        return f"- [{label}; SOURCE={fact.source}{page_ref}{tier_tag}] {fact.fact}"

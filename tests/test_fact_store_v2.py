@@ -378,8 +378,8 @@ class TestEvidencePacker:
         assert "SMALL_A.pdf" in result
         assert "SMALL_B.pdf" in result
 
-    def test_output_contains_quality_tags(self):
-        """Each fact line must be prefixed with [scope_type, tier]."""
+    def test_output_contains_source_label(self):
+        """Each fact line must carry SOURCE and TIER in the label bracket."""
         from irys.core.evidence_packer import EvidencePacker
         facts = [StoredFact(
             fact="Contract value is $2.5M",
@@ -388,7 +388,9 @@ class TestEvidencePacker:
             tier="core",
         )]
         result = EvidencePacker.pack(facts, query="contract value", token_budget=5000)
-        assert "[targeted, core]" in result
+        assert "DOCUMENT_TARGETED_READ" in result
+        assert "SOURCE=MSA.pdf" in result
+        assert "TIER=core" in result
 
     def test_empty_facts_returns_empty(self):
         from irys.core.evidence_packer import EvidencePacker
