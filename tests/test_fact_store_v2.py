@@ -1,9 +1,12 @@
 """Tests for the v2 SQLite-backed FactStore."""
+import json
+import shutil
 import sys
 import hashlib
 import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -431,6 +434,144 @@ class TestMigrationAndStats:
         row = store._conn.execute("SELECT scope_type, tier FROM facts").fetchone()
         assert row["scope_type"] == "snippet"
         assert row["tier"] == "draft"
+
+
+class TestStats:
+    """get_stats() returns correct dict structure."""
+
+    def setup_method(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.store = FactStore(self.tmp)
+
+    def teardown_method(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_get_stats_delegates_to_stats_method(self):
+        """get_stats() must not load all rows into Python — delegates to stats()."""
+        scope = MagicMock()
+        scope.is_targeted = True
+        self.store.add_facts_from_extraction(
+            ["Fact one.", "Fact two."],
+            source="Doc.pdf",
+            scope=scope,
+        )
+        result = self.store.get_stats()
+        assert result["total_facts"] == 2
+        assert "unique_sources" in result
+        assert result["unique_sources"] == 1
+
+
+class TestS3Persistence:
+    """Tests for S3-backed load() and save()."""
+
+    def setup_method(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.s3_config = {
+            "bucket": "test-bucket",
+            "region": "us-east-1",
+            "prefix": "matters/case-123/facts",
+            "aws_access_key_id": "fake",
+            "aws_secret_access_key": "fake",
+        }
+
+    def teardown_method(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _make_store(self):
+        return FactStore(self.tmp, s3_config=self.s3_config)
+
+    def test_save_uploads_ndjson_to_s3(self):
+        """save() must PUT all rows as NDJSON to S3 when s3_config is set."""
+        store = self._make_store()
+        scope = MagicMock()
+        scope.is_targeted = True
+        store.add_facts_from_extraction(
+            ["Payment terms are net-30."],
+            source="Contract.pdf",
+            scope=scope,
+        )
+
+        with patch.object(store, "_get_s3_client") as mock_s3_factory:
+            mock_s3 = MagicMock()
+            mock_s3_factory.return_value = mock_s3
+            mock_s3.put_object = MagicMock()
+
+            saved = store.save()
+
+        assert saved == 1
+        mock_s3.put_object.assert_called_once()
+        call_kwargs = mock_s3.put_object.call_args[1]
+        assert call_kwargs["Bucket"] == "test-bucket"
+        assert call_kwargs["Key"] == "matters/case-123/facts/facts.ndjson"
+        body = call_kwargs["Body"].decode("utf-8")
+        row = json.loads(body.splitlines()[0])
+        assert row["fact"] == "Payment terms are net-30."
+        assert row["scope_type"] == "targeted"
+        assert "importance" in row
+        assert "tier" in row
+        assert "content_hash" in row
+
+    def test_load_restores_rows_from_s3(self):
+        """load() must pull NDJSON from S3 and bulk-insert into SQLite."""
+        ndjson_row = json.dumps({
+            "fact": "Indemnification capped at $5M.",
+            "source": "MSA.pdf",
+            "page": 12,
+            "quote": None,
+            "category": None,
+            "extracted": "2026-05-01",
+            "query_context": "damages",
+            "scope_type": "targeted",
+            "importance": 72.5,
+            "recency_updated": "2026-05-10",
+            "tier": "validated",
+            "content_hash": StoredFact.compute_hash(
+                "Indemnification capped at $5M.", "MSA.pdf"
+            ),
+        })
+
+        store = self._make_store()
+        with patch.object(store, "_get_s3_client") as mock_s3_factory:
+            mock_s3 = MagicMock()
+            mock_s3_factory.return_value = mock_s3
+            mock_s3.get_object.return_value = {
+                "Body": MagicMock(
+                    read=MagicMock(return_value=ndjson_row.encode("utf-8"))
+                )
+            }
+
+            count = store.load()
+
+        assert count == 1
+        facts = store.get_all()
+        assert len(facts) == 1
+        assert facts[0].fact == "Indemnification capped at $5M."
+        assert facts[0].importance == 72.5
+        assert facts[0].tier == "validated"
+        assert facts[0].scope_type == "targeted"
+
+    def test_load_returns_0_on_missing_key(self):
+        """load() must return 0 (not raise) when no facts.ndjson exists in S3."""
+        store = self._make_store()
+        with patch.object(store, "_get_s3_client") as mock_s3_factory:
+            mock_s3 = MagicMock()
+            mock_s3_factory.return_value = mock_s3
+            from botocore.exceptions import ClientError
+            mock_s3.get_object.side_effect = ClientError(
+                {"Error": {"Code": "NoSuchKey", "Message": "Not Found"}},
+                "GetObject",
+            )
+
+            count = store.load()
+
+        assert count == 0
+        assert len(store) == 0
+
+    def test_no_s3_config_load_is_noop(self):
+        """load() without s3_config must remain a no-op returning local row count."""
+        store = FactStore(self.tmp)  # no s3_config
+        count = store.load()
+        assert count == 0  # empty store, no crash
 
 
 class TestGapFix3ProPrompt:

@@ -209,8 +209,9 @@ class FactStore:
         otherwise falls back to the SQLite store.
     """
 
-    STORE_DIR = ".irys"
-    DB_FILE   = "facts.db"
+    STORE_DIR    = ".irys"
+    DB_FILE      = "facts.db"
+    FACTS_S3_FILE = "facts.ndjson"
 
     def __init__(self, repository_path: Path, s3_config: Optional[dict] = None):
         self.repository_path = Path(repository_path)
@@ -243,18 +244,134 @@ class FactStore:
     # Core persistence
     # ------------------------------------------------------------------
 
+    def _s3_key(self) -> str:
+        prefix = (self.s3_config or {}).get("prefix", "").strip("/")
+        if prefix:
+            return f"{prefix}/{self.FACTS_S3_FILE}"
+        return self.FACTS_S3_FILE
+
+    def _get_s3_client(self):
+        if self._s3_client is None:
+            import boto3
+            cfg = self.s3_config or {}
+            kwargs: dict = {"region_name": cfg.get("region", "us-east-1")}
+            if cfg.get("aws_access_key_id"):
+                kwargs["aws_access_key_id"] = cfg["aws_access_key_id"]
+            if cfg.get("aws_secret_access_key"):
+                kwargs["aws_secret_access_key"] = cfg["aws_secret_access_key"]
+            self._s3_client = boto3.client("s3", **kwargs)
+        return self._s3_client
+
     def load(self) -> int:
-        """Backward-compatible shim — v2 initialises in __init__. Returns row count."""
+        """Load facts from S3 (if configured) into SQLite. Returns row count loaded."""
         self._loaded = True
-        return len(self)
+        if not self.s3_config:
+            return len(self)
+
+        try:
+            s3 = self._get_s3_client()
+            resp = s3.get_object(
+                Bucket=self.s3_config["bucket"],
+                Key=self._s3_key(),
+            )
+            content = resp["Body"].read().decode("utf-8")
+        except Exception as e:
+            if "NoSuchKey" in str(e) or "404" in str(e):
+                logger.info("No existing facts in S3 at %s — starting fresh", self._s3_key())
+                return 0
+            logger.warning("Failed to load facts from S3: %s", e)
+            return 0
+
+        inserted = 0
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        for line_num, line in enumerate(content.splitlines(), 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                logger.warning("Skipping malformed facts.ndjson line %d: %s", line_num, exc)
+                continue
+            fact_text = row.get("fact", "")
+            source = row.get("source", "")
+            if not fact_text or not source:
+                continue
+            content_hash = row.get("content_hash") or StoredFact.compute_hash(fact_text, source)
+            try:
+                self._conn.execute(
+                    """INSERT OR IGNORE INTO facts
+                       (fact, source, page, quote, category, extracted, query_context,
+                        scope_type, importance, recency_updated, tier, content_hash)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        fact_text,
+                        source,
+                        row.get("page"),
+                        row.get("quote"),
+                        row.get("category"),
+                        row.get("extracted") or now,
+                        row.get("query_context"),
+                        row.get("scope_type", "snippet"),
+                        float(row.get("importance", 50.0)),
+                        row.get("recency_updated") or now,
+                        row.get("tier", "draft"),
+                        content_hash,
+                    ),
+                )
+                inserted += 1
+            except sqlite3.Error as exc:
+                logger.warning("Failed to insert fact from S3 line %d: %s", line_num, exc)
+
+        self._conn.commit()
+        logger.info("Loaded %d facts from S3 key %s", inserted, self._s3_key())
+        return inserted
 
     def save(self) -> int:
-        """Flush any in-memory _facts (legacy shim) to SQLite, then return row count."""
+        """Export all SQLite rows to S3 as NDJSON (if configured). Returns row count saved."""
         if self._facts:
             for fact in self._facts:
                 self._upsert_fact(fact)
             self._conn.commit()
-        return len(self)
+            self._facts = []
+
+        total = len(self)
+
+        if not self.s3_config:
+            return total
+
+        rows = self._conn.execute("SELECT * FROM facts").fetchall()
+        lines = []
+        for row in rows:
+            lines.append(json.dumps({
+                "fact":            row["fact"],
+                "source":          row["source"],
+                "page":            row["page"],
+                "quote":           row["quote"],
+                "category":        row["category"],
+                "extracted":       row["extracted"],
+                "query_context":   row["query_context"],
+                "scope_type":      row["scope_type"],
+                "importance":      row["importance"],
+                "recency_updated": row["recency_updated"],
+                "tier":            row["tier"],
+                "content_hash":    row["content_hash"],
+            }, ensure_ascii=False))
+
+        body = "\n".join(lines).encode("utf-8")
+        try:
+            s3 = self._get_s3_client()
+            s3.put_object(
+                Bucket=self.s3_config["bucket"],
+                Key=self._s3_key(),
+                Body=body,
+                ContentType="application/x-ndjson",
+            )
+            logger.info("Saved %d facts to S3 key %s", total, self._s3_key())
+        except Exception as exc:
+            logger.error("Failed to save facts to S3: %s", exc)
+
+        return total
 
     def _upsert_fact(self, fact: StoredFact) -> bool:
         """Insert a fact; silently ignore duplicates (same content_hash). Returns True if inserted."""
