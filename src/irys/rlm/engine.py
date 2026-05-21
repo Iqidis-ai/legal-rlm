@@ -482,6 +482,7 @@ class RLMEngine:
         context: Optional[Any] = None,
         message_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         setup_duration_ms: int = 0,
     ) -> InvestigationState:
         """Run full recursive investigation.
@@ -495,6 +496,10 @@ class RLMEngine:
                 - conversation_history: Prior Q&A for context
                 - planning_instructions: Guidance for planning phase
                 - output_instructions: Guidance for synthesis (e.g., language)
+            message_id: ID of the triggering message (stored in trace metadata)
+            user_id: ID of the user (stored in trace metadata)
+            session_id: Chat/conversation session ID (used as Langfuse sessionId)
+            setup_duration_ms: Time spent downloading/preparing documents
         """
         repo = MatterRepository(repository_path)
         self.repo = repo  # Store for methods that need repo access (e.g., _load_pinned_documents)
@@ -518,6 +523,7 @@ class RLMEngine:
         trace_handle = self._tracing_provider.start_trace(
             trace_id=state.id,
             name=f"investigation:{state.id}",
+            session_id=session_id,
             metadata={
                 "query": query,
                 "repository": str(repository_path),

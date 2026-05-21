@@ -444,6 +444,7 @@ async def _run_investigation(
             context=request.context,
             message_id=getattr(request, "message_id", None),
             user_id=getattr(request, "user_id", None),
+            session_id=request.session_id,
             setup_duration_ms=_setup_ms,
         )
 
@@ -748,6 +749,7 @@ async def _run_upload_investigation(
             seed_facts=seed_facts,
             seed_citations=seed_citations,
             context=context,
+            session_id=session_id,
             setup_duration_ms=_setup_ms,
         )
 
@@ -994,6 +996,7 @@ async def upload_investigate_sync(
             seed_facts=seed_facts,
             seed_citations=seed_citations,
             context=context,
+            session_id=session_id,
             setup_duration_ms=_setup_ms,
         )
 
@@ -1149,6 +1152,7 @@ async def _run_urls_investigation(
             context=request.context,
             message_id=getattr(request, "message_id", None),
             user_id=getattr(request, "user_id", None),
+            session_id=request.session_id,
             setup_duration_ms=_setup_ms,
         )
 
@@ -1291,6 +1295,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
             context=request.context,
             message_id=getattr(request, "message_id", None),
             user_id=getattr(request, "user_id", None),
+            session_id=request.session_id,
             setup_duration_ms=_setup_ms,
         )
 
@@ -1522,6 +1527,7 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
                 context=request.context,
                 message_id=getattr(request, "message_id", None),
                 user_id=getattr(request, "user_id", None),
+                session_id=request.session_id,
                 setup_duration_ms=_setup_ms,
             )
 
