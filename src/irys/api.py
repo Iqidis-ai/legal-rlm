@@ -161,6 +161,7 @@ class Irys:
         context: Optional[Any] = None,
         message_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         setup_duration_ms: int = 0,
     ) -> "InvestigationResult":
         """
@@ -178,6 +179,8 @@ class Irys:
             user_id: Optional caller-supplied user ID; stored on the telemetry log so
                      the investigation can be attributed to a user even after the
                      originating message/chat is deleted
+            session_id: Chat/conversation session ID; used as Langfuse sessionId so
+                        all traces from one chat session can be grouped and retrieved
 
         Returns:
             InvestigationResult with findings and output
@@ -210,6 +213,7 @@ class Irys:
                 context=context,
                 message_id=message_id,
                 user_id=user_id,
+                session_id=session_id,
                 setup_duration_ms=setup_duration_ms,
             )
         finally:
