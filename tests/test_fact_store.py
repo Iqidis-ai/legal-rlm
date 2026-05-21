@@ -66,3 +66,31 @@ class TestFormatForLlmProportionalBudget:
         store = self._make_store({"doc.pdf": ["The contract value is $2.5M."]})
         result = store.format_for_llm()
         assert "The contract value is $2.5M." in result
+
+
+class TestFactCompletenessInstruction:
+    """P_EXTRACT_FACTS must contain the FACT COMPLETENESS instruction block.
+    P_ANALYZE_RESULTS must NOT — it works from search snippets and cannot see surrounding lines.
+    """
+
+    def test_fact_completeness_present_in_extract_facts(self):
+        from irys.rlm.prompts import P_EXTRACT_FACTS
+        assert "FACT COMPLETENESS" in P_EXTRACT_FACTS
+
+    def test_surrounding_sentence_instruction_present(self):
+        from irys.rlm.prompts import P_EXTRACT_FACTS
+        assert "sentence immediately before" in P_EXTRACT_FACTS
+        assert "sentence immediately after" in P_EXTRACT_FACTS
+
+    def test_three_sentence_cap_present(self):
+        from irys.rlm.prompts import P_EXTRACT_FACTS
+        assert "3 sentences" in P_EXTRACT_FACTS
+
+    def test_quotes_exemption_present(self):
+        from irys.rlm.prompts import P_EXTRACT_FACTS
+        assert "quotes" in P_EXTRACT_FACTS
+
+    def test_fact_completeness_absent_from_analyze_results(self):
+        """Search snippet path must NOT get this instruction — model cannot see surrounding lines."""
+        from irys.rlm.prompts import P_ANALYZE_RESULTS
+        assert "FACT COMPLETENESS" not in P_ANALYZE_RESULTS
