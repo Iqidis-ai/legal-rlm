@@ -405,6 +405,14 @@ SCOPE DISCIPLINE:
 - If the provided scope appears insufficient, say so in "gaps" and suggest a targeted follow-up in "next_steps" or "references".
 - For quote page numbers, use visible page markers when available; otherwise use null.
 
+FACT COMPLETENESS: Each entry in "facts" must be a self-contained passage, not a
+stripped claim. Include the sentence immediately before and the sentence immediately after
+the core claim as it appears in the source text — these preserve qualifications,
+conditions, carve-outs, and limitations that govern the claim. If a surrounding
+sentence adds no qualifying context (e.g. it is a heading or an unrelated clause),
+omit it. Minimum: the core claim alone. Maximum: 3 sentences total.
+Do NOT apply this to "quotes" — quotes remain verbatim text only.
+
 CRITICAL: Legal precision is paramount. Extract ALL relevant facts with EXACT values.
 
 Extract:

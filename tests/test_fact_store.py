@@ -88,7 +88,7 @@ class TestFactCompletenessInstruction:
 
     def test_quotes_exemption_present(self):
         from irys.rlm.prompts import P_EXTRACT_FACTS
-        assert "quotes" in P_EXTRACT_FACTS
+        assert 'Do NOT apply this to "quotes"' in P_EXTRACT_FACTS
 
     def test_fact_completeness_absent_from_analyze_results(self):
         """Search snippet path must NOT get this instruction — model cannot see surrounding lines."""
