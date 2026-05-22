@@ -900,6 +900,13 @@ class FactStore:
         logger.info("Migrated %d facts from %s (original -> %s)", migrated, jsonl_path, bak)
         return migrated
 
+    def close(self) -> None:
+        """Close the SQLite connection. Required on Windows before temp-dir cleanup."""
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+
     def __bool__(self) -> bool:
         # Always return True so `if fact_store:` checks existence, not emptiness
         return True

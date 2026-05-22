@@ -660,7 +660,8 @@ class RLMEngine:
                 if repo.metadata and state.findings.get("accumulated_facts"):
                     key_facts = state.findings["accumulated_facts"][:3]
                     if key_facts:
-                        repo.add_learning(query, "; ".join(key_facts))
+                        fact_texts = [f[0] if isinstance(f, (list, tuple)) else f for f in key_facts]
+                        repo.add_learning(query, "; ".join(fact_texts))
 
             state.complete()
 
@@ -700,6 +701,10 @@ class RLMEngine:
                         f"No new facts extracted this session",
                         visible=False,
                     )
+
+            # Release SQLite connection so temp-dir cleanup can proceed (Windows WAL lock)
+            if self.fact_store:
+                self.fact_store.close()
 
             # Clean up external search sessions
             if self.external_search:

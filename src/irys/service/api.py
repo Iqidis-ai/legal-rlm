@@ -966,6 +966,7 @@ async def upload_investigate_sync(
             temp_dir.mkdir(parents=True, exist_ok=True)
             for filename, content in file_data:
                 (temp_dir / filename).write_bytes(content)
+            _setup_ms = 0
         else:
             # S3 MODE: Upload to S3, then download to temp
             s3_repo = S3Repository(
@@ -980,9 +981,9 @@ async def upload_investigate_sync(
                 prefix=s3_prefix,
                 config=config,
             )
-        _t0 = time.monotonic()
-        temp_dir = await upload_repo.download_to_temp(job_id)
-        _setup_ms = int((time.monotonic() - _t0) * 1000)
+            _t0 = time.monotonic()
+            temp_dir = await upload_repo.download_to_temp(job_id)
+            _setup_ms = int((time.monotonic() - _t0) * 1000)
 
         # Parse context JSON
         context = _parse_context_json(context_json)
