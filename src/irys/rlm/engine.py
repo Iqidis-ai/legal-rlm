@@ -800,7 +800,8 @@ class RLMEngine:
         # Step 1.6: Get cached facts for this query
         cached_facts_str = ""
         if self.fact_store and len(self.fact_store) > 0:
-            cached_facts_str = self.fact_store.pack_evidence(
+            cached_facts_str = await asyncio.to_thread(
+                self.fact_store.pack_evidence,
                 state.query,
                 token_budget=self.config.evidence_cached_facts_budget,
             )
@@ -1200,7 +1201,8 @@ class RLMEngine:
         # Get cached facts for this query
         cached_facts_str = ""
         if self.fact_store and len(self.fact_store) > 0:
-            cached_facts_str = self.fact_store.pack_evidence(
+            cached_facts_str = await asyncio.to_thread(
+                self.fact_store.pack_evidence,
                 state.query,
                 token_budget=self.config.evidence_cached_facts_budget,
             )
@@ -2205,7 +2207,8 @@ class RLMEngine:
 
         cached_facts = ""
         if self.fact_store and len(self.fact_store) > 0:
-            cached_facts = self.fact_store.pack_evidence(
+            cached_facts = await asyncio.to_thread(
+                self.fact_store.pack_evidence,
                 state.query,
                 token_budget=self.config.evidence_cached_facts_budget,
             )
@@ -2642,7 +2645,8 @@ class RLMEngine:
 
             # Save facts to persistent store for future queries
             if self.fact_store:
-                new_fact_hashes = self.fact_store.add_facts_from_extraction(
+                new_fact_hashes = await asyncio.to_thread(
+                    self.fact_store.add_facts_from_extraction,
                     facts=extraction.get("facts", []),
                     source=doc.filename,
                     scope=scope,
@@ -2849,13 +2853,15 @@ class RLMEngine:
                 if getattr(c, "source_type", "document") == "document"
             }
             if cited_filenames:
+                hashes_to_bump = []
                 for entry in state.findings.get("accumulated_facts", []):
-                    fact_text = entry[0] if isinstance(entry, (list, tuple)) else entry
                     content_hash = entry[1] if isinstance(entry, (list, tuple)) and len(entry) > 1 else ""
                     if content_hash:
                         source = self.fact_store.get_source_for_hash(content_hash)
                         if source in cited_filenames:
-                            self.fact_store.on_search_hit(content_hash)
+                            hashes_to_bump.append(content_hash)
+                if hashes_to_bump:
+                    await asyncio.to_thread(self.fact_store.on_search_hit_batch, hashes_to_bump)
 
         output_len = len(response)
         total_citations = len(state.citations)

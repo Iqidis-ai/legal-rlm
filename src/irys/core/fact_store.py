@@ -762,6 +762,22 @@ class FactStore:
         self._check_tier(content_hash)
         self._conn.commit()
 
+    def on_search_hit_batch(self, content_hashes: list[str]) -> None:
+        """Bump importance by +3 for multiple hashes in a single transaction."""
+        if not content_hashes:
+            return
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        self._conn.executemany(
+            """UPDATE facts SET
+                   importance      = MIN(importance + 3, 100.0),
+                   recency_updated = ?
+               WHERE content_hash  = ?""",
+            [(now, h) for h in content_hashes],
+        )
+        for h in content_hashes:
+            self._check_tier(h)
+        self._conn.commit()
+
     def on_re_extraction(self, content_hash: str) -> None:
         """Increment importance by +5 on re-extraction."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d")

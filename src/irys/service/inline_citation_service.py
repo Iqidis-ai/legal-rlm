@@ -127,7 +127,11 @@ class InlineCitationService:
 
         try:
             selected = cls._select_citations(citations)
-            all_ids = {getattr(c, 'id', None) for c in citations} - {None}
+            # Validate against IDs actually shown to the LLM, not the full citation list.
+            # The LLM can only inject IDs it received; using all citations would allow
+            # hallucinated IDs to slip through if they happen to match an unsent citation.
+            sanitized_for_ids = cls._sanitize_citations(selected)
+            all_ids = {s.id for s in sanitized_for_ids}
 
             final, diag = await cls._inject_single(answer, selected, config, all_ids, trace_ctx=trace_ctx)
 
