@@ -34,11 +34,6 @@
 |---|---|---|
 | `feat/context-store-v2` | **Current HEAD. Local only, not pushed.** | SQLite FactStore replacement + async fix + citation injection fix. See Section 3. |
 | `feat/rlm-improvements` | Remote. Production target. | Current production branch. Density scoring not applied. |
-| `feat/search+` | PR open. Ready to merge. | Density scoring on OR-fallback only (12 lines). Prerequisite for density-upgrade branch. |
-| `search/density-ranking-upgrade` | Local only, not pushed. MRR 0.164 | 3-commit density scoring chain + MRR harness. On top of `feat/search+`. |
-| `feat/inline` | Local. | Inline citation work. |
-| `feat/bias-reduction` | Local. | Classifier/bias workstream. |
-| `multi-modal` | Local. | Multimodal (image/OCR) detection. |
 
 ---
 
@@ -111,35 +106,6 @@ Three commits adding `_derive_doc_label` / `ATTRIBUTION RULE` for document-ancho
 
 ---
 
-## 5. Authoritative weight + stance boost table (post-SME review, 2026-05-01)
-
-> Source of truth. Update here first whenever weights change.
-
-| Weight | Category | Stance boost | Status | Notes |
-|---|---|---|---|---|
-| 10.0 | `authority_court_substantive` | 1.50× | Existing | SJ, PI, dispositive motions, judgments, contempt findings |
-| 9.0 | `case_law_external` | 1.45× | **New** | Binding/persuasive precedent via CourtListener/Tavily. Must attach at ingestion in `external_search.py` — cannot be assigned from filename |
-| 9.0 | `prior_judgment_or_award` | 1.45× | **New** | Prior judgments for collateral estoppel; arbitration awards; appellate mandates |
-| 8.5 | `authority_court_procedural_substantive` | 1.35× | **Split from existing** | Compel, sanctions (FRCP 11/26/37), protective orders, privilege rulings, MIL rulings, Daubert orders |
-| 8.0 | `statute_or_regulation` | 1.25× | **New** | USC, CFR, model rules |
-| 8.0 | `administrative_record` | 1.25× | **New** | Certified administrative record in agency-action matters |
-| 7.5 | `expert_report_court_appointed` | 1.22× | **New** | Rule 706 court-appointed experts; special masters; technical advisors |
-| 7.0 | `settlement_agreement` | 1.15× | **New** | Executed settlement agreements; consent decrees |
-| 6.0 | `expert_report_independent` | 1.20× | Existing | Rule 26(a)(2) disclosed experts. Subject to Daubert. |
-| 5.0 | `evidence` | 1.10× | Existing | Exhibits, deposition transcripts, contracts in record |
-| 5.0 | `stipulation_joint` | 1.10× | **New** | Joint stipulations; agreed orders; joint CMC statements |
-| 5.0 | `authority_court_administrative` | 1.05× | **Split from existing** | Scheduling orders, calendar orders, conference notices |
-| 4.5 | `discovery_response_sworn` | 1.10× | **New** | Interrogatory responses (sworn); RFA responses; deposition designations |
-| 4.0 | `declaration_witness` | 1.00× | Existing | Third-party fact witnesses under penalty of perjury |
-| 4.0 | `complaint` | 1.00× | Existing | Pleadings |
-| 2.5 | `declaration_party` | 0.90× | Existing | Sworn but self-serving |
-| 2.0 | `advocacy_plaintiff` | 0.90× | Existing | Known-party advocacy floor |
-| 2.0 | `advocacy_defendant` | 0.90× | Existing | Same |
-| 2.0 | `settlement_communication` | 0.90× | **New** | Demand letters, mediation positions, FRE 408-protected comms |
-| 2.0 | `UNCLASSIFIED` | 0.85× | **Lowered from 3.0** | Default should be conservative |
-| 1.5 | `advocacy_unknown` | 0.80× | **Lowered from 2.0** | Unknown provenance weaker than known attribution |
-| 0.0 | `EXCLUDE` | 0.00× | Existing | Service certificates, summonses, docket sheets |
-
 **Dominance gap short-circuit: DEFERRED.** Precision at current threshold: 33%. Do not ship.
 
 ---
@@ -201,9 +167,6 @@ Step 10 Classifier integration (search pre-ranking first, fact metadata second)
 | Workstream | Owner | Status | Blocking on |
 |---|---|---|---|
 | context-store-v2 (SQLite FactStore + async fix + citation fix) | Sudarsh | **Complete. Ready to merge.** | .venv cleanup before merge |
-| Bias correction (classifier + search integration) | Sudarsh | In progress — Experiments 1+2 pending | Experiments 1+2 |
-| search/density-ranking-upgrade | Sudarsh | Local only. Waiting on search+ merge. | feat/search+ merge |
-| Langfuse integration / observability | Arpit | Integrated (see feat/harness-fixes-observe, merged) | — |
 | Attribution anchoring (context-anchored fact extraction) | Deferred | Reverted from this branch | New design pass needed |
 | Index/batching for background maintenance | Not started | Design needed | Classifier must ship first |
 

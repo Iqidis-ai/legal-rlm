@@ -1021,7 +1021,7 @@ async def upload_investigate_sync(
             f"Sync investigation {job_id} completed in {duration:.1f}s (mode={config.storage_mode})")
 
         citations, entities = _serialize_result(result)
-        facts = result.state.findings.get("accumulated_facts", [])
+        facts = result.state.accumulated_fact_texts()
         response = SyncInvestigateResponse(
             query=query,
             analysis=result.output,
@@ -1309,7 +1309,7 @@ async def investigate_urls_sync(request: S3UrlsInvestigateRequest):
             f"URL sync investigation {job_id} completed in {duration:.1f}s")
 
         citations, entities = _serialize_result(result)
-        facts = result.state.findings.get("accumulated_facts", [])
+        facts = result.state.accumulated_fact_texts()
         return SyncInvestigateResponse(
             query=request.query,
             analysis=result.output,
@@ -1535,7 +1535,7 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
 
             duration = time.time() - start_time
             citations, entities = _serialize_result(result)
-            facts = result.state.findings.get("accumulated_facts", [])
+            facts = result.state.accumulated_fact_texts()
             queue.put_nowait({
                 "event": "complete",
                 "data": {
