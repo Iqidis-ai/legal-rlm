@@ -488,13 +488,13 @@ class FactStore:
         importance, tier = row["importance"], row["tier"]
         new_tier = tier
 
-        if tier == "draft" and importance >= 65.0:
+        if tier == "draft" and importance >= self._TIER_PROMOTE["draft"]:
             new_tier = "validated"
-        elif tier == "validated" and importance >= 85.0:
+        elif tier == "validated" and importance >= self._TIER_PROMOTE["validated"]:
             new_tier = "core"
-        elif tier == "core" and importance < 60.0:
+        elif tier == "core" and importance < self._TIER_DEMOTE["core"]:
             new_tier = "validated"
-        elif tier == "validated" and importance < 35.0:
+        elif tier == "validated" and importance < self._TIER_DEMOTE["validated"]:
             new_tier = "draft"
 
         if new_tier != tier:
