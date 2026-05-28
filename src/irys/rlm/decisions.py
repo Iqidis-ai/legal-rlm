@@ -1754,11 +1754,18 @@ async def build_research_brief(
                                      trace_ctx=trace_ctx, generation_name="build_research_brief")
     result = parse_json_safe(response)
 
-    if result:
+    if isinstance(result, dict) and result:
         _log_llm_result("build_research_brief", result, time.time() - start_time)
         return result
 
-    logger.warning("build_research_brief: JSON parse failed; returning empty brief")
+    if isinstance(result, list):
+        logger.warning(
+            "build_research_brief: LLM returned a JSON array (%d items) instead of a dict; "
+            "discarding and returning empty brief",
+            len(result),
+        )
+    else:
+        logger.warning("build_research_brief: JSON parse failed; returning empty brief")
     return {
         "key_precedents": [],
         "legal_standards": [],
