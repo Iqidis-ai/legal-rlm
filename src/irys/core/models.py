@@ -435,7 +435,7 @@ class GeminiClient:
     # Per-step timeout per tier (each fallback attempt gets this budget)
     TIER_TIMEOUTS: dict = {
         ModelTier.LITE: 80.0,
-        ModelTier.FLASH: 100.0,
+        ModelTier.FLASH: 120.0,
         ModelTier.PRO: 120.0,
     }
 
@@ -565,6 +565,13 @@ class GeminiClient:
                     logger.warning(f"Vertex AI {fallback_model} also failed: {str(vertex_e)[:100]}")
 
             if not secondary_fallback_model:
+                msg = str(e)
+                if not msg:
+                    msg = (
+                        f"All models timed out after {timeout}s each "
+                        f"(primary={primary_model}, fallback={fallback_model})"
+                    )
+                    raise RuntimeError(msg) from e
                 raise
 
             logger.warning(f"All primary/fallback options exhausted, trying secondary fallback {secondary_fallback_model}")
@@ -577,6 +584,14 @@ class GeminiClient:
             if vertex:
                 logger.warning(f"Gemini {secondary_fallback_model} failed, trying Vertex AI secondary fallback")
                 return await self._try_call(vertex, secondary_fallback_model, contents, config, timeout, no_timeout)
+            msg = str(e)
+            if not msg:
+                msg = (
+                    f"All models timed out after {timeout}s each "
+                    f"(primary={primary_model}, fallback={fallback_model}, "
+                    f"secondary={secondary_fallback_model})"
+                )
+                raise RuntimeError(msg) from e
             raise
 
     def _get_config(self, tier: ModelTier, system_prompt: Optional[str] = None) -> types.GenerateContentConfig:
