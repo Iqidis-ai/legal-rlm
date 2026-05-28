@@ -1175,7 +1175,8 @@ async def synthesize(
 
     # ALWAYS use PRO system prompt for synthesis, regardless of model tier
     response = await client.complete(prompt, tier=tier, system_prompt=system_prompt, active_step=active_step,
-                                     trace_ctx=trace_ctx, generation_name="synthesize")
+                                     trace_ctx=trace_ctx, generation_name="synthesize",
+                                     overall_timeout=240)
 
     logger.info(f"✨ Synthesis complete: {len(response)} chars")
     _log_llm_result("synthesize", f"{len(response)} char response", time.time() - start_time)
