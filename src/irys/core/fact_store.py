@@ -793,28 +793,22 @@ class FactStore:
 
     def tick_decay(self) -> int:
         """Apply idle decay: importance × 0.995^days_idle. Returns rows updated."""
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        rows = self._conn.execute(
-            "SELECT content_hash, importance, recency_updated FROM facts"
-        ).fetchall()
-        updated = 0
-        for row in rows:
-            try:
-                delta = (
-                    datetime.fromisoformat(today)
-                    - datetime.fromisoformat(row["recency_updated"])
-                ).days
-            except (ValueError, TypeError):
-                continue
-            if delta <= 0:
-                continue
-            new_imp = row["importance"] * (0.995 ** delta)
-            self._conn.execute(
-                "UPDATE facts SET importance = ? WHERE content_hash = ?",
-                (new_imp, row["content_hash"]),
+        self._conn.execute("""
+            UPDATE facts
+            SET importance = importance * POWER(
+                0.995,
+                CAST(julianday('now') - julianday(recency_updated) AS INTEGER)
             )
-            self._check_tier(row["content_hash"])
-            updated += 1
+            WHERE CAST(julianday('now') - julianday(recency_updated) AS INTEGER) > 0
+        """)
+        updated = self._conn.execute("SELECT changes()").fetchone()[0]
+        if updated:
+            changed = self._conn.execute("""
+                SELECT content_hash FROM facts
+                WHERE CAST(julianday('now') - julianday(recency_updated) AS INTEGER) > 0
+            """).fetchall()
+            for row in changed:
+                self._check_tier(row["content_hash"])
         self._conn.commit()
         return updated
 
