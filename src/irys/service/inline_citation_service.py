@@ -299,10 +299,19 @@ class InlineCitationService:
         annotated = await cls._call_gemini_lite(prompt, config, active_step=telemetry_step, trace_ctx=trace_ctx)
         diag["llm_latency_ms"] = int((time.monotonic() - t0) * 1000)
 
-        if cls._validate_response(annotated, answer, all_valid_ids):
+        # Strip any IDs the LLM hallucinated (wrong chars, invented IDs).
+        # A single bad character must not throw away all correctly-placed markers.
+        cleaned, n_stripped = cls._strip_invalid_ids(annotated, all_valid_ids)
+        if n_stripped:
+            logger.warning(
+                "Citation injection: stripped %d invalid ID marker(s) before validation", n_stripped
+            )
+            diag["invalid_ids_stripped"] = n_stripped
+
+        if cls._validate_response(cleaned, answer, all_valid_ids):
             diag["validation_passed"] = True
             cls._attach_llm_telemetry(diag, telemetry_step)
-            return annotated, diag
+            return cleaned, diag
 
         logger.warning("Citation injection failed validation, returning original answer")
         cls._attach_llm_telemetry(diag, telemetry_step)
@@ -496,8 +505,31 @@ Do not include explanations or commentary."""
     MULTI_ID_PATTERN = re.compile(r'\[[a-f0-9]{8}(?:,\s*[a-f0-9]{8})+\]')
 
     @classmethod
+    def _strip_invalid_ids(cls, annotated: str, valid_ids: set) -> tuple[str, int]:
+        """Remove citation markers whose IDs are not in valid_ids.
+
+        Returns (cleaned_text, number_of_markers_stripped).
+        Invalid IDs are those the LLM hallucinated (e.g. one wrong character).
+        """
+        count = 0
+
+        def replacer(match):
+            nonlocal count
+            if match.group(1) not in valid_ids:
+                count += 1
+                return ""          # drop the invalid marker
+            return match.group(0)  # keep valid marker
+
+        cleaned = cls.CITATION_MARKER_PATTERN.sub(replacer, annotated)
+        return cleaned, count
+
+    @classmethod
     def _validate_response(cls, annotated: str, original: str, valid_ids: set) -> bool:
-        """Validate the annotated response."""
+        """Validate the annotated response.
+
+        By the time this is called, invalid IDs have already been stripped by
+        _strip_invalid_ids, so only structural checks remain.
+        """
         # Rule 1: Non-empty
         if not annotated or not annotated.strip():
             logger.info("Citation validation failed: empty response")
@@ -508,16 +540,7 @@ Do not include explanations or commentary."""
             logger.info("Citation validation failed: comma-separated IDs in brackets")
             return False
 
-        # Rule 3: Extract all citation markers
-        found_ids = set(cls.CITATION_MARKER_PATTERN.findall(annotated))
-
-        # Rule 4: All IDs must be valid (no unknown IDs)
-        invalid_ids = found_ids - valid_ids
-        if invalid_ids:
-            logger.info("Citation validation failed: %d hallucinated IDs %s", len(invalid_ids), list(invalid_ids)[:3])
-            return False
-
-        # Rule 5: Length check ±15% (generous to handle minor reformatting by LLM)
+        # Rule 3: Length check ±15% (generous to handle minor reformatting by LLM)
         annotated_clean = cls.CITATION_MARKER_PATTERN.sub("", annotated)
         original_clean = original.strip()
 
