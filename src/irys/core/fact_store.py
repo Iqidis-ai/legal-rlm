@@ -403,6 +403,10 @@ class FactStore:
         self._conn.commit()
         return inserted
 
+    # ── Synopsis constants ───────────────────────────────────────────────────
+    _SYNOPSIS_FACT_COUNT = 10
+    _SYNOPSIS_FACT_CHARS = 120
+
     # ── Tier thresholds ──────────────────────────────────────────────────────
     _TIER_PROMOTE = {"draft": 65.0, "validated": 85.0, "core": float("inf")}
     _TIER_DEMOTE  = {"core": 60.0, "validated": 35.0, "draft": 0.0}
@@ -451,8 +455,11 @@ class FactStore:
 
         self._conn.commit()
 
-        if facts and not self.get_synopsis(source):
-            self._build_synopsis(source, facts)
+        if facts:
+            if not self.get_synopsis(source):
+                self._build_synopsis(source, facts)
+            else:
+                self._refresh_synopsis(source)
 
         return result_hashes
 
@@ -465,8 +472,8 @@ class FactStore:
 
     def _build_synopsis(self, source: str, initial_facts: list) -> None:
         """Build and store a deterministic synopsis for a source document."""
-        sample = initial_facts[:3]
-        sample_lines = "\n".join(f"  - {f[:80]}" for f in sample)
+        sample = initial_facts[:self._SYNOPSIS_FACT_COUNT]
+        sample_lines = "\n".join(f"  - {f[:self._SYNOPSIS_FACT_CHARS]}" for f in sample)
         synopsis = f"Source: {source}\nSample facts:\n{sample_lines}"
         token_count = len(synopsis.split())
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -474,6 +481,31 @@ class FactStore:
             """INSERT OR IGNORE INTO source_synopses (source, synopsis, token_count, updated_at)
                VALUES (?, ?, ?, ?)""",
             (source, synopsis, token_count, now),
+        )
+        self._conn.commit()
+
+    def _refresh_synopsis(self, source: str) -> None:
+        """Rebuild synopsis if stored version has fewer than _SYNOPSIS_FACT_COUNT fact lines."""
+        existing = self.get_synopsis(source)
+        if not existing:
+            return
+        fact_count = existing.count("\n  - ")
+        if fact_count >= self._SYNOPSIS_FACT_COUNT:
+            return
+        rows = self._conn.execute(
+            "SELECT fact FROM facts WHERE source = ? ORDER BY importance DESC LIMIT ?",
+            (source, self._SYNOPSIS_FACT_COUNT),
+        ).fetchall()
+        if len(rows) <= fact_count:
+            return
+        facts = [r["fact"] for r in rows]
+        sample_lines = "\n".join(f"  - {f[:self._SYNOPSIS_FACT_CHARS]}" for f in facts)
+        synopsis = f"Source: {source}\nSample facts:\n{sample_lines}"
+        token_count = len(synopsis.split())
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        self._conn.execute(
+            "UPDATE source_synopses SET synopsis=?, token_count=?, updated_at=? WHERE source=?",
+            (synopsis, token_count, now, source),
         )
         self._conn.commit()
 

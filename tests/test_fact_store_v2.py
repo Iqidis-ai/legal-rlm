@@ -167,6 +167,42 @@ class TestAddFactsFromExtraction:
         ).fetchone()["importance"]
         assert after == before + 5
 
+    def test_synopsis_uses_ten_facts(self):
+        """Synopsis built from >=10 facts should contain 10 fact lines."""
+        store, _ = make_store()
+        scope = self._make_scope()
+        store.add_facts_from_extraction(
+            [f"Fact number {i} from this document." for i in range(12)],
+            source="BigContract.pdf",
+            scope=scope,
+        )
+        synopsis = store.get_synopsis("BigContract.pdf")
+        assert synopsis is not None
+        fact_line_count = synopsis.count("\n  - ")
+        assert fact_line_count == 10
+
+    def test_synopsis_refreshes_when_more_facts_available(self):
+        """Synopsis built from 3 facts is rebuilt when 10 facts are available."""
+        store, _ = make_store()
+        scope = self._make_scope()
+        # First extraction: only 3 facts
+        store.add_facts_from_extraction(
+            ["Fact A.", "Fact B.", "Fact C."],
+            source="Refresh.pdf",
+            scope=scope,
+        )
+        synopsis_before = store.get_synopsis("Refresh.pdf")
+        assert synopsis_before.count("\n  - ") == 3
+
+        # Second extraction: 10 more distinct facts added
+        store.add_facts_from_extraction(
+            [f"New fact {i}." for i in range(10)],
+            source="Refresh.pdf",
+            scope=scope,
+        )
+        synopsis_after = store.get_synopsis("Refresh.pdf")
+        assert synopsis_after.count("\n  - ") == 10
+
 
 class TestImportanceLifecycle:
     """on_search_hit, on_re_extraction, tick_decay, archive_cold_facts."""
