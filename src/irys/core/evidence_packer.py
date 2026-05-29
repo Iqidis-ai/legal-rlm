@@ -2,7 +2,7 @@
 
 Algorithm:
   Pass 1: Allocate token budget per source (<=MAX_SOURCE_SHARE=30%).
-  Pass 2: Within each source, sort by density DESC and fill until budget exhausted.
+  Pass 2 (top-up): If ≥15% of budget unused, fill remaining facts across all sources sorted by density DESC.
   Final: Emit all selected facts sorted by compound_score DESC across sources,
          each formatted as [LABEL; SOURCE=...; PAGE=...; TIER=...] fact text.
 """
@@ -72,6 +72,23 @@ class EvidencePacker:
                     break
                 selected.append((score, fact))
                 source_chars += len(line)
+                total_chars += len(line)
+
+        # Pass 2: top-up if ≥15% of budget unused (sparse-source matters)
+        if total_chars < char_budget * 0.85:
+            chosen_ids = {id(fact) for _, fact in selected}
+            remaining = [
+                (quick_score(f), f)
+                for source_facts in by_source.values()
+                for f in source_facts
+                if id(f) not in chosen_ids
+            ]
+            remaining.sort(key=lambda x: _density(x[1], x[0]), reverse=True)
+            for score, fact in remaining:
+                line = EvidencePacker._format_fact(fact)
+                if total_chars + len(line) > char_budget:
+                    break
+                selected.append((score, fact))
                 total_chars += len(line)
 
         selected.sort(key=lambda x: x[0], reverse=True)

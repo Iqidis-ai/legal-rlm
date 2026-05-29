@@ -468,6 +468,25 @@ class TestEvidencePacker:
         from irys.core.evidence_packer import EvidencePacker
         assert EvidencePacker.pack([], query="anything", token_budget=5000) == ""
 
+    def test_topup_fills_budget_when_source_is_sparse(self):
+        """When a single-source matter has few facts, Pass 2 should include more than
+        Pass 1's per-source cap would allow if budget is large enough."""
+        from irys.core.evidence_packer import EvidencePacker
+        # 5 facts from one source, tiny text so each is ~20 chars
+        facts = [
+            StoredFact(
+                fact=f"Fact {i}.",
+                source="sparse.pdf",
+                importance=60.0 - i,
+                scope_type="targeted",
+                tier="validated",
+            )
+            for i in range(5)
+        ]
+        # Large budget — all 5 facts should appear (no sparse-source blocking)
+        result = EvidencePacker.pack(facts, query="conditions", token_budget=10_000)
+        assert result.count("sparse.pdf") == 5
+
 
 class TestMigrationAndStats:
     """stats() returns correct counts; migrate_from_jsonl migrates JSONL rows."""
