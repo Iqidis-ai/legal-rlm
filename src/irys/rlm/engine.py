@@ -2574,6 +2574,9 @@ class RLMEngine:
         # OPTIMIZATION: Skip if already extracted for this exact scope
         if cache.has_extracted(file_path, scope_key):
             logger.debug(f"Skipping already extracted: {file_path}")
+            if self.fact_store:
+                filename = Path(file_path).name
+                await asyncio.to_thread(self.fact_store.on_source_revisited, filename)
             return True  # Already extracted = success
 
         filename = Path(file_path).name

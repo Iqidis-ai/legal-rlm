@@ -823,6 +823,28 @@ class FactStore:
         self._check_tier(content_hash)
         self._conn.commit()
 
+    def on_source_revisited(self, source: str) -> int:
+        """Bump importance +5 for all facts from source (document re-read signal).
+
+        Returns count of updated rows.
+        """
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        self._conn.execute(
+            """UPDATE facts
+               SET importance = MIN(importance + 5, 100.0), recency_updated = ?
+               WHERE source = ?""",
+            (now, source),
+        )
+        updated = self._conn.execute("SELECT changes()").fetchone()[0]
+        if updated:
+            hashes = self._conn.execute(
+                "SELECT content_hash FROM facts WHERE source = ?", (source,)
+            ).fetchall()
+            for row in hashes:
+                self._check_tier(row["content_hash"])
+        self._conn.commit()
+        return updated
+
     def tick_decay(self) -> int:
         """Apply idle decay: importance × 0.995^days_idle. Returns rows updated."""
         self._conn.execute("""

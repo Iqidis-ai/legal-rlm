@@ -308,6 +308,42 @@ class TestImportanceLifecycle:
             "SELECT id FROM facts WHERE content_hash=?", (h,)
         ).fetchone() is not None
 
+    def test_on_source_revisited_bumps_all_source_facts(self):
+        """on_source_revisited raises importance by +5 for every fact from the source."""
+        store, _ = make_store()
+        h1 = self._insert_fact(store, text="Fact one", source="contract.pdf", importance=50.0)
+        h2 = self._insert_fact(store, text="Fact two", source="contract.pdf", importance=60.0)
+        h3 = self._insert_fact(store, text="Other source", source="other.pdf", importance=50.0)
+
+        updated = store.on_source_revisited("contract.pdf")
+
+        assert updated == 2
+        imp1 = store._conn.execute(
+            "SELECT importance FROM facts WHERE content_hash=?", (h1,)
+        ).fetchone()["importance"]
+        imp2 = store._conn.execute(
+            "SELECT importance FROM facts WHERE content_hash=?", (h2,)
+        ).fetchone()["importance"]
+        imp3 = store._conn.execute(
+            "SELECT importance FROM facts WHERE content_hash=?", (h3,)
+        ).fetchone()["importance"]
+        assert imp1 == 55.0
+        assert imp2 == 65.0
+        assert imp3 == 50.0  # untouched
+
+    def test_on_source_revisited_caps_at_100(self):
+        store, _ = make_store()
+        h = self._insert_fact(store, text="Near cap", source="doc.pdf", importance=98.0)
+        store.on_source_revisited("doc.pdf")
+        imp = store._conn.execute(
+            "SELECT importance FROM facts WHERE content_hash=?", (h,)
+        ).fetchone()["importance"]
+        assert imp == 100.0
+
+    def test_on_source_revisited_returns_zero_for_unknown_source(self):
+        store, _ = make_store()
+        assert store.on_source_revisited("nonexistent.pdf") == 0
+
 
 class TestGetRelevant:
     """get_relevant returns scored, ranked StoredFact list."""
