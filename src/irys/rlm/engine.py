@@ -2654,6 +2654,7 @@ class RLMEngine:
                     source=doc.filename,
                     scope=scope,
                     query_context=state.query,
+                    quotes=extraction.get("quotes", []),
                 )
                 new_facts = len(new_fact_hashes)
                 self._emit_step(

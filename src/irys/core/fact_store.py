@@ -419,28 +419,61 @@ class FactStore:
         query_context: str = "",
         page: Optional[int] = None,
         category: Optional[str] = None,
+        quotes: Optional[list] = None,
     ) -> list:
-        """Insert facts and return their content_hash values.
+        """Insert facts (and verbatim quotes) and return their content_hash values.
 
         scope.is_targeted → scope_type "targeted"; else "prefix".
         Duplicate (same content_hash) increments importance by +5.
+        quotes: list of {"text": str, "page": int|None, "relevance": str} dicts from
+                extract_facts. Each quote is stored as a fact with quote=text so that
+                verbatim legal clauses (which the LITE model places in quotes rather than
+                facts) are preserved in the fact store.
         """
         scope_type = "targeted" if getattr(scope, "is_targeted", False) else "prefix"
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         result_hashes: list = []
 
+        # Cross-session revisit signal: if this source already has a synopsis it was
+        # extracted in a prior investigation. Bump all its existing facts now so the
+        # warm-run importance delta is visible in the benchmark.
+        is_revisit = bool(self.get_synopsis(source))
+        if is_revisit:
+            self.on_source_revisited(source)
+
+        # Build combined list: plain fact strings + quote texts (deduped by content)
+        all_entries: list[tuple[str, Optional[int], Optional[str]]] = []
+        seen_texts: set[str] = set()
+
         for fact_text in facts:
             if not fact_text or not isinstance(fact_text, str):
                 continue
+            if fact_text not in seen_texts:
+                seen_texts.add(fact_text)
+                all_entries.append((fact_text, page, None))
+
+        for q in (quotes or []):
+            if not isinstance(q, dict):
+                continue
+            text = q.get("text", "")
+            if not text or not isinstance(text, str):
+                continue
+            if text in seen_texts:
+                continue
+            seen_texts.add(text)
+            q_page = q.get("page") if isinstance(q.get("page"), int) else page
+            all_entries.append((text, q_page, text))  # fact=text, quote=text
+
+        for fact_text, entry_page, quote_text in all_entries:
             content_hash = StoredFact.compute_hash(fact_text, source)
             try:
                 self._conn.execute(
                     """INSERT INTO facts
-                       (fact, source, page, category, extracted, query_context,
+                       (fact, source, page, quote, category, extracted, query_context,
                         scope_type, importance, recency_updated, tier, content_hash)
-                       VALUES (?,?,?,?,?,?,?,50.0,?,'draft',?)""",
-                    (fact_text, source, page, category, now, query_context or None,
-                     scope_type, now, content_hash),
+                       VALUES (?,?,?,?,?,?,?,?,50.0,?,'draft',?)""",
+                    (fact_text, source, entry_page, quote_text, category, now,
+                     query_context or None, scope_type, now, content_hash),
                 )
             except sqlite3.IntegrityError:
                 self._conn.execute(
@@ -455,9 +488,10 @@ class FactStore:
 
         self._conn.commit()
 
-        if facts:
+        all_fact_texts = [e[0] for e in all_entries]
+        if all_fact_texts:
             if not self.get_synopsis(source):
-                self._build_synopsis(source, facts)
+                self._build_synopsis(source, all_fact_texts)
             else:
                 self._refresh_synopsis(source)
 
@@ -836,6 +870,8 @@ class FactStore:
             (now, source),
         )
         updated = self._conn.execute("SELECT changes()").fetchone()[0]
+        if updated:
+            logger.debug("on_source_revisited: %s — bumped %d facts", source, updated)
         if updated:
             hashes = self._conn.execute(
                 "SELECT content_hash FROM facts WHERE source = ?", (source,)
