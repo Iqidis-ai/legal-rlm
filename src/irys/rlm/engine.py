@@ -1820,6 +1820,9 @@ class RLMEngine:
 
             if state.add_fact(fact):
                 records.append(record)
+                state.findings.setdefault("structured_facts", []).append(
+                    {"text": fact, "source": source_doc}
+                )
                 if lead_id:
                     await self._emit_lead_update(
                         state,
