@@ -252,3 +252,94 @@ class TestWebSearchScoreFix:
         assert len(items) == 2
         assert items[0]["score"] == 0.92
         assert items[1]["score"] == 0.71
+
+
+# ── Task 2 tests ────────────────────────────────────────────────────────────
+
+class TestGetClusterValidity:
+    @pytest.mark.asyncio
+    async def test_returns_validity_fields_from_cluster(self):
+        from irys.core.research_tools import _execute_get_cluster_validity, ToolContext
+
+        fake_cl = SimpleNamespace(
+            get_cluster_validity=AsyncMock(return_value={
+                "cluster_id": 99,
+                "precedential_status": "Published",
+                "citation_count": 42,
+                "blocked": False,
+                "case_name": "Doe v. State",
+            })
+        )
+        mgr = SimpleNamespace(courtlistener=fake_cl, tavily=None)
+        ctx = ToolContext(external_search=mgr)
+
+        result = await _execute_get_cluster_validity(ctx, cluster_id=99)
+
+        assert result.ok is True
+        assert result.update_kind == "validity_check"
+        assert result.data["validity"]["precedential_status"] == "Published"
+        assert result.data["validity"]["citation_count"] == 42
+        assert result.update_data["blocked"] is False
+
+    @pytest.mark.asyncio
+    async def test_returns_error_when_not_found(self):
+        from irys.core.research_tools import _execute_get_cluster_validity, ToolContext
+
+        fake_cl = SimpleNamespace(get_cluster_validity=AsyncMock(return_value=None))
+        mgr = SimpleNamespace(courtlistener=fake_cl, tavily=None)
+        ctx = ToolContext(external_search=mgr)
+
+        result = await _execute_get_cluster_validity(ctx, cluster_id=99)
+
+        assert result.ok is False
+        assert result.error == "not_found"
+
+    @pytest.mark.asyncio
+    async def test_returns_error_when_cluster_id_missing(self):
+        from irys.core.research_tools import _execute_get_cluster_validity, ToolContext
+
+        mgr = SimpleNamespace(courtlistener=None, tavily=None)
+        ctx = ToolContext(external_search=mgr)
+
+        result = await _execute_get_cluster_validity(ctx)
+
+        assert result.ok is False
+        assert result.error == "missing_cluster_id"
+
+    def test_tool_spec_registered(self):
+        from irys.core.research_tools import TOOLS_BY_NAME
+        assert "get_cluster_validity" in TOOLS_BY_NAME
+
+
+class TestGetClusterValidityMethod:
+    @pytest.mark.asyncio
+    async def test_extracts_fields_from_cluster_response(self):
+        from irys.core.external_search import CourtListenerClient
+
+        raw_cluster = {
+            "id": 55,
+            "case_name": "Smith v. Corp",
+            "precedential_status": "Unpublished",
+            "citation_count": 3,
+            "blocked": True,
+        }
+        cl = CourtListenerClient.__new__(CourtListenerClient)
+        cl.get_cluster = AsyncMock(return_value=raw_cluster)
+
+        result = await cl.get_cluster_validity(55)
+
+        assert result["cluster_id"] == 55
+        assert result["precedential_status"] == "Unpublished"
+        assert result["citation_count"] == 3
+        assert result["blocked"] is True
+        assert result["case_name"] == "Smith v. Corp"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_cluster_not_found(self):
+        from irys.core.external_search import CourtListenerClient
+
+        cl = CourtListenerClient.__new__(CourtListenerClient)
+        cl.get_cluster = AsyncMock(return_value=None)
+
+        result = await cl.get_cluster_validity(99)
+        assert result is None

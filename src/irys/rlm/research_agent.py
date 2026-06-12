@@ -76,6 +76,7 @@ _KIND_USER_MESSAGES = {
     "opinion_fetched":     "Fetched full opinion text",
     "citing_cases":        "Found cases citing this authority",
     "analysis":            "External research analysis",
+    "validity_check":      "Checked case authority",
 }
 
 
@@ -568,6 +569,11 @@ class ResearchAgent:
         # 6) tavily answer passthrough (retain earliest non-null)
         if data.get("web_answer") and not self.store.get("web_answer"):
             self.store["web_answer"] = data["web_answer"]
+        # 7) validity checks
+        if "validity" in data and data["validity"]:
+            v = data["validity"]
+            cluster_id = str(v.get("cluster_id", ""))
+            self.store.setdefault("validity_checks", {})[cluster_id] = v
 
         # Emit SSE on whichever lead id the current turn was announced under.
         lead_id = getattr(self, "_current_turn_lead_id", None)

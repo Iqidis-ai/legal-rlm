@@ -330,6 +330,23 @@ class CourtListenerClient:
             logger.error(f"get_cluster {cluster_id} failed: {e}")
             return None
 
+    async def get_cluster_validity(self, cluster_id: int | str) -> Optional[dict]:
+        """Fetch precedential status, citation count, and blocked flag for a cluster."""
+        cluster = await self.get_cluster(cluster_id)
+        if not cluster:
+            return None
+        return {
+            "cluster_id": cluster_id,
+            "precedential_status": cluster.get("precedential_status"),
+            "citation_count": cluster.get("citation_count", 0),
+            "blocked": cluster.get("blocked", False),
+            "case_name": (
+                cluster.get("case_name")
+                or cluster.get("case_name_full")
+                or "Unknown"
+            ),
+        }
+
     async def get_opinion(
         self,
         opinion_id: Optional[str | int] = None,

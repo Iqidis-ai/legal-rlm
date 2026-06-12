@@ -447,6 +447,49 @@ async def _execute_fetch_url(ctx: ToolContext, **args: Any) -> ToolResult:
 
 
 
+async def _execute_get_cluster_validity(ctx: ToolContext, **args: Any) -> ToolResult:
+    """Fetch precedential status and citation count for a known cluster_id."""
+    cl: CourtListenerClient = ctx.external_search.courtlistener
+    cluster_id = args.get("cluster_id")
+    if not cluster_id:
+        return ToolResult(
+            tool="get_cluster_validity", args=args, ok=False, error="missing_cluster_id",
+            data={"validity": {}},
+            update_kind="validity_check",
+            update_data={"ok": False, "cluster_id": None},
+            log_line="get_cluster_validity -> missing cluster_id",
+        )
+    validity = await cl.get_cluster_validity(cluster_id)
+    if not validity:
+        return ToolResult(
+            tool="get_cluster_validity", args=args, ok=False, error="not_found",
+            data={"validity": {}},
+            update_kind="validity_check",
+            update_data={"ok": False, "cluster_id": cluster_id},
+            log_line=f"get_cluster_validity({cluster_id}) -> not found",
+        )
+    return ToolResult(
+        tool="get_cluster_validity",
+        args=args,
+        ok=True,
+        data={"validity": validity},
+        update_kind="validity_check",
+        update_data={
+            "ok": True,
+            "cluster_id": cluster_id,
+            "precedential_status": validity["precedential_status"],
+            "citation_count": validity["citation_count"],
+            "blocked": validity["blocked"],
+        },
+        log_line=(
+            f"get_cluster_validity({cluster_id}) -> "
+            f"status={validity['precedential_status']}, "
+            f"citations={validity['citation_count']}, "
+            f"blocked={validity['blocked']}"
+        ),
+    )
+
+
 # =============================================================================
 # Registry
 # =============================================================================
@@ -576,6 +619,27 @@ TOOL_SPECS: list[ToolSpec] = [
             "required": ["url"],
         },
         execute=_execute_fetch_url,
+    ),
+    ToolSpec(
+        name="get_cluster_validity",
+        description=(
+            "Check the precedential authority of a CourtListener case cluster. "
+            "Returns precedential_status (Published/Unpublished/etc.), citation_count, "
+            "and whether the opinion is blocked from display. "
+            "Use after get_opinion or find_citing_cases when you need to weight the "
+            "authority of a case before relying on it."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "cluster_id": {
+                    "type": "integer",
+                    "description": "CourtListener cluster_id (integer). Obtain from search_opinions or lookup_citations.",
+                },
+            },
+            "required": ["cluster_id"],
+        },
+        execute=_execute_get_cluster_validity,
     ),
 ]
 
