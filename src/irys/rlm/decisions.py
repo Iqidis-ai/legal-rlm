@@ -14,7 +14,7 @@ import time
 from datetime import date
 from typing import Optional, Any, TYPE_CHECKING
 
-from ..core.models import GeminiClient, ModelTier, SYSTEM_PROMPT_PRO
+from ..core.models import GeminiClient, ModelTier, SYSTEM_PROMPT_PRO, SYSTEM_PROMPT_FLASH_PLANNER
 from ..core.search import SearchHit, SearchResults
 from . import prompts
 
@@ -58,7 +58,10 @@ def parse_json_safe(text: str) -> Optional[dict]:
 
     # Try direct parse
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+        # Valid JSON but not a dict (e.g. bare int/string like "94") — fall through
     except json.JSONDecodeError:
         pass
 
@@ -68,7 +71,9 @@ def parse_json_safe(text: str) -> Optional[dict]:
         end = text.find("```", start)
         if end > start:
             try:
-                return json.loads(text[start:end].strip())
+                parsed = json.loads(text[start:end].strip())
+                if isinstance(parsed, dict):
+                    return parsed
             except json.JSONDecodeError:
                 pass
 
@@ -82,7 +87,9 @@ def parse_json_safe(text: str) -> Optional[dict]:
         end = text.find("```", start)
         if end > start:
             try:
-                return json.loads(text[start:end].strip())
+                parsed = json.loads(text[start:end].strip())
+                if isinstance(parsed, dict):
+                    return parsed
             except json.JSONDecodeError:
                 pass
 
@@ -91,7 +98,9 @@ def parse_json_safe(text: str) -> Optional[dict]:
     brace_end = text.rfind("}") + 1
     if brace_start >= 0 and brace_end > brace_start:
         try:
-            return json.loads(text[brace_start:brace_end])
+            parsed = json.loads(text[brace_start:brace_end])
+            if isinstance(parsed, dict):
+                return parsed
         except json.JSONDecodeError:
             pass
 
@@ -662,6 +671,9 @@ def filter_external_queries(queries: list[str]) -> list[str]:
     """Filter out template-style external search queries."""
     filtered = []
     for query in queries:
+        if not isinstance(query, str):
+            logger.warning(f"Skipping non-string element in external queries: {query!r}")
+            continue
         # Skip template-style queries with brackets
         if '[' in query or ']' in query:
             logger.warning(f"Filtering out template-style external query: {query}")
@@ -971,7 +983,8 @@ async def assess_and_plan(
 
     _log_llm_call("assess_and_plan", ModelTier.FLASH, prompt, start_time)
     response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step,
-                                     trace_ctx=trace_ctx, generation_name="assess_and_plan")
+                                     trace_ctx=trace_ctx, generation_name="assess_and_plan",
+                                     system_prompt=SYSTEM_PROMPT_FLASH_PLANNER)
     result = parse_json_safe(response)
 
     if result:
