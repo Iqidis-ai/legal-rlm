@@ -300,6 +300,8 @@ class RLMEngine:
         self._trace_ctx: Optional[TracingContext] = None  # Set during investigate()
         # Lead lifecycle tracking
         self._lead_start_times: dict[str, float] = {}
+        # Phase D: run-local decision log — NOT persisted to checkpoints
+        self._decision_log: list[dict] = []
 
     def _default_excerpt_limit(self) -> int:
         return (
@@ -1868,6 +1870,7 @@ class RLMEngine:
                 new_facts=new_dicts,
                 recent_window=window,
                 client=self.client,
+                decision_log=self._decision_log,
             )
             for c in contradictions:
                 state.add_contradiction(
@@ -2898,6 +2901,7 @@ class RLMEngine:
                 client=self.client,
                 active_step=t_step_rc,
                 trace_ctx=self._trace_ctx,
+                decision_log=self._decision_log,
             )
             if t_step_rc:
                 self._telemetry.end_step(t_step_rc)

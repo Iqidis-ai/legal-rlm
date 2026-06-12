@@ -25,6 +25,35 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# PHASE D — DECISION LOGGING HELPER
+# =============================================================================
+
+def _emit_decision_record(
+    decision_log: "list[dict] | None",
+    func_name: str,
+    tier: "ModelTier",
+    input_preview: str,
+    result: Any,
+    duration_ms: int,
+) -> None:
+    """Append a structured record to the run-local decision log.
+
+    The log lives on RLMEngine._decision_log (NOT in state.findings), so it
+    is never serialized to checkpoints and never inflates storage.
+    """
+    if decision_log is None:
+        return
+    decision_log.append({
+        "function": func_name,
+        "tier": tier.value,
+        "input_preview": str(input_preview)[:200],
+        "result_preview": str(result)[:200],
+        "duration_ms": duration_ms,
+        "timestamp_ms": int(time.time() * 1000),
+    })
+
+
 def _log_llm_call(func_name: str, tier: ModelTier, prompt_preview: str, start_time: float):
     """Log LLM call start."""
     logger.info(f"🤖 LLM_CALL: {func_name} [tier={tier.value}]")
@@ -1828,6 +1857,14 @@ async def detect_contradictions(
         return []
     duration = time.time() - start
     _log_llm_result(func_name, raw, duration)
+    _emit_decision_record(
+        decision_log=decision_log,
+        func_name=func_name,
+        tier=ModelTier.LITE,
+        input_preview=prompt[:200],
+        result=raw[:200] if raw else "[]",
+        duration_ms=int(duration * 1000),
+    )
 
     parsed = parse_json_safe(raw)
     if parsed is None:
@@ -1906,6 +1943,14 @@ async def critique_synthesis(
         return _SAFE_DEFAULT
     duration = time.time() - start
     _log_llm_result(func_name, raw, duration)
+    _emit_decision_record(
+        decision_log=decision_log,
+        func_name=func_name,
+        tier=ModelTier.FLASH,
+        input_preview=prompt[:200],
+        result=str(raw)[:200],
+        duration_ms=int(duration * 1000),
+    )
 
     parsed = parse_json_safe(raw)
     if not isinstance(parsed, dict):

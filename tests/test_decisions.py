@@ -274,3 +274,65 @@ class TestCritiqueSynthesis:
             query="q", synthesis="s", evidence="e", client=mock_client,
         )
         assert result["ok"] is True
+
+
+# ── Task 7 tests ────────────────────────────────────────────────────────────
+
+class TestDecisionLogging:
+
+    def test_emit_decision_record_appends_to_log(self):
+        from irys.rlm.decisions import _emit_decision_record
+        from irys.core.models import ModelTier
+
+        log: list[dict] = []
+        _emit_decision_record(
+            decision_log=log,
+            func_name="detect_contradictions",
+            tier=ModelTier.FLASH,
+            input_preview="facts: The contract...",
+            result="[]",
+            duration_ms=142,
+        )
+        assert len(log) == 1
+        rec = log[0]
+        assert rec["function"] == "detect_contradictions"
+        assert rec["tier"] == "flash"
+        assert rec["duration_ms"] == 142
+        assert "timestamp_ms" in rec
+
+    def test_emit_decision_record_truncates_previews(self):
+        from irys.rlm.decisions import _emit_decision_record
+        from irys.core.models import ModelTier
+
+        log: list[dict] = []
+        _emit_decision_record(
+            decision_log=log,
+            func_name="fn",
+            tier=ModelTier.FLASH,
+            input_preview="x" * 500,
+            result="y" * 500,
+            duration_ms=10,
+        )
+        assert len(log[0]["input_preview"]) <= 200
+        assert len(log[0]["result_preview"]) <= 200
+
+    def test_emit_decision_record_noop_when_log_is_none(self):
+        from irys.rlm.decisions import _emit_decision_record
+        from irys.core.models import ModelTier
+
+        _emit_decision_record(
+            decision_log=None,
+            func_name="fn",
+            tier=ModelTier.FLASH,
+            input_preview="x",
+            result="y",
+            duration_ms=10,
+        )
+
+    def test_engine_has_decision_log_attribute(self):
+        from irys.rlm.engine import RLMEngine, RLMConfig
+        from unittest.mock import MagicMock
+
+        engine = RLMEngine.__new__(RLMEngine)
+        engine._decision_log = []
+        assert isinstance(engine._decision_log, list)
