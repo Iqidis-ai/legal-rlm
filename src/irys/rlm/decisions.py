@@ -1775,3 +1775,70 @@ async def build_research_brief(
         "combined_framework": "",
         "summary": "",
     }
+
+
+# =============================================================================
+# PHASE B — CONTRADICTION DETECTION (LITE tier)
+# =============================================================================
+
+async def detect_contradictions(
+    new_facts: list[dict],
+    recent_window: list[dict],
+    client: "GeminiClient",
+    active_step: Any = None,
+    trace_ctx: Any = None,
+    decision_log: "list[dict] | None" = None,
+) -> list[dict]:
+    """LITE-tier: Detect contradictions between new facts and a rolling window.
+
+    Args:
+        new_facts: List of {"text": str, "source": str} dicts just extracted.
+        recent_window: Last K (<=15) structured facts from state.findings["structured_facts"].
+        client: GeminiClient instance.
+
+    Returns:
+        List of contradiction dicts. Returns [] on LLM error or if new_facts is empty.
+    """
+    if not new_facts:
+        return []
+
+    def _fmt(facts: list[dict]) -> str:
+        lines = []
+        for i, f in enumerate(facts, 1):
+            lines.append(f"{i}. [{f.get('source', 'unknown')}] {f.get('text', '')}")
+        return "\n".join(lines) if lines else "None"
+
+    prompt = prompts.P_DETECT_CONTRADICTIONS.format(
+        new_facts=_fmt(new_facts),
+        recent_window=_fmt(recent_window),
+    )
+
+    func_name = "detect_contradictions"
+    start = time.time()
+    _log_llm_call(func_name, ModelTier.LITE, prompt, start)
+    try:
+        raw = await client.complete(
+            prompt,
+            tier=ModelTier.LITE,
+            active_step=active_step,
+            trace_ctx=trace_ctx,
+        )
+    except Exception as exc:
+        logger.warning(f"detect_contradictions LLM call failed: {exc}")
+        return []
+    duration = time.time() - start
+    _log_llm_result(func_name, raw, duration)
+
+    parsed = parse_json_safe(raw)
+    if parsed is None:
+        try:
+            parsed = json.loads(raw) if raw else []
+        except Exception:
+            logger.warning(f"detect_contradictions: could not parse response: {raw!r:.200}")
+            return []
+
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, dict):
+        return [parsed]
+    return []

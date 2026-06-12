@@ -1833,6 +1833,40 @@ class RLMEngine:
             else:
                 self._merge_fact_provenance(records, record)
 
+    async def _maybe_detect_contradictions(
+        self,
+        state: InvestigationState,
+        new_fact_texts: list[str],
+        source_doc: str,
+    ) -> None:
+        """LITE call to detect contradictions in new facts vs rolling window.
+
+        Best-effort: swallows all exceptions so it never aborts an investigation.
+        """
+        if not new_fact_texts:
+            return
+        try:
+            structured = state.findings.get("structured_facts", [])
+            window = structured[-15:]
+            new_dicts = [{"text": t, "source": source_doc} for t in new_fact_texts]
+            contradictions = await decisions.detect_contradictions(
+                new_facts=new_dicts,
+                recent_window=window,
+                client=self.client,
+            )
+            for c in contradictions:
+                state.add_contradiction(
+                    statement1=c.get("statement1", ""),
+                    source1=c.get("source1", source_doc),
+                    statement2=c.get("statement2", ""),
+                    source2=c.get("source2", "unknown"),
+                    contradiction_type=c.get("contradiction_type", "factual"),
+                    severity=c.get("severity", "medium"),
+                    notes=c.get("notes", ""),
+                )
+        except Exception as exc:
+            logger.warning(f"_maybe_detect_contradictions swallowed error: {exc}")
+
     @staticmethod
     def _fact_key(fact: str) -> str:
         return " ".join((fact or "").lower().split())
@@ -2415,6 +2449,7 @@ class RLMEngine:
             origin="search_snippet",
             lead_id=lead_id,
         )
+        await self._maybe_detect_contradictions(state, facts, source_doc=f"search snippets for query '{results.query}'")
 
         # Emit rankings
         ranked_docs = analysis.get("ranked_documents", [])
@@ -2632,6 +2667,7 @@ class RLMEngine:
                 scope=scope,
                 lead_id=lead_id,
             )
+            await self._maybe_detect_contradictions(state, facts, source_doc=doc.filename)
             if not lead_id and facts:
                 self._emit_step(state, StepType.FINDING, f"Extracted {len(facts)} facts from {doc.filename}")
 

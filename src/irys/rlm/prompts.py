@@ -975,3 +975,32 @@ Synthesize the research:
     "combined_framework": "How case law + regulations together inform this situation",
     "summary": "Unified external legal context"
 }}"""
+
+
+# =============================================================================
+# CONTRADICTION DETECTION PROMPT (LITE tier)
+# =============================================================================
+
+P_DETECT_CONTRADICTIONS = """You are a legal fact-checker. Identify factual contradictions between new facts and the existing fact window.
+
+A contradiction exists when two statements cannot both be true about the same subject at the same time.
+DO NOT flag:
+- Specificity differences (a general rule vs. a specific carveout)
+- Information from different time periods that may both be valid
+- Opinions vs. facts
+
+New facts just extracted:
+{new_facts}
+
+Existing fact window (up to 15 recent facts):
+{recent_window}
+
+Reply with a JSON array. Each object must have exactly these keys:
+  statement1, source1, statement2, source2, contradiction_type, severity, notes
+
+contradiction_type: "factual" | "temporal" | "numeric"
+severity: "high" | "medium" | "low"
+
+If there are no contradictions, reply with: []
+
+Reply ONLY with the JSON array. No preamble."""

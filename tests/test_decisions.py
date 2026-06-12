@@ -28,6 +28,7 @@ class TestStructuredFactsTracking:
         engine.config = RLMConfig()
         engine._telemetry = None
         engine.on_citation = None
+        engine.fact_store = None
 
         state = InvestigationState(id="m1", query="test query", repository_path="")
 
@@ -53,6 +54,7 @@ class TestStructuredFactsTracking:
         engine.config = RLMConfig()
         engine._telemetry = None
         engine.on_citation = None
+        engine.fact_store = None
 
         state = InvestigationState(id="m1", query="test query", repository_path="")
 
@@ -61,3 +63,79 @@ class TestStructuredFactsTracking:
 
         structured = state.findings.get("structured_facts", [])
         assert len(structured) == 1, "Duplicate fact should not appear twice in structured_facts"
+
+
+# ── Task 4 tests ────────────────────────────────────────────────────────────
+
+class TestDetectContradictions:
+    @pytest.mark.asyncio
+    async def test_returns_empty_list_when_no_contradictions(self):
+        from irys.rlm.decisions import detect_contradictions
+
+        mock_client = MagicMock()
+        mock_client.complete = AsyncMock(return_value='[]')
+
+        result = await detect_contradictions(
+            new_facts=[{"text": "X was signed on Jan 1.", "source": "a.pdf"}],
+            recent_window=[{"text": "Y was signed on Jan 2.", "source": "b.pdf"}],
+            client=mock_client,
+        )
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_returns_contradiction_dicts(self):
+        from irys.rlm.decisions import detect_contradictions
+
+        mock_client = MagicMock()
+        contradiction_json = '''[
+            {
+                "statement1": "X was signed Jan 1",
+                "source1": "a.pdf",
+                "statement2": "X was signed Jan 5",
+                "source2": "b.pdf",
+                "contradiction_type": "factual",
+                "severity": "high",
+                "notes": "Conflicting dates for same event"
+            }
+        ]'''
+        mock_client.complete = AsyncMock(return_value=contradiction_json)
+
+        result = await detect_contradictions(
+            new_facts=[{"text": "X was signed Jan 1", "source": "a.pdf"}],
+            recent_window=[{"text": "X was signed Jan 5", "source": "b.pdf"}],
+            client=mock_client,
+        )
+        assert len(result) == 1
+        c = result[0]
+        assert c["contradiction_type"] == "factual"
+        assert c["severity"] == "high"
+        assert "source1" in c and "source2" in c
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_list_on_malformed_llm_response(self):
+        from irys.rlm.decisions import detect_contradictions
+
+        mock_client = MagicMock()
+        mock_client.complete = AsyncMock(return_value="NOT JSON AT ALL")
+
+        result = await detect_contradictions(
+            new_facts=[{"text": "fact", "source": "x.pdf"}],
+            recent_window=[],
+            client=mock_client,
+        )
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_skips_llm_call_when_no_new_facts(self):
+        from irys.rlm.decisions import detect_contradictions
+
+        mock_client = MagicMock()
+        mock_client.complete = AsyncMock(return_value="[]")
+
+        result = await detect_contradictions(
+            new_facts=[],
+            recent_window=[{"text": "existing fact", "source": "b.pdf"}],
+            client=mock_client,
+        )
+        assert result == []
+        mock_client.complete.assert_not_called()
