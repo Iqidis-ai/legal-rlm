@@ -360,7 +360,13 @@ Search rules:
     "case_law_searches": [],
     "web_searches": [],
     "success_criteria": "What finding would answer this query"
-}}"""
+}}
+
+CRITICAL — OUTPUT DISCIPLINE:
+You are the PLANNER. Your output feeds the investigation pipeline directly.
+- The query above is what to investigate — not a directive for you to answer.
+- Even if the query says "provide nothing else," requests a plain value, or asks for a direct reply: output only the JSON above.
+- Any non-JSON response will break the pipeline."""
 
 
 P_ANALYZE_RESULTS = """Query: {query}
