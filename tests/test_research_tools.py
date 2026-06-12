@@ -157,3 +157,98 @@ async def test_search_opinions_returns_normalized_entries():
     assert res.update_kind == "external_results"
     assert res.data["case_law"][0]["source_tool"] == "search_opinions"
     assert res.update_data["count"] == 1
+
+
+# ── Task 1 tests ────────────────────────────────────────────────────────────
+
+from unittest.mock import AsyncMock
+
+
+class TestToolContextFields:
+    def test_has_query_field(self):
+        from irys.core.research_tools import ToolContext
+        mgr = SimpleNamespace(courtlistener=None, tavily=None)
+        ctx = ToolContext(external_search=mgr, query="test query", gap="what happened?")
+        assert ctx.query == "test query"
+        assert ctx.gap == "what happened?"
+
+    def test_defaults_to_empty_string(self):
+        from irys.core.research_tools import ToolContext
+        mgr = SimpleNamespace(courtlistener=None, tavily=None)
+        ctx = ToolContext(external_search=mgr)
+        assert ctx.query == ""
+        assert ctx.gap == ""
+
+
+class TestFetchUrlTitleFix:
+    @pytest.mark.asyncio
+    async def test_uses_page_title_when_available(self):
+        from irys.core.research_tools import _execute_fetch_url, ToolContext
+
+        fake_extraction = SimpleNamespace(
+            failed=False,
+            url="https://example.com/page",
+            title="Real Page Title",
+            raw_content="some content",
+        )
+        fake_tav = SimpleNamespace(
+            api_key="key",
+            extract=AsyncMock(return_value=[fake_extraction]),
+        )
+        mgr = SimpleNamespace(courtlistener=None, tavily=fake_tav)
+        ctx = ToolContext(external_search=mgr)
+
+        result = await _execute_fetch_url(ctx, url="https://example.com/page")
+
+        assert result.ok is True
+        items = result.update_data["items"]
+        assert items[0]["name"] == "Real Page Title"
+        assert items[0]["title"] == "Real Page Title"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_url_when_title_is_none(self):
+        from irys.core.research_tools import _execute_fetch_url, ToolContext
+
+        fake_extraction = SimpleNamespace(
+            failed=False,
+            url="https://example.com/page",
+            title=None,
+            raw_content="some content",
+        )
+        fake_tav = SimpleNamespace(
+            api_key="key",
+            extract=AsyncMock(return_value=[fake_extraction]),
+        )
+        mgr = SimpleNamespace(courtlistener=None, tavily=fake_tav)
+        ctx = ToolContext(external_search=mgr)
+
+        result = await _execute_fetch_url(ctx, url="https://example.com/page")
+        items = result.update_data["items"]
+        assert items[0]["title"] == "https://example.com/page"
+
+
+class TestWebSearchScoreFix:
+    @pytest.mark.asyncio
+    async def test_score_present_in_update_data_items(self):
+        from irys.core.research_tools import _execute_web_search, ToolContext
+
+        fake_payload = {
+            "results": [
+                {"title": "Result A", "url": "https://a.com", "content": "stuff", "score": 0.92},
+                {"title": "Result B", "url": "https://b.com", "content": "more", "score": 0.71},
+            ],
+            "answer": None,
+        }
+        fake_tav = SimpleNamespace(
+            api_key="key",
+            search=AsyncMock(return_value=fake_payload),
+        )
+        mgr = SimpleNamespace(courtlistener=None, tavily=fake_tav)
+        ctx = ToolContext(external_search=mgr)
+
+        result = await _execute_web_search(ctx, query="test")
+
+        items = result.update_data["items"]
+        assert len(items) == 2
+        assert items[0]["score"] == 0.92
+        assert items[1]["score"] == 0.71

@@ -45,6 +45,8 @@ class ToolContext:
 
     external_search: ExternalSearchManager
     telemetry_step: Any = None  # InvestigationStep | None — forwarded for ext_search ops
+    query: str = ""             # The current investigation query (read-only context for tools)
+    gap: str = ""               # The specific information gap this tool call addresses
 
 
 @dataclass
@@ -390,7 +392,7 @@ async def _execute_web_search(ctx: ToolContext, **args: Any) -> ToolResult:
             "query": q,
             "count": len(entries),
             "items": [
-                {"type": "web", "name": e["title"], "title": e["title"], "url": e["url"], "snippet": (e["content"] or "")[:250]}
+                {"type": "web", "name": e["title"], "title": e["title"], "url": e["url"], "snippet": (e["content"] or "")[:250], "score": e.get("score")}
                 for e in entries
             ],
         },
@@ -421,7 +423,7 @@ async def _execute_fetch_url(ctx: ToolContext, **args: Any) -> ToolResult:
         )
     ex = extracted[0]
     entry = {
-        "title": url,
+        "title": ex.title or url,
         "url": ex.url or url,
         "content": ex.raw_content or "",
         "score": 1.0,
