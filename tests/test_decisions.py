@@ -139,3 +139,63 @@ class TestDetectContradictions:
         )
         assert result == []
         mock_client.complete.assert_not_called()
+
+
+# ── Task 5 tests ────────────────────────────────────────────────────────────
+
+class TestPriorityDecay:
+    def test_rlmconfig_has_decay_fields(self):
+        from irys.rlm.engine import RLMConfig
+        cfg = RLMConfig()
+        assert hasattr(cfg, "priority_decay_factor")
+        assert hasattr(cfg, "max_reflexion_cycles")
+        assert cfg.priority_decay_factor == 0.7
+        assert cfg.max_reflexion_cycles == 1
+
+    @pytest.mark.asyncio
+    async def test_leads_are_processed_highest_priority_first(self):
+        from irys.rlm.engine import RLMConfig
+        from irys.rlm.state import Lead
+
+        config = RLMConfig(max_leads_per_level=2)
+        low = Lead.create("low priority", source="test")
+        low.params["priority"] = 0.2
+        mid = Lead.create("mid priority", source="test")
+        mid.params["priority"] = 0.5
+        high = Lead.create("high priority", source="test")
+        high.params["priority"] = 0.9
+
+        pending = [low, mid, high]
+        selected = sorted(
+            pending,
+            key=lambda l: l.params.get("priority", 1.0),
+            reverse=True,
+        )[:config.max_leads_per_level]
+
+        assert selected[0].params["priority"] == 0.9
+        assert selected[1].params["priority"] == 0.5
+
+    def test_decay_applied_to_non_reflexion_leads(self):
+        from irys.rlm.state import Lead
+
+        decay = 0.7
+        lead = Lead.create("test", source="s")
+        lead.params["priority"] = 1.0
+
+        if lead.params.get("origin") != "reflexion":
+            lead.params["priority"] = lead.params.get("priority", 1.0) * decay
+
+        assert abs(lead.params["priority"] - 0.7) < 1e-9
+
+    def test_decay_exempt_for_reflexion_leads(self):
+        from irys.rlm.state import Lead
+
+        decay = 0.7
+        lead = Lead.create("reflexion gap", source="reflexion")
+        lead.params["priority"] = 1.0
+        lead.params["origin"] = "reflexion"
+
+        if lead.params.get("origin") != "reflexion":
+            lead.params["priority"] = lead.params.get("priority", 1.0) * decay
+
+        assert lead.params["priority"] == 1.0

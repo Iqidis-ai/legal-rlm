@@ -88,6 +88,9 @@ class RLMConfig:
     max_research_turns: int = 4           # Hard cap on decide_next_action calls
     max_research_actions_per_turn: int = 6  # Soft cap on parallel tool calls per turn
     research_tool_timeout_s: float = 45.0
+    # Phase C: Reflexion and priority decay
+    max_reflexion_cycles: int = 1        # Max times to re-critique synthesis
+    priority_decay_factor: float = 0.7   # Multiply lead priority by this after each batch
     research_turn_timeout_s: float = 90.0
     # S3 settings (all optional; local disk used if not set)
     s3_bucket: Optional[str] = None
@@ -1545,8 +1548,13 @@ class RLMEngine:
                 await self._emit_step_async(state, StepType.THINKING, "No more leads to investigate")
                 break
 
-            # Take leads to process
-            leads_to_process = pending_leads[:self.config.max_leads_per_level]
+            # Sort by priority (descending) so highest-value leads are processed first.
+            # Leads without an explicit priority default to 1.0 (top of queue).
+            leads_to_process = sorted(
+                pending_leads,
+                key=lambda l: l.params.get("priority", 1.0),
+                reverse=True,
+            )[:self.config.max_leads_per_level]
 
             lead_lines = [f"  - {l.description} (source: {l.source})" for l in leads_to_process]
             remaining = len(pending_leads) - len(leads_to_process)
@@ -1572,6 +1580,13 @@ class RLMEngine:
                 # Reset counter to allow more attempts - don't abort investigation
                 cache.consecutive_read_failures = 0
                 state.findings["had_read_failures"] = True
+
+            # Phase C: deterministic priority decay — reflexion leads are exempt.
+            for lead in leads_to_process:
+                if lead.params.get("origin") != "reflexion":
+                    lead.params["priority"] = (
+                        lead.params.get("priority", 1.0) * self.config.priority_decay_factor
+                    )
 
             iteration += 1
             facts_count = len(state.findings.get("accumulated_facts", []))
