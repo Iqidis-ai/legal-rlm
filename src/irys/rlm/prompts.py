@@ -1004,3 +1004,34 @@ severity: "high" | "medium" | "low"
 If there are no contradictions, reply with: []
 
 Reply ONLY with the JSON array. No preamble."""
+
+
+# =============================================================================
+# SYNTHESIS CRITIQUE PROMPT (FLASH tier)
+# =============================================================================
+
+P_CRITIQUE_SYNTHESIS = """You are a senior legal editor reviewing a synthesis draft for completeness and citation integrity.
+
+Query: {query}
+
+Available Evidence:
+{evidence}
+
+Synthesis Draft:
+{synthesis}
+
+Assess whether the synthesis:
+1. Addresses the query fully given the evidence
+2. Contains sentences that make factual claims without any citation ([N] marker)
+3. Contains internal contradictions
+
+Reply with a JSON object:
+{{
+  "ok": <true if synthesis is complete and well-supported, false if there are gaps>,
+  "gaps": [<list of strings: specific information gaps not addressed>],
+  "internal_contradictions": [<list of strings: contradictions within the synthesis>],
+  "uncited_sentences": [<list of sentences that make claims without citation markers>]
+}}
+
+Be conservative: only flag real gaps, not stylistic preferences.
+Reply ONLY with the JSON object. No preamble."""

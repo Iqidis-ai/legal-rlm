@@ -199,3 +199,78 @@ class TestPriorityDecay:
             lead.params["priority"] = lead.params.get("priority", 1.0) * decay
 
         assert lead.params["priority"] == 1.0
+
+
+# ── Task 6 tests ────────────────────────────────────────────────────────────
+
+class TestPureHelpers:
+    def test_count_citation_refs_finds_bracketed_numbers(self):
+        from irys.rlm.decisions import _count_citation_refs
+        text = "The contract [1] was signed. The party [2] agreed. See also [1] again."
+        assert _count_citation_refs(text) == 2
+
+    def test_count_citation_refs_empty_text(self):
+        from irys.rlm.decisions import _count_citation_refs
+        assert _count_citation_refs("") == 0
+
+    def test_count_uncited_sentences_counts_uncited(self):
+        from irys.rlm.decisions import _count_uncited_sentences
+        text = "This is cited [1]. This is not cited. Another without citation."
+        assert _count_uncited_sentences(text) == 2
+
+    def test_count_uncited_sentences_all_cited(self):
+        from irys.rlm.decisions import _count_uncited_sentences
+        text = "First sentence [1]. Second sentence [2]."
+        assert _count_uncited_sentences(text) == 0
+
+
+class TestCritiqueSynthesis:
+    @pytest.mark.asyncio
+    async def test_returns_ok_true_when_no_gaps(self):
+        from irys.rlm.decisions import critique_synthesis
+
+        mock_client = MagicMock()
+        mock_client.complete = AsyncMock(return_value='{"ok": true, "gaps": [], "internal_contradictions": [], "uncited_sentences": []}')
+
+        result = await critique_synthesis(
+            query="What damages were claimed?",
+            synthesis="The plaintiff claimed $500k in damages [1].",
+            evidence="Document 1: plaintiff claimed $500k",
+            client=mock_client,
+        )
+        assert result["ok"] is True
+        assert result["gaps"] == []
+
+    @pytest.mark.asyncio
+    async def test_returns_gaps_when_found(self):
+        from irys.rlm.decisions import critique_synthesis
+
+        mock_client = MagicMock()
+        mock_client.complete = AsyncMock(return_value='''{
+            "ok": false,
+            "gaps": ["Missing: defendant response to damages claim"],
+            "internal_contradictions": [],
+            "uncited_sentences": ["The defendant denied all claims."]
+        }''')
+
+        result = await critique_synthesis(
+            query="What damages were claimed?",
+            synthesis="The defendant denied all claims.",
+            evidence="evidence...",
+            client=mock_client,
+        )
+        assert result["ok"] is False
+        assert len(result["gaps"]) == 1
+        assert "defendant response" in result["gaps"][0]
+
+    @pytest.mark.asyncio
+    async def test_returns_ok_true_on_malformed_response(self):
+        from irys.rlm.decisions import critique_synthesis
+
+        mock_client = MagicMock()
+        mock_client.complete = AsyncMock(return_value="GARBAGE RESPONSE")
+
+        result = await critique_synthesis(
+            query="q", synthesis="s", evidence="e", client=mock_client,
+        )
+        assert result["ok"] is True

@@ -2884,7 +2884,81 @@ class RLMEngine:
         if t_step_syn:
             self._telemetry.end_step(t_step_syn)
 
-        state.findings["final_output"] = response
+        # ── Phase C: Reflexion self-critique with keep-best guard ──────────────
+        draft = response
+        draft_citation_count = decisions._count_citation_refs(draft)
+        draft_uncited_count = decisions._count_uncited_sentences(draft)
+
+        for _cycle in range(self.config.max_reflexion_cycles):
+            t_step_rc = self._telemetry.begin_step("reflexion_critique", "synthesis") if self._telemetry else None
+            critique = await decisions.critique_synthesis(
+                query=state.query,
+                synthesis=draft,
+                evidence=evidence,
+                client=self.client,
+                active_step=t_step_rc,
+                trace_ctx=self._trace_ctx,
+            )
+            if t_step_rc:
+                self._telemetry.end_step(t_step_rc)
+
+            if critique.get("ok"):
+                logger.info(f"Reflexion cycle {_cycle + 1}: synthesis passes critique")
+                break
+
+            gaps = critique.get("gaps") or []
+            await self._emit_step_async(
+                state, StepType.THINKING,
+                f"Reflexion cycle {_cycle + 1}: {len(gaps)} gap(s) found",
+                details={"gaps": gaps[:5]},
+            )
+
+            for gap_text in gaps[:3]:
+                gap_lead = Lead.create(description=f"Reflexion gap: {gap_text}", source="reflexion")
+                gap_lead.params["origin"] = "reflexion"
+                gap_lead.params["priority"] = 1.0
+                gap_lead.lead_type = "search"
+                state.leads.append(gap_lead)
+
+            if not gaps:
+                break
+
+            t_step_rev = self._telemetry.begin_step("reflexion_revise", "synthesis") if self._telemetry else None
+            revised = await decisions.synthesize(
+                query=state.query,
+                evidence=evidence,
+                external_research=f"=== CASE LAW (CourtListener) ===\n{case_law_text}\n\n=== REGULATIONS/STANDARDS (Web) ===\n{web_text}",
+                pinned_content=pinned_content,
+                client=self.client,
+                tier=synthesis_tier,
+                context=self._context,
+                active_step=t_step_rev,
+                trace_ctx=self._trace_ctx,
+            )
+            if t_step_rev:
+                self._telemetry.end_step(t_step_rev)
+
+            revised_citation_count = decisions._count_citation_refs(revised)
+            revised_uncited_count = decisions._count_uncited_sentences(revised)
+            if (revised_citation_count >= draft_citation_count and
+                    revised_uncited_count <= draft_uncited_count):
+                logger.info(
+                    f"Reflexion cycle {_cycle + 1}: revision accepted "
+                    f"(citations {draft_citation_count}→{revised_citation_count}, "
+                    f"uncited {draft_uncited_count}→{revised_uncited_count})"
+                )
+                draft = revised
+                draft_citation_count = revised_citation_count
+                draft_uncited_count = revised_uncited_count
+            else:
+                logger.info(
+                    f"Reflexion cycle {_cycle + 1}: revision rejected by keep-best guard "
+                    f"(citations {draft_citation_count}→{revised_citation_count}, "
+                    f"uncited {draft_uncited_count}→{revised_uncited_count})"
+                )
+        # ── End reflexion ──────────────────────────────────────────────────────
+
+        state.findings["final_output"] = draft
 
         output_len = len(response)
         total_citations = len(state.citations)

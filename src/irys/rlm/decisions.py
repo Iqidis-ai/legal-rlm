@@ -1842,3 +1842,79 @@ async def detect_contradictions(
     if isinstance(parsed, dict):
         return [parsed]
     return []
+
+
+# =============================================================================
+# PHASE C — SYNTHESIS CRITIQUE HELPERS + FUNCTION (FLASH tier)
+# =============================================================================
+
+import re as _re
+
+
+def _count_citation_refs(text: str) -> int:
+    """Count distinct [N] citation references in text."""
+    return len(set(_re.findall(r'\[(\d+)\]', text)))
+
+
+def _count_uncited_sentences(text: str) -> int:
+    """Count sentences that contain no [N] citation marker."""
+    sentences = [s.strip() for s in _re.split(r'[.!?]+', text) if len(s.strip()) > 10]
+    cited_pattern = _re.compile(r'\[\d+\]')
+    return sum(1 for s in sentences if not cited_pattern.search(s))
+
+
+async def critique_synthesis(
+    query: str,
+    synthesis: str,
+    evidence: str,
+    client: "GeminiClient",
+    active_step: Any = None,
+    trace_ctx: Any = None,
+    decision_log: "list[dict] | None" = None,
+) -> dict:
+    """FLASH-tier: Critique a synthesis draft and identify gaps.
+
+    Returns:
+        {ok: bool, gaps: list[str], internal_contradictions: list[str], uncited_sentences: list[str]}
+        Returns {ok: True, gaps: [], ...} on LLM error (fail-open so synthesis is kept).
+    """
+    _SAFE_DEFAULT = {
+        "ok": True,
+        "gaps": [],
+        "internal_contradictions": [],
+        "uncited_sentences": [],
+    }
+
+    prompt = prompts.P_CRITIQUE_SYNTHESIS.format(
+        query=query,
+        evidence=evidence[:12000],
+        synthesis=synthesis[:8000],
+    )
+
+    func_name = "critique_synthesis"
+    start = time.time()
+    _log_llm_call(func_name, ModelTier.FLASH, prompt, start)
+    try:
+        raw = await client.complete(
+            prompt,
+            tier=ModelTier.FLASH,
+            active_step=active_step,
+            trace_ctx=trace_ctx,
+        )
+    except Exception as exc:
+        logger.warning(f"critique_synthesis LLM call failed: {exc}")
+        return _SAFE_DEFAULT
+    duration = time.time() - start
+    _log_llm_result(func_name, raw, duration)
+
+    parsed = parse_json_safe(raw)
+    if not isinstance(parsed, dict):
+        logger.warning("critique_synthesis: unexpected response type — defaulting to ok=True")
+        return _SAFE_DEFAULT
+
+    return {
+        "ok": _coerce_bool(parsed.get("ok", True)),
+        "gaps": parsed.get("gaps") or [],
+        "internal_contradictions": parsed.get("internal_contradictions") or [],
+        "uncited_sentences": parsed.get("uncited_sentences") or [],
+    }
