@@ -2920,16 +2920,6 @@ class RLMEngine:
                 details={"gaps": gaps[:5]},
             )
 
-            for gap_text in gaps[:3]:
-                gap_lead = Lead.create(description=f"Reflexion gap: {gap_text}", source="reflexion")
-                gap_lead.params["origin"] = "reflexion"
-                gap_lead.params["priority"] = 1.0
-                gap_lead.lead_type = "search"
-                state.leads.append(gap_lead)
-
-            if not gaps:
-                break
-
             t_step_rev = self._telemetry.begin_step("reflexion_revise", "synthesis") if self._telemetry else None
             revised = await decisions.synthesize(
                 query=state.query,
