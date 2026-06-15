@@ -317,14 +317,14 @@ class ModelConfig:
 # CRITICAL: temperature=0 for agentic consistency (no variance)
 MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
     ModelTier.LITE: ModelConfig(
-        model_id="gemini-2.5-flash-lite",
+        model_id="gemini-3.1-flash-lite",
         thinking_level="",
         temperature=0.0,  # Deterministic for consistency
         max_output_tokens=16384,  # Don't be stingy
-        cost_per_1m_input=0.10,
-        cost_per_1m_output=0.40,
-        cost_per_1m_cached_input=0.025,  # 25% of input
-        fallback_model_id="gemini-3.1-flash-lite-preview",  # Fallback when 2.5-flash-lite is unavailable/503
+        cost_per_1m_input=0.25,
+        cost_per_1m_output=1.50,
+        cost_per_1m_cached_input=0.0625,  # 25% of input
+        fallback_model_id="gemini-2.5-flash-lite",  # Fallback when 3.1-flash-lite is unavailable/503
     ),
     ModelTier.FLASH: ModelConfig(
         model_id="gemini-3-flash-preview",  # Primary model
