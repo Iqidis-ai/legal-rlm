@@ -10,6 +10,7 @@ Each function takes a GeminiClient and returns structured data.
 
 import json
 import logging
+import re as _re
 import time
 from datetime import date
 from typing import Optional, Any, TYPE_CHECKING
@@ -1884,8 +1885,6 @@ async def detect_contradictions(
 # =============================================================================
 # PHASE C — SYNTHESIS CRITIQUE HELPERS + FUNCTION (FLASH tier)
 # =============================================================================
-
-import re as _re
 
 
 def _count_citation_refs(text: str) -> int:
