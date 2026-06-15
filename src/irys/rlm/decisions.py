@@ -1903,7 +1903,14 @@ def _count_citation_refs(text: str) -> int:
 
 def _count_uncited_sentences(text: str) -> int:
     """Count sentences that contain no [N] citation marker."""
-    sentences = [s.strip() for s in _re.split(r'[.!?]+', text) if len(s.strip()) > 10]
+    # Temporarily replace periods in common legal abbreviations to avoid false splits
+    _ABBREV_RE = _re.compile(
+        r'\b(U\.S\.C|U\.S|S\.Ct|F\.\d+d|No|vs|v|Art|Sec|et\s+al|Id|Ibid|supra|infra)\.'
+        r'(?=\s)',
+        _re.IGNORECASE,
+    )
+    normalized = _ABBREV_RE.sub(lambda m: m.group(0).replace('.', '\x00'), text)
+    sentences = [s.strip().replace('\x00', '.') for s in _re.split(r'[.!?]+', normalized) if len(s.strip()) > 10]
     cited_pattern = _re.compile(r'\[\d+\]')
     return sum(1 for s in sentences if not cited_pattern.search(s))
 

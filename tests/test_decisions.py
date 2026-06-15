@@ -215,6 +215,23 @@ class TestPureHelpers:
         text = "First sentence [1]. Second sentence [2]."
         assert _count_uncited_sentences(text) == 0
 
+    def test_count_uncited_sentences_handles_legal_abbreviations(self):
+        from irys.rlm.decisions import _count_uncited_sentences
+        # U.S.C. should not create false sentence split
+        text = "Pursuant to U.S.C. 1983, plaintiff filed suit. The court held for defendant [1]."
+        # Should count only the first sentence (U.S.C. is not split), not multiple
+        assert _count_uncited_sentences(text) == 1
+
+        # Multiple abbreviations: U.S.C., v., No., S.Ct.
+        text2 = "Under U.S.C. section 1983. Smith v. Jones [1] is the controlling case. See No. 456 here [2]."
+        # Should be 1 uncited (first sentence about U.S.C.), 2 cited
+        assert _count_uncited_sentences(text2) == 1
+
+        # et al., Id., supra, infra
+        text3 = "See Jones et al. standards [1]. Under supra rule [1]. The Id. reference. Following infra."
+        # Should count only "The Id. reference" and "Following infra" as uncited
+        assert _count_uncited_sentences(text3) == 2
+
 
 class TestCritiqueSynthesis:
     @pytest.mark.asyncio
