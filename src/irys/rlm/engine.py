@@ -1584,11 +1584,7 @@ class RLMEngine:
                 state.findings["had_read_failures"] = True
 
             # Phase C: deterministic priority decay — reflexion leads are exempt.
-            for lead in leads_to_process:
-                if lead.params.get("origin") != "reflexion":
-                    lead.params["priority"] = (
-                        lead.params.get("priority", 1.0) * self.config.priority_decay_factor
-                    )
+            self._apply_priority_decay(leads_to_process, self.config.priority_decay_factor)
 
             iteration += 1
             facts_count = len(state.findings.get("accumulated_facts", []))
@@ -1885,6 +1881,13 @@ class RLMEngine:
                 )
         except Exception as exc:
             logger.warning(f"_maybe_detect_contradictions swallowed error: {exc}")
+
+    @staticmethod
+    def _apply_priority_decay(leads: list, decay_factor: float) -> None:
+        """Multiply priority of non-reflexion leads by decay_factor in-place."""
+        for lead in leads:
+            if lead.params.get("origin") != "reflexion":
+                lead.params["priority"] = lead.params.get("priority", 1.0) * decay_factor
 
     @staticmethod
     def _fact_key(fact: str) -> str:

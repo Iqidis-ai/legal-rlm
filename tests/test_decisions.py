@@ -176,28 +176,20 @@ class TestPriorityDecay:
         assert selected[1].params["priority"] == 0.5
 
     def test_decay_applied_to_non_reflexion_leads(self):
+        from irys.rlm.engine import RLMEngine
         from irys.rlm.state import Lead
-
-        decay = 0.7
         lead = Lead.create("test", source="s")
         lead.params["priority"] = 1.0
-
-        if lead.params.get("origin") != "reflexion":
-            lead.params["priority"] = lead.params.get("priority", 1.0) * decay
-
+        RLMEngine._apply_priority_decay([lead], 0.7)
         assert abs(lead.params["priority"] - 0.7) < 1e-9
 
     def test_decay_exempt_for_reflexion_leads(self):
+        from irys.rlm.engine import RLMEngine
         from irys.rlm.state import Lead
-
-        decay = 0.7
         lead = Lead.create("reflexion gap", source="reflexion")
         lead.params["priority"] = 1.0
         lead.params["origin"] = "reflexion"
-
-        if lead.params.get("origin") != "reflexion":
-            lead.params["priority"] = lead.params.get("priority", 1.0) * decay
-
+        RLMEngine._apply_priority_decay([lead], 0.7)
         assert lead.params["priority"] == 1.0
 
 
