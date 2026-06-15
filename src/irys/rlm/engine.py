@@ -1855,6 +1855,7 @@ class RLMEngine:
         state: InvestigationState,
         new_fact_texts: list[str],
         source_doc: str,
+        pre_window: list[dict] | None = None,
     ) -> None:
         """LITE call to detect contradictions in new facts vs rolling window.
 
@@ -1863,7 +1864,7 @@ class RLMEngine:
         if not new_fact_texts:
             return
         try:
-            structured = state.findings.get("structured_facts", [])
+            structured = pre_window if pre_window is not None else state.findings.get("structured_facts", [])
             window = structured[-15:]
             new_dicts = [{"text": t, "source": source_doc} for t in new_fact_texts]
             contradictions = await decisions.detect_contradictions(
@@ -2460,6 +2461,7 @@ class RLMEngine:
 
         # Store facts and emit per-fact updates
         facts = analysis.get("facts", [])
+        _pre_window = list(state.findings.get("structured_facts", []))
         await self._add_current_facts(
             state,
             facts,
@@ -2467,7 +2469,7 @@ class RLMEngine:
             origin="search_snippet",
             lead_id=lead_id,
         )
-        await self._maybe_detect_contradictions(state, facts, source_doc=f"search snippets for query '{results.query}'")
+        await self._maybe_detect_contradictions(state, facts, source_doc=f"search snippets for query '{results.query}'", pre_window=_pre_window)
 
         # Emit rankings
         ranked_docs = analysis.get("ranked_documents", [])
@@ -2677,6 +2679,7 @@ class RLMEngine:
 
             # Store facts and emit per-fact updates
             facts = extraction.get("facts", [])
+            _pre_window = list(state.findings.get("structured_facts", []))
             await self._add_current_facts(
                 state,
                 facts,
@@ -2685,7 +2688,7 @@ class RLMEngine:
                 scope=scope,
                 lead_id=lead_id,
             )
-            await self._maybe_detect_contradictions(state, facts, source_doc=doc.filename)
+            await self._maybe_detect_contradictions(state, facts, source_doc=doc.filename, pre_window=_pre_window)
             if not lead_id and facts:
                 self._emit_step(state, StepType.FINDING, f"Extracted {len(facts)} facts from {doc.filename}")
 
