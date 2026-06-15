@@ -2889,6 +2889,7 @@ class RLMEngine:
             context=self._context,
             active_step=t_step_syn,
             trace_ctx=self._trace_ctx,
+            decision_log=self._decision_log,
         )
         if t_step_syn:
             self._telemetry.end_step(t_step_syn)
@@ -2934,6 +2935,7 @@ class RLMEngine:
                 context=self._context,
                 active_step=t_step_rev,
                 trace_ctx=self._trace_ctx,
+                decision_log=self._decision_log,
             )
             if t_step_rev:
                 self._telemetry.end_step(t_step_rev)

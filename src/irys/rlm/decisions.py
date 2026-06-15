@@ -1161,6 +1161,7 @@ async def synthesize(
     context: Optional[Any] = None,
     active_step: Optional["InvestigationStep"] = None,
     trace_ctx: Optional["TracingContext"] = None,
+    decision_log: "list[dict] | None" = None,
 ) -> str:
     """Synthesize final answer.
 
@@ -1210,6 +1211,14 @@ async def synthesize(
 
     logger.info(f"✨ Synthesis complete: {len(response)} chars")
     _log_llm_result("synthesize", f"{len(response)} char response", time.time() - start_time)
+    _emit_decision_record(
+        decision_log=decision_log,
+        func_name="synthesize",
+        tier=tier,
+        input_preview=prompt[:200],
+        result=response[:200] if response else "",
+        duration_ms=int((time.time() - start_time) * 1000),
+    )
     return response
 
 
