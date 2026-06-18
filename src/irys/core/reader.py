@@ -19,6 +19,9 @@ import re
 import email
 from email import policy
 from html.parser import HTMLParser
+import csv
+import io
+import openpyxl
 
 import fitz  # PyMuPDF
 import httpx
@@ -156,7 +159,7 @@ class DocumentReader:
     Convert to .docx or .pdf before processing.
     """
 
-    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".md", ".mht", ".mhtml", ".png", ".jpg", ".jpeg"}
+    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".md", ".mht", ".mhtml", ".png", ".jpg", ".jpeg",".csv", ".xlsx"}
 
     @staticmethod
     def _detect_type_from_magic(path: Path) -> str:
@@ -226,6 +229,10 @@ class DocumentReader:
             return self._read_md(path)
         elif suffix in {".mht", ".mhtml"}:
             return self._read_mht(path)
+        elif suffix == ".csv":
+            return self._read_csv(path)
+        elif suffix == ".xlsx":
+            return self._read_xlsx(path)
         elif suffix in {".png", ".jpg", ".jpeg"}:
             raise ValueError(
                 f"Image files must be read via read_async(): {path.name}. "
@@ -408,6 +415,106 @@ class DocumentReader:
             page_count=1,
             pages=pages,
             total_chars=len(text),
+        )
+        
+    def _read_csv(self, path: Path) -> DocumentContent:
+        """Extract rows from CSV files, formatting rows into structured text for LLM attention."""
+
+
+        try:
+            # Read bytes safely and substitute anomalies using replace
+            raw_bytes = path.read_bytes()
+            text_data = raw_bytes.decode('utf-8', errors='replace')
+            text_stream = io.StringIO(text_data)
+            reader = csv.reader(text_stream)
+            
+            headers = next(reader, None)
+            if headers:
+                headers = [h.strip() for h in headers if h.strip()]
+                output = [f"CSV Structure Layout: Contains columns [{', '.join(headers)}]\n"]
+                
+                for idx, row in enumerate(reader, start=1):
+                    # Combine row positions into key-value strings for semantic retrieval
+                    row_str = ", ".join(f"{hdr}: {val.strip()}" for hdr, val in zip(headers, row) if val.strip())
+                    if row_str:
+                        output.append(f"Row {idx}: {row_str}")
+                
+                text = "\n".join(output)
+            else:
+                text = "Empty CSV document."
+        except Exception as e:
+            logger.error("Failed parsing CSV resource %s: %s", path.name, e)
+            text = f"Error extracting structural data rows from CSV matrix: {e}"
+
+        # Clean spaces and unify structural layouts using existing pipeline filters
+        text = self._clean_text(text)
+        pages = [PageContent(page_num=1, text=text)]
+
+        return DocumentContent(
+            path=str(path),
+            filename=path.name,
+            file_type="csv",  # Passes metadata context down to all engine leads
+            page_count=1,
+            pages=pages,
+            total_chars=len(text),
+        )
+        
+    def _read_xlsx(self, path: Path) -> DocumentContent:
+        """Extract rows from Excel workbook sheets (.xlsx), mapping cells explicitly to headers."""
+        
+
+        try:
+            # data_only=True ensures we extract calculated string/numeric values, not raw formulas
+            wb = openpyxl.load_workbook(path, data_only=True)
+            output = []
+
+            for sheet in wb.worksheets:
+                output.append(f"--- EXCEL WORKSHEET: {sheet.title} ---")
+                rows = list(sheet.iter_rows(values_only=True))
+                
+                # Filter out empty spreadsheets
+                if not rows or all(all(cell is None for cell in r) for r in rows):
+                    output.append("Empty sheet content.")
+                    continue
+
+                # Isolate the first row that actually contains data to establish headers
+                headers = None
+                header_row_index = 0
+                for idx, r in enumerate(rows):
+                    if any(cell is not None for cell in r):
+                        headers = [str(cell).strip() for cell in r if cell is not None]
+                        header_row_index = idx
+                        break
+
+                if not headers:
+                    headers = [f"Column_{i}" for i in range(len(rows[0]))]
+
+                output.append(f"Columns defined: [{', '.join(headers)}]")
+                
+                virtual_row_idx = 1
+                for r in rows[header_row_index + 1:]:
+                    row_parts = []
+                    for hdr, cell in zip(headers, r):
+                        if cell is not None and str(cell).strip():
+                            row_parts.append(f"{hdr}: {str(cell).strip()}")
+                    
+                    if row_parts:
+                        output.append(f"Row {virtual_row_idx}: {', '.join(row_parts)}")
+                        virtual_row_idx += 1
+                
+                output.append("\n") # Section break between different sheets
+                
+            text = "\n".join(output)
+        except Exception as e:
+            logger.error("Failed parsing XLSX file %s: %s", path.name, e)
+            text = f"Error extracting tabular data from Excel workbook: {e}"
+
+        text = self._clean_text(text)
+        pages = [PageContent(page_num=1, text=text)]
+
+        return DocumentContent(
+            path=str(path), filename=path.name, file_type="xlsx",
+            page_count=1, pages=pages, total_chars=len(text),
         )
 
     def _read_md(self, path: Path) -> DocumentContent:
