@@ -15,8 +15,6 @@ import asyncio
 import logging
 import re
 import time
-import csv
-import io
 
 from ..core.models import GeminiClient, ModelTier
 from ..core.repository import MatterRepository
@@ -52,41 +50,6 @@ def _fmt_list(items: list, max_items: int = 10, max_len: int = 200) -> str:
         display.append(s[:max_len] if len(s) > max_len else s)
     suffix = f"... (+{len(items) - max_items} more)" if len(items) > max_items else ""
     return ", ".join(display) + suffix
-
-
-
-class CSVDocumentWrapper:
-    """Duck-typed wrapper to cleanly parse and pass CSV documents into the RLM engine."""
-    def __init__(self, file_path: str, content_bytes: bytes):
-        self.path = file_path
-        self.filename = Path(file_path).name
-        self.type = "csv"
-        self.mime = "text/csv"
-        self.page_count = 1
-        
-        try:
-            text_data = content_bytes.decode('utf-8', errors='ignore')
-            text_stream = io.StringIO(text_data)
-            reader = csv.reader(text_stream)
-            headers = next(reader, None)
-            
-            if headers:
-                output = [f"CSV Document Layout: Columns are {', '.join(headers)}\n"]
-                for idx, row in enumerate(reader, start=1):
-                    # Combine headers and row values into structured strings for clear LLM attention
-                    row_str = ", ".join(f"{h}: {v}" for h, v in zip(headers, row) if v.strip())
-                    output.append(f"Row {idx}: {row_str}")
-                self.full_text = "\n".join(output)
-            else:
-                self.full_text = "Empty CSV document."
-        except Exception as e:
-            self.full_text = f"Error extracting rows from CSV: {e}"
-
-    def get_excerpt(self, max_chars: int) -> str:
-        return self.full_text[:max_chars]
-
-    def get_page_range(self, start: int, end: int) -> str:
-        return self.full_text
 
 
 @dataclass
@@ -1937,9 +1900,6 @@ class RLMEngine:
             "char_end": scope.char_end,
             "target": scope.target,
             "reason": scope.reason,
-            # --- MODULAR EXTENSION FOR METADATA RETENTION ---
-            "type": getattr(doc, "type", "document"),
-            "mime": getattr(doc, "mime", "application/pdf"),
         }
         scopes.append({k: v for k, v in item.items() if v not in (None, "")})
 
@@ -2592,110 +2552,161 @@ class RLMEngine:
         lead_id: Optional[str] = None,
         scope: Optional[ReadScope] = None,
     ) -> bool:
-        """Read and extract facts from a document (including CSV data)."""
+        """Read and extract facts from a document.
+
+        Returns:
+            True if document was read successfully, False otherwise.
+        """
         scope = scope or ReadScope(filepath=file_path)
         scope_key = scope.cache_key(self._default_excerpt_limit())
 
+        # OPTIMIZATION: Skip if already extracted for this exact scope
         if cache.has_extracted(file_path, scope_key):
             logger.debug(f"Skipping already extracted: {file_path}")
-            return True 
+            return True  # Already extracted = success
 
         filename = Path(file_path).name
 
+        # Emit reading update
         if lead_id:
             await self._emit_lead_update(state, lead_id, "reading", {"doc": filename})
         else:
             await self._emit_step_async(state, StepType.READING, f"Reading: {filename}")
 
         try:
-            # --- MODULAR INTERCEPTION FOR CSV SUPPORT ---
-            if file_path.lower().endswith('.csv'):
-                def _read_csv_raw():
-                    with open(file_path, "rb") as f:
-                        return f.read()
-                content_bytes = await asyncio.to_thread(_read_csv_raw)
-                doc = CSVDocumentWrapper(file_path, content_bytes)
-                ocr_meta = None
-            else:
-                doc, ocr_meta = await repo.read_async(file_path)
-            
+            doc, ocr_meta = await repo.read_async(file_path)
             state.documents_read += 1
             cache.mark_extracted(file_path, scope_key=scope_key, whole_doc=not scope.is_targeted)
-            cache.record_read_success()
+            cache.record_read_success()  # Reset consecutive failure counter
 
+            # Attach OCR telemetry if Mistral was called for this file
             if ocr_meta is not None and self._telemetry:
                 t_step_ocr = self._telemetry.begin_step("document_read_ocr", "investigation_loop")
                 t_step_ocr.add_operation(StepOperation(
-                    type="ocr", latency_ms=ocr_meta.latency_ms, service="mistral-ocr",
-                    file_name=ocr_meta.file_name, file_type=ocr_meta.file_type,
-                    page_count=ocr_meta.page_count, timed_out=ocr_meta.timed_out, cost_usd=0.0,
+                    type="ocr",
+                    latency_ms=ocr_meta.latency_ms,
+                    service="mistral-ocr",
+                    file_name=ocr_meta.file_name,
+                    file_type=ocr_meta.file_type,
+                    page_count=ocr_meta.page_count,
+                    timed_out=ocr_meta.timed_out,
+                    cost_usd=0.0,
                 ))
                 self._telemetry.end_step(t_step_ocr)
 
             content, effective_limit = self._content_for_scope(doc, scope)
             self._record_read_scope(state, doc, scope, len(content))
+
+            # Track page-range coverage for subsumption-based dedup
             self._mark_range_from_read(cache, scope, content, doc)
 
+            # Dynamic extraction limit (matching excerpt)
             extraction_limit = effective_limit
             scope_context = f"Read scope: {scope.label()}" if scope.label() != "prefix" else "Read scope: prefix"
 
+            # Use decisions layer to extract facts
             t_step_ef = self._telemetry.begin_step("extract_facts", "investigation_loop") if self._telemetry else None
             extraction = await decisions.extract_facts(
-                query=state.query, filename=doc.filename, content=content, client=self.client,
-                max_content_chars=extraction_limit, scope_context=scope_context,
-                active_step=t_step_ef, trace_ctx=self._trace_ctx,
+                query=state.query,
+                filename=doc.filename,
+                content=content,
+                client=self.client,
+                max_content_chars=extraction_limit,
+                scope_context=scope_context,
+                active_step=t_step_ef,
+                trace_ctx=self._trace_ctx,
             )
             if t_step_ef:
                 self._telemetry.end_step(t_step_ef)
 
+            # Store facts and emit per-fact updates
             facts = extraction.get("facts", [])
             await self._add_current_facts(
-                state, facts, source_doc=doc.filename,
+                state,
+                facts,
+                source_doc=doc.filename,
                 origin="targeted_read" if scope.is_targeted else "prefix_read",
-                scope=scope, lead_id=lead_id,
+                scope=scope,
+                lead_id=lead_id,
             )
             if not lead_id and facts:
                 self._emit_step(state, StepType.FINDING, f"Extracted {len(facts)} facts from {doc.filename}")
 
+            # Save facts to persistent store for future queries
             if self.fact_store:
                 new_facts = self.fact_store.add_facts_from_extraction(
-                    extraction=extraction, source_filename=doc.filename, query_context=state.query,
+                    extraction=extraction,
+                    source_filename=doc.filename,
+                    query_context=state.query,
+                )
+                self._emit_step(
+                    state, StepType.THINKING,
+                    f"Added {new_facts} facts from {doc.filename} (store total: {len(self.fact_store)})",
+                    visible=False,
                 )
 
+            # Accumulate external research triggers
             triggers = extraction.get("external_triggers", {})
             if triggers:
                 added = state.add_triggers(triggers)
+                if added > 0:
+                    trigger_list = []
+                    for category, items in triggers.items():
+                        if isinstance(items, list) and items:
+                            for item in items:
+                                trigger_list.append(f"{category}: {item}")
+                    if lead_id:
+                        await self._emit_lead_update(state, lead_id, "triggers", {
+                            "count": added, "triggers": trigger_list,
+                        })
 
+            # Emit insights from the extraction
             insights = extraction.get("insights", "")
             gaps = extraction.get("gaps", "")
             next_steps_text = extraction.get("next_steps", "")
             self._record_extraction_gap(state, doc, scope, gaps, next_steps_text)
+            if lead_id and (insights or gaps):
+                await self._emit_lead_update(state, lead_id, "insight", {
+                    "learned": insights or None,
+                    "gaps": gaps or None,
+                    "next_steps": next_steps_text or None,
+                })
+            elif insights or gaps:
+                insight_msg = f"From {doc.filename}:"
+                if insights:
+                    insight_msg += f" LEARNED: {insights}"
+                if gaps:
+                    insight_msg += f" GAPS: {gaps}"
+                self._emit_step(state, StepType.THINKING, insight_msg)
 
+            # Add citations from quotes (limit to 2)
             quotes = extraction.get("quotes", [])[:2]
             for quote in quotes:
                 if isinstance(quote, dict) and "text" in quote:
                     page = quote.get("page")
                     relevance = quote.get("relevance", "Direct quote")
-                    doc_url = repo.get_document_url(doc.filename) if hasattr(repo, 'get_document_url') else None
-                    
-                    # Ensure CSV mime gets picked up appropriately for citations
-                    doc_mime = repo.get_document_mime(doc.filename) if hasattr(repo, 'get_document_mime') else getattr(doc, "mime", None)
-                    if not doc_mime and hasattr(doc, "mime"):
-                        doc_mime = doc.mime
-
+                    doc_url = repo.get_
+                    _url(doc.filename) if hasattr(repo, 'get_document_url') else None
+                    doc_mime = repo.get_document_mime(doc.filename) if hasattr(repo, 'get_document_mime') else None
                     citation = state.add_citation(
-                        document=doc.path, page=page, text=quote["text"], context="",
-                        relevance=relevance, url=doc_url, mime=doc_mime,
+                        document=doc.path,
+                        page=page,
+                        text=quote["text"],
+                        context="",
+                        relevance=relevance,
+                        url=doc_url,
+                        mime=doc_mime,
                     )
                     if citation and self.on_citation:
                         self.on_citation(citation)
 
-            return True
+            # Skip adding reference leads - reduces iteration depth
+            return True  # Success
 
         except Exception as e:
             self._emit_step(state, StepType.ERROR, f"Failed to read {file_path}: {e}")
             cache.record_read_failure()
-            return False
+            return False  # Failure
 
     async def _synthesize(self, state: InvestigationState, is_simple: bool = False):
         """Phase 3: Final synthesis using ALL sources.
