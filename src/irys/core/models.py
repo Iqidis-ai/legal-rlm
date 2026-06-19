@@ -348,7 +348,7 @@ MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
         fallback_model_id="gemini-2.5-flash",  # Fallback when 503/overloaded
     ),
     ModelTier.PRO: ModelConfig(
-        model_id="gemini-3.1-pro-preview",
+        model_id="gemini-3.5-flash",
         thinking_level="",
         temperature=0.0,  # Deterministic for consistency
         max_output_tokens=65536,  # Maximum output for thorough synthesis
