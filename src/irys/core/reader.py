@@ -433,12 +433,17 @@ class DocumentReader:
                 headers = [h.strip() for h in headers if h.strip()]
                 output = [f"CSV Structure Layout: Contains columns [{', '.join(headers)}]\n"]
                 
-                for idx, row in enumerate(reader, start=1):
+                max_rows = 2000
+                all_rows = list(reader)
+                total_rows = len(all_rows)
+                for idx, row in enumerate(all_rows[:max_rows], start=1):
                     # Combine row positions into key-value strings for semantic retrieval
                     row_str = ", ".join(f"{hdr}: {val.strip()}" for hdr, val in zip(headers, row) if val.strip())
                     if row_str:
                         output.append(f"Row {idx}: {row_str}")
-                
+                if total_rows > max_rows:
+                    output.append(f"[Truncated: {total_rows} rows total, showing first {max_rows}]")
+
                 text = "\n".join(output)
             else:
                 text = "Empty CSV document."
@@ -482,7 +487,7 @@ class DocumentReader:
                 header_row_index = 0
                 for idx, r in enumerate(rows):
                     if any(cell is not None for cell in r):
-                        headers = [str(cell).strip() for cell in r if cell is not None]
+                        headers = [str(cell).strip() if cell is not None else f"Column_{i}" for i, cell in enumerate(r)]
                         header_row_index = idx
                         break
 
@@ -490,19 +495,24 @@ class DocumentReader:
                     headers = [f"Column_{i}" for i in range(len(rows[0]))]
 
                 output.append(f"Columns defined: [{', '.join(headers)}]")
-                
+
+                max_rows = 2000
+                data_rows = rows[header_row_index + 1:]
+                total_rows = len(data_rows)
                 virtual_row_idx = 1
-                for r in rows[header_row_index + 1:]:
+                for r in data_rows[:max_rows]:
                     row_parts = []
                     for hdr, cell in zip(headers, r):
                         if cell is not None and str(cell).strip():
                             row_parts.append(f"{hdr}: {str(cell).strip()}")
-                    
+
                     if row_parts:
                         output.append(f"Row {virtual_row_idx}: {', '.join(row_parts)}")
                         virtual_row_idx += 1
-                
-                output.append("\n") # Section break between different sheets
+                if total_rows > max_rows:
+                    output.append(f"[Truncated: {total_rows} rows total, showing first {max_rows}]")
+
+                output.append("") # Section break between different sheets
                 
             text = "\n".join(output)
         except Exception as e:
