@@ -93,7 +93,7 @@ class MatterRepository:
     .rtf format is NOT supported — convert to .docx or .pdf.
     """
 
-    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".md", ".mht", ".mhtml", ".png", ".jpg", ".jpeg"}
+    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".md", ".mht", ".mhtml", ".png", ".jpg", ".jpeg", ".csv", ".xlsx"}
     # Extensions that require async read (OCR path) — sync read() will raise for these
     _ASYNC_ONLY_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 
