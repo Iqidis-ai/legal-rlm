@@ -30,13 +30,24 @@ logger = logging.getLogger(__name__)
 CONTENT_TYPE_TO_EXT = {
     "application/pdf": ".pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
     "application/msword": ".doc",
     "text/plain": ".txt",
+    "text/csv": ".csv",
+    "application/csv": ".csv",
     "application/rtf": ".rtf",
     "text/rtf": ".rtf",
     "image/png": ".png",
     "image/jpeg": ".jpg",
     "image/jpg": ".jpg",
+}
+
+# Extensions trusted as-is when present on the provided filename. If a file
+# already carries one of these, we keep it rather than re-detecting from the
+# (often generic) S3 Content-Type or ambiguous ZIP magic bytes.
+_KNOWN_EXTENSIONS = {
+    ".pdf", ".docx", ".doc", ".txt", ".md", ".rtf",
+    ".png", ".jpg", ".jpeg", ".csv", ".xlsx", ".mht", ".mhtml",
 }
 
 # Magic bytes for file type detection (fallback when content-type is missing/generic)
@@ -145,7 +156,7 @@ class S3Repository:
         Returns:
             List of S3 keys (relative to prefix)
         """
-        extensions = extensions or [".txt", ".pdf", ".docx", ".md", ".png", ".jpg", ".jpeg"]
+        extensions = extensions or [".txt", ".pdf", ".docx", ".md", ".png", ".jpg", ".jpeg", ".csv", ".xlsx"]
 
         def _is_hash_filename(name: str) -> bool:
             """Check if filename looks like a content hash (hex string, no extension)."""
@@ -581,7 +592,7 @@ class S3Repository:
 
             # Determine file extension
             ext = current_ext
-            if not ext or ext not in {".pdf", ".docx", ".doc", ".txt", ".md", ".rtf", ".png", ".jpg", ".jpeg"}:
+            if not ext or ext not in _KNOWN_EXTENSIONS:
                 # Try to detect from Content-Type
                 content_type = head.get("ContentType")
                 ext = detect_extension_from_content_type(content_type)
@@ -692,7 +703,7 @@ class S3Repository:
 
                 # Determine file extension (prefer provided metadata)
                 ext = current_ext
-                if not ext or ext not in {".pdf", ".docx", ".doc", ".txt", ".md", ".rtf", ".png", ".jpg", ".jpeg"}:
+                if not ext or ext not in _KNOWN_EXTENSIONS:
                     ext = detect_extension_from_content_type(content_type)
                     logger.debug(f"Content-Type '{content_type}' -> extension '{ext}'")
 
