@@ -2685,8 +2685,7 @@ class RLMEngine:
                 if isinstance(quote, dict) and "text" in quote:
                     page = quote.get("page")
                     relevance = quote.get("relevance", "Direct quote")
-                    doc_url = repo.get_
-                    _url(doc.filename) if hasattr(repo, 'get_document_url') else None
+                    doc_url = repo.get_document_url(doc.filename) if hasattr(repo, 'get_document_url') else None
                     doc_mime = repo.get_document_mime(doc.filename) if hasattr(repo, 'get_document_mime') else None
                     citation = state.add_citation(
                         document=doc.path,
