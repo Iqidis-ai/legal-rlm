@@ -18,6 +18,7 @@ import time
 
 from ..core.models import GeminiClient, ModelTier
 from ..core.repository import MatterRepository
+from ..core.reader import summarize_tabular_metadata
 from ..core.search import SearchResults
 from ..core.external_search import ExternalSearchManager
 from ..core.fact_store import FactStore
@@ -427,6 +428,7 @@ class RLMEngine:
             meta.append(f"{file_info['page_count']} pages")
         if file_info.get("extracted_chars") is not None:
             meta.append(f"{file_info['extracted_chars']:,} chars")
+        meta.extend(summarize_tabular_metadata(file_info.get("structure")))
         return f"  - {file_info['filename']} ({', '.join(meta)})"
 
     async def _emit_lead_started(self, state: InvestigationState, lead: Lead):
