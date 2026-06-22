@@ -36,13 +36,9 @@ class TestTimeoutErrorMessage:
     @pytest.mark.asyncio
     async def test_overall_timeout_raises_descriptive_error(self, client):
         """overall_timeout firing must raise TimeoutError with a non-empty message."""
-        async def _raise_timeout(coro, *, timeout):
-            coro.close()  # cleanly close the coroutine to suppress RuntimeWarning
-            raise asyncio.TimeoutError()
-
         with (
             patch.object(client._rate_limiter, "acquire", new_callable=AsyncMock),
-            patch.object(_asyncio_mod, "wait_for", side_effect=_raise_timeout),
+            patch.object(_asyncio_mod, "wait_for", side_effect=asyncio.TimeoutError()),
         ):
             with pytest.raises(TimeoutError) as exc_info:
                 await client.complete(
@@ -61,13 +57,9 @@ class TestTimeoutErrorMessage:
         """Tiers without secondary models must not crash and must omit that label."""
         # LITE has fallback_model_id but no secondary_fallback_model_id — distinct
         # code path from PRO which has all three.
-        async def _raise_timeout(coro, *, timeout):
-            coro.close()  # cleanly close the coroutine to suppress RuntimeWarning
-            raise asyncio.TimeoutError()
-
         with (
             patch.object(client._rate_limiter, "acquire", new_callable=AsyncMock),
-            patch.object(_asyncio_mod, "wait_for", side_effect=_raise_timeout),
+            patch.object(_asyncio_mod, "wait_for", side_effect=asyncio.TimeoutError()),
         ):
             with pytest.raises(TimeoutError) as exc_info:
                 await client.complete(
@@ -90,7 +82,7 @@ class TestTimeoutErrorMessage:
 
         with (
             patch.object(client._rate_limiter, "acquire", new_callable=AsyncMock),
-            patch.object(client, "_call_with_fallback", new=AsyncMock(return_value=mock_response)),
+            patch.object(client, "_call_with_fallback", return_value=mock_response),
         ):
             result = await client.complete(
                 "test prompt",
