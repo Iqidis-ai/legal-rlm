@@ -32,7 +32,8 @@ class TestDocumentReader:
         assert reader.can_read(Path("test.pdf"))
         assert reader.can_read(Path("test.docx"))
         assert reader.can_read(Path("test.txt"))
-        assert not reader.can_read(Path("test.xlsx"))
+        assert reader.can_read(Path("test.xlsx"))
+        assert reader.can_read(Path("test.csv"))
         assert reader.can_read(Path("test.jpg"))  # supported via async OCR
 
 

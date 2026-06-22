@@ -93,7 +93,7 @@ class MatterRepository:
     .rtf format is NOT supported — convert to .docx or .pdf.
     """
 
-    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".md", ".mht", ".mhtml", ".png", ".jpg", ".jpeg"}
+    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".md", ".mht", ".mhtml", ".png", ".jpg", ".jpeg", ".csv", ".xlsx"}
     # Extensions that require async read (OCR path) — sync read() will raise for these
     _ASYNC_ONLY_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 
@@ -491,6 +491,7 @@ class MatterRepository:
         - size_kb: Size in KB (rounded)
         - page_count: Extracted page count, when already available
         - extracted_chars: Extracted character count, when already available
+        - structure: Tabular metadata (rows/columns/sheets) for CSV/XLSX, when available
         """
         files = []
         for file_info in self.list_files():
@@ -502,6 +503,7 @@ class MatterRepository:
                 "size_kb": round(file_info.size_bytes / 1024),
                 "page_count": doc.page_count if doc else None,
                 "extracted_chars": doc.total_chars if doc else None,
+                "structure": doc.metadata if doc else None,
             })
         return files
 
