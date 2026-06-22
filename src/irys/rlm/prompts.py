@@ -261,6 +261,7 @@ Read-scope rules:
 - "filepath" is required for object form and must match a repository filename/path.
 - page_start/page_end and char_start/char_end are optional; use them only when known.
 - Do NOT invent page or character ranges. If the relevant location is unknown, search first.
+- For CSV/XLSX, each page is a 100-row chunk (XLSX pages also note their sheet); use page_start/page_end to target row bands.
 - "target" is a focus label for extraction/debugging; the read tool will NOT secretly search for it.
 
 search_terms may contain either:
@@ -331,6 +332,7 @@ Read-scope rules:
 - page_start/page_end and char_start/char_end are optional; use them only when known.
 - Do NOT invent page or character ranges. If the relevant location is unknown, search first.
 - If cached facts identify an exact page/section, you may request that scoped read.
+- For CSV/XLSX, each page is a 100-row chunk (XLSX pages also note their sheet); use page_start/page_end to target row bands.
 - "target" is a focus label for extraction/debugging; the read tool will NOT secretly search for it.
 
 search_terms may contain either:

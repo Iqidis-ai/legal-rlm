@@ -19,6 +19,9 @@ import re
 import email
 from email import policy
 from html.parser import HTMLParser
+import csv
+import io
+import openpyxl
 
 import fitz  # PyMuPDF
 import httpx
@@ -35,6 +38,13 @@ _OCR_TIMEOUT_SECONDS = 60  # configurable default
 # Files larger than this are skipped for OCR to avoid 413 Payload Too Large.
 # Base64 encoding adds ~33% overhead, so 35 MB raw → ~47 MB payload.
 _MISTRAL_MAX_FILE_BYTES = 35 * 1024 * 1024  # 35 MB
+
+# Spreadsheet (CSV/XLSX) pagination — mirror the page-based read model used for
+# PDFs so the engine can issue targeted page_start/page_end reads against rows.
+_SPREADSHEET_ROWS_PER_PAGE = 100
+# Hard ceiling on total extracted characters for a single spreadsheet, bounding
+# memory/tokens the same way other readers feed bounded content downstream.
+_SPREADSHEET_MAX_CHARS = 1_000_000
 
 # MIME types for image extensions
 _IMAGE_MIME: dict[str, str] = {
@@ -105,6 +115,9 @@ class DocumentContent:
     page_count: int
     pages: list[PageContent]
     total_chars: int
+    # Structural metadata for tabular sources (CSV/XLSX): row/column/sheet
+    # counts surfaced to the planner. None for non-tabular documents.
+    metadata: Optional[dict] = None
 
     @property
     def full_text(self) -> str:
@@ -129,7 +142,60 @@ class DocumentContent:
         text = self.full_text
         if len(text) <= max_chars:
             return text
+        # Tabular sources (CSV/XLSX): truncate on whole-page (row-band) boundaries
+        # and report rows shown vs total so the agent knows to page for more rows.
+        if self.metadata and self.metadata.get("kind") in ("csv", "xlsx"):
+            return self._tabular_excerpt(max_chars)
         return text[:max_chars] + f"\n\n[...truncated, {self.total_chars - max_chars} more chars...]"
+
+    def _tabular_excerpt(self, max_chars: int) -> str:
+        """Excerpt CSV/XLSX content on page boundaries with a row-coverage notice."""
+        row_re = re.compile(r"\[Rows (\d+)-(\d+)\]")
+        parts: list[str] = []
+        used = 0
+        pages_shown = 0
+        rows_shown = 0
+        for page in self.pages:
+            block = f"\n--- PAGE {page.page_num} ---\n{page.text}"
+            if pages_shown > 0 and used + len(block) > max_chars:
+                break
+            parts.append(block)
+            used += len(block)
+            pages_shown += 1
+            m = row_re.search(page.text)
+            if m:
+                rows_shown += int(m.group(2)) - int(m.group(1)) + 1
+        total_rows = (self.metadata or {}).get("row_count", 0)
+        remaining_pages = max(0, len(self.pages) - pages_shown)
+        notice = (
+            f"\n\n[...truncated: showing {rows_shown} of {total_rows} rows "
+            f"({remaining_pages} more page(s) not shown). "
+            f"Use page_start/page_end to read further row bands...]"
+        )
+        return "".join(parts) + notice
+
+
+def summarize_tabular_metadata(metadata: Optional[dict]) -> list[str]:
+    """Short human-readable fragments describing CSV/XLSX structure.
+
+    Returns an empty list for missing/non-tabular metadata. Lives here so the
+    shape of the dict produced by ``_read_csv``/``_read_xlsx`` stays in one place.
+    """
+    if not metadata:
+        return []
+    parts: list[str] = []
+    if metadata.get("kind") == "xlsx":
+        parts.append(f"{metadata.get('sheet_count', 0)} sheets")
+        parts.append(f"{metadata.get('row_count', 0):,} rows")
+        sheet_names = [s.get("name") for s in metadata.get("sheets", []) if s.get("name")]
+        if sheet_names:
+            parts.append(f"sheets: {', '.join(sheet_names[:5])}")
+    elif metadata.get("kind") == "csv":
+        parts.append(f"{metadata.get('row_count', 0):,} rows")
+        columns = metadata.get("columns") or []
+        if columns:
+            parts.append(f"cols: {', '.join(columns[:8])}")
+    return parts
 
 
 @dataclass
@@ -156,7 +222,7 @@ class DocumentReader:
     Convert to .docx or .pdf before processing.
     """
 
-    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".md", ".mht", ".mhtml", ".png", ".jpg", ".jpeg"}
+    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".md", ".mht", ".mhtml", ".png", ".jpg", ".jpeg",".csv", ".xlsx"}
 
     @staticmethod
     def _detect_type_from_magic(path: Path) -> str:
@@ -226,6 +292,10 @@ class DocumentReader:
             return self._read_md(path)
         elif suffix in {".mht", ".mhtml"}:
             return self._read_mht(path)
+        elif suffix == ".csv":
+            return self._read_csv(path)
+        elif suffix == ".xlsx":
+            return self._read_xlsx(path)
         elif suffix in {".png", ".jpg", ".jpeg"}:
             raise ValueError(
                 f"Image files must be read via read_async(): {path.name}. "
@@ -408,6 +478,204 @@ class DocumentReader:
             page_count=1,
             pages=pages,
             total_chars=len(text),
+        )
+        
+    def _rows_to_pages(
+        self,
+        row_strings: list[str],
+        header_line: str,
+        start_page_num: int,
+        char_budget: int,
+    ) -> tuple[list[PageContent], int, bool, int]:
+        """Chunk formatted row strings into 100-row PageContent pages.
+
+        Each page repeats ``header_line`` so it is self-contained, and is
+        bounded by the remaining ``char_budget`` (the spreadsheet hard cap).
+
+        Returns ``(pages, chars_used, truncated, next_page_num)``.
+        """
+        pages: list[PageContent] = []
+        chars_used = 0
+        truncated = False
+        page_num = start_page_num
+
+        # Each row must occupy exactly one physical line so grep-style search can
+        # anchor a match to its "Row N" line/page; cell values may contain embedded
+        # newlines, so collapse all internal whitespace to single spaces.
+        def _one_line(s: str) -> str:
+            return re.sub(r"\s+", " ", s).strip()
+
+        header_line = _one_line(header_line)
+
+        for offset in range(0, len(row_strings), _SPREADSHEET_ROWS_PER_PAGE):
+            chunk = row_strings[offset:offset + _SPREADSHEET_ROWS_PER_PAGE]
+            row_lo = offset + 1
+            row_hi = offset + len(chunk)
+            body = [header_line, f"[Rows {row_lo}-{row_hi}]"]
+            body.extend(f"Row {row_lo + i}: {_one_line(row)}" for i, row in enumerate(chunk))
+            page_text = self._clean_text("\n".join(body))
+
+            if chars_used + len(page_text) > char_budget:
+                remaining = char_budget - chars_used
+                if remaining > 0:
+                    page_text = page_text[:remaining] + "\n[...truncated: spreadsheet exceeds hard char limit...]"
+                    pages.append(PageContent(page_num=page_num, text=page_text))
+                    chars_used += len(page_text)
+                    page_num += 1
+                truncated = True
+                break
+
+            pages.append(PageContent(page_num=page_num, text=page_text))
+            chars_used += len(page_text)
+            page_num += 1
+
+        return pages, chars_used, truncated, page_num
+
+    def _read_csv(self, path: Path) -> DocumentContent:
+        """Extract CSV rows into 100-row pages so the engine can target row ranges."""
+        pages: list[PageContent] = []
+        metadata: dict = {}
+
+        try:
+            raw_bytes = path.read_bytes()
+            text_data = raw_bytes.decode('utf-8', errors='replace')
+            reader = csv.reader(io.StringIO(text_data))
+
+            headers = next(reader, None)
+            if headers:
+                headers = [h.strip() for h in headers if h.strip()]
+                header_line = f"CSV columns [{', '.join(headers)}]"
+
+                row_strings: list[str] = []
+                for row in reader:
+                    row_str = ", ".join(
+                        f"{hdr}: {val.strip()}"
+                        for hdr, val in zip(headers, row)
+                        if val.strip()
+                    )
+                    if row_str:
+                        row_strings.append(row_str)
+
+                pages, _chars, truncated, _next = self._rows_to_pages(
+                    row_strings, header_line, 1, _SPREADSHEET_MAX_CHARS
+                )
+                metadata = {
+                    "kind": "csv",
+                    "columns": headers,
+                    "column_count": len(headers),
+                    "row_count": len(row_strings),
+                    "rows_per_page": _SPREADSHEET_ROWS_PER_PAGE,
+                    "truncated": truncated,
+                }
+        except Exception as e:
+            logger.error("Failed parsing CSV resource %s: %s", path.name, e)
+            pages = [PageContent(page_num=1, text=f"Error extracting rows from CSV: {e}")]
+
+        if not pages:
+            pages = [PageContent(page_num=1, text="Empty CSV document.")]
+
+        return DocumentContent(
+            path=str(path),
+            filename=path.name,
+            file_type="csv",
+            page_count=len(pages),
+            pages=pages,
+            total_chars=sum(len(p.text) for p in pages),
+            metadata=metadata or None,
+        )
+
+    def _read_xlsx(self, path: Path) -> DocumentContent:
+        """Extract XLSX rows into 100-row pages, one page block per worksheet."""
+        pages: list[PageContent] = []
+        metadata: dict = {}
+
+        try:
+            # data_only=True ensures we extract calculated values, not raw formulas
+            wb = openpyxl.load_workbook(path, data_only=True)
+            sheets_meta: list[dict] = []
+            page_num = 1
+            chars_used = 0
+            truncated_any = False
+
+            for sheet in wb.worksheets:
+                rows = list(sheet.iter_rows(values_only=True))
+
+                # Skip sheets with no populated cells
+                if not rows or all(all(cell is None for cell in r) for r in rows):
+                    sheets_meta.append({"name": sheet.title, "row_count": 0, "columns": []})
+                    continue
+
+                # Isolate the first populated row to establish headers
+                headers = None
+                header_row_index = 0
+                for idx, r in enumerate(rows):
+                    if any(cell is not None for cell in r):
+                        headers = [
+                            str(cell).strip() if cell is not None else f"Column_{i}"
+                            for i, cell in enumerate(r)
+                        ]
+                        header_row_index = idx
+                        break
+                if not headers:
+                    headers = [f"Column_{i}" for i in range(len(rows[0]))]
+
+                header_line = f"Sheet '{sheet.title}' columns [{', '.join(headers)}]"
+                data_rows = rows[header_row_index + 1:]
+                row_strings: list[str] = []
+                for r in data_rows:
+                    row_parts = [
+                        f"{hdr}: {str(cell).strip()}"
+                        for hdr, cell in zip(headers, r)
+                        if cell is not None and str(cell).strip()
+                    ]
+                    if row_parts:
+                        row_strings.append(", ".join(row_parts))
+
+                sheet_pages, used, truncated, page_num = self._rows_to_pages(
+                    row_strings, header_line, page_num, _SPREADSHEET_MAX_CHARS - chars_used
+                )
+                # Header-only sheet: still emit a page so the layout is visible
+                if not sheet_pages:
+                    ptext = self._clean_text("\n".join([header_line, "[No data rows]"]))
+                    sheet_pages = [PageContent(page_num=page_num, text=ptext)]
+                    used = len(ptext)
+                    page_num += 1
+
+                pages.extend(sheet_pages)
+                chars_used += used
+                truncated_any = truncated_any or truncated
+                sheets_meta.append({
+                    "name": sheet.title,
+                    "row_count": len(row_strings),
+                    "columns": headers,
+                    "column_count": len(headers),
+                })
+                if truncated:
+                    break
+
+            metadata = {
+                "kind": "xlsx",
+                "sheet_count": len(wb.worksheets),
+                "sheets": sheets_meta,
+                "row_count": sum(s["row_count"] for s in sheets_meta),
+                "rows_per_page": _SPREADSHEET_ROWS_PER_PAGE,
+                "truncated": truncated_any,
+            }
+        except Exception as e:
+            logger.error("Failed parsing XLSX file %s: %s", path.name, e)
+            pages = [PageContent(page_num=1, text=f"Error extracting rows from Excel workbook: {e}")]
+
+        if not pages:
+            pages = [PageContent(page_num=1, text="Empty Excel workbook.")]
+
+        return DocumentContent(
+            path=str(path),
+            filename=path.name,
+            file_type="xlsx",
+            page_count=len(pages),
+            pages=pages,
+            total_chars=sum(len(p.text) for p in pages),
+            metadata=metadata or None,
         )
 
     def _read_md(self, path: Path) -> DocumentContent:
