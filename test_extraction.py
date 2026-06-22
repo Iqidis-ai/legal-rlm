@@ -4,7 +4,14 @@ Tests the S3Repository download pipeline and DocumentReader text extraction
 end-to-end without invoking the investigation engine.
 
 USAGE:
+    # S3 mode (downloads from URLs defined in TEST_FILES):
     python test_extraction.py
+
+    # Local mode — all files in 'spreadsheet testing files/' folder:
+    python test_extraction.py --local
+
+    # Local mode — specific files:
+    python test_extraction.py --local path/to/file1.csv path/to/file2.xlsx
 """
 
 import asyncio
@@ -190,5 +197,87 @@ async def run() -> None:
     logger.info("Cleaned up temp dir")
 
 
+DEFAULT_LOCAL_FOLDER = Path("spreadsheet testing files")
+LOCAL_EXTENSIONS = {".csv", ".xlsx", ".xls"}
+
+
+def run_local(file_paths: list[Path]) -> None:
+    """Extract text from local files directly — no S3/AWS needed."""
+    from src.irys.core.reader import DocumentReader
+
+    reader = DocumentReader()
+    out_dir = make_output_dir()
+
+    print_separator("LOCAL EXTRACTION")
+    logger.info(f"Extracting {len(file_paths)} local file(s)...")
+
+    results = []
+    for file_path in file_paths:
+        print_separator(file_path.name)
+        logger.info(f"File: {file_path}  ({file_path.stat().st_size / 1024:.1f} KB)")
+
+        try:
+            doc = reader.read(file_path)
+            text = doc.full_text
+
+            logger.info(f"  type={doc.file_type}  pages={doc.page_count}  chars={doc.total_chars:,}")
+
+            safe_name = "".join(c if c.isalnum() or c in " ._-" else "_" for c in file_path.stem)
+            out_path = out_dir / f"{safe_name}.txt"
+            out_path.write_text(text, encoding="utf-8")
+            logger.info(f"  ✓ Saved → {out_path}")
+
+            preview = text[:400].replace("\n", " ").strip()
+            print(f"\n  Preview: {preview}{'...' if len(text) > 400 else ''}\n")
+
+            results.append({
+                "file": file_path.name,
+                "status": "ok",
+                "chars": doc.total_chars,
+                "pages": doc.page_count,
+                "out": str(out_path),
+            })
+
+        except Exception as e:
+            logger.error(f"  ✗ Extraction failed: {e}")
+            import traceback
+            traceback.print_exc()
+            results.append({"file": file_path.name, "status": "error", "error": str(e)})
+
+    print_separator("SUMMARY")
+    ok = [r for r in results if r["status"] == "ok"]
+    err = [r for r in results if r["status"] == "error"]
+    print(f"\n  Files      : {len(file_paths)}")
+    print(f"  Extracted  : {len(ok)} succeeded, {len(err)} failed")
+    for r in ok:
+        print(f"    ✓ {r['file']:50s}  {r['chars']:>8,} chars  {r['pages']} page(s)  → {r['out']}")
+    for r in err:
+        print(f"    ✗ {r['file']:50s}  ERROR: {r['error']}")
+    print(f"\n  Output dir : {out_dir.resolve()}\n")
+
+
 if __name__ == "__main__":
-    asyncio.run(run())
+    if len(sys.argv) > 1 and sys.argv[1] == "--local":
+        # Resolve file list: explicit paths or all spreadsheet files in default folder
+        if len(sys.argv) > 2:
+            paths = [Path(p) for p in sys.argv[2:]]
+        else:
+            if not DEFAULT_LOCAL_FOLDER.exists():
+                print(f"ERROR: Default folder not found: {DEFAULT_LOCAL_FOLDER.resolve()}")
+                sys.exit(1)
+            paths = sorted(
+                f for f in DEFAULT_LOCAL_FOLDER.iterdir()
+                if f.is_file() and f.suffix.lower() in LOCAL_EXTENSIONS
+            )
+            if not paths:
+                print(f"No CSV/XLSX files found in {DEFAULT_LOCAL_FOLDER.resolve()}")
+                sys.exit(1)
+
+        print(f"\nLocal extraction mode — {len(paths)} file(s):\n")
+        for p in paths:
+            print(f"  {p}")
+        print()
+
+        run_local(paths)
+    else:
+        asyncio.run(run())
