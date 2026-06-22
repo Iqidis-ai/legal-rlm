@@ -1556,10 +1556,11 @@ async def investigate_urls_stream(request: S3UrlsInvestigateRequest):
             )
 
         except Exception as e:
-            logger.error(f"Stream investigation failed | job={job_id} msg={message_id} user={user_id} session={request.session_id}: {e}")
+            error_msg = str(e) or f"{type(e).__name__}: no further details"
+            logger.error(f"Stream investigation failed | job={job_id} msg={message_id} user={user_id} session={request.session_id}: {error_msg}")
             queue.put_nowait({
                 "event": "error",
-                "data": {"error": str(e)},
+                "data": {"error": error_msg},
             })
 
         finally:
