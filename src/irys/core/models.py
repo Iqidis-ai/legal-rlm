@@ -537,7 +537,7 @@ class GeminiClient:
         # Step 1: Try Gemini API with primary model
         try:
             return await self._try_call(self.client, primary_model, contents, config, timeout, no_timeout)
-        except (asyncio.TimeoutError, TimeoutError) as e:
+        except (asyncio.TimeoutError, TimeoutError):
             # Timeout: skip Vertex(primary) and go straight to fallback model
             logger.warning(f"{primary_model} timed out, skipping to fallback model")
             if not fallback_model:
@@ -724,7 +724,19 @@ class GeminiClient:
             secondary_fallback_model=mc.secondary_fallback_model_id,
         )
         if overall_timeout is not None:
-            response = await asyncio.wait_for(fallback_coro, timeout=overall_timeout)
+            try:
+                response = await asyncio.wait_for(fallback_coro, timeout=overall_timeout)
+            # asyncio.TimeoutError is distinct from TimeoutError in Python <3.11; catch both
+            except (asyncio.TimeoutError, TimeoutError):
+                parts = [f"primary={mc.model_id}"]
+                if mc.fallback_model_id:
+                    parts.append(f"fallback={mc.fallback_model_id}")
+                if mc.secondary_fallback_model_id:
+                    parts.append(f"secondary={mc.secondary_fallback_model_id}")
+                raise TimeoutError(
+                    f"LLM chain exceeded overall timeout of {overall_timeout}s "
+                    f"({', '.join(parts)})"
+                ) from None
         else:
             response = await fallback_coro
         call_latency_ms = int((time.monotonic() - call_start) * 1000)
