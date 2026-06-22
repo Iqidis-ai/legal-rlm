@@ -166,6 +166,7 @@ ZERO TOLERANCE:
 - No hedging without substance ("This could potentially maybe...")
 - No restating the question as the answer
 - No generic conclusions that could apply to anything
+- Never use ASCII art or box-drawing characters; use markdown tables or structured lists instead
 
 ═══════════════════════════════════════════════════════════════════════════════
 ETHICS
