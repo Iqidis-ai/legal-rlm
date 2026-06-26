@@ -108,106 +108,86 @@ def parse_json_safe(text: str) -> Optional[dict]:
 
 
 def _salvage_truncated_json(text: str) -> Optional[dict]:
-    """Last-resort JSON recovery for model output truncated mid-stream.
+    """Recover a partial dict from a response truncated mid-JSON.
 
-    Walks from the first '{', tracks string/bracket state, trims to the last
-    cleanly-closed value, strips dangling commas, appends missing closers,
-    then re-parses. Returns the recovered dict only if it contains a 'facts'
-    key (the schema lists facts first, so it survives mid-array truncation).
+    Walks from the first '{', tracking string/bracket state.  After each
+    cleanly-closed string, array, or object at depth ≥ 1 it records a
+    recovery point.  On EOF (truncated), it trims to that point, drops any
+    dangling comma, appends the missing closers, and re-parses.
 
-    Only invoked from extract_facts after both attempts fail with parse_failed.
-    Never called from parse_json_safe.
+    Because 'facts' is the first key in the extraction schema a mid-array
+    cut still leaves all completed fact strings intact.
+
+    Returns None if nothing recoverable was found.
     """
-    if not text:
-        return None
-
     start = text.find("{")
     if start < 0:
         return None
-    text = text[start:]
 
-    # Pass 1 — find the last position where bracket depth returned to 0
-    depth = 0
+    s = text[start:]
+    n = len(s)
     in_string = False
-    escape_next = False
-    last_clean_pos = 0
+    escaped = False
+    stack: list[str] = []   # '{' or '[' for each open container
+    last_clean = 0           # byte index in s past the last recoverable point
 
-    for i, ch in enumerate(text):
-        if escape_next:
-            escape_next = False
+    i = 0
+    while i < n:
+        ch = s[i]
+
+        if escaped:
+            escaped = False
+            i += 1
             continue
-        if ch == "\\" and in_string:
-            escape_next = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
+
         if in_string:
+            if ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+                # Closing quote at depth ≥ 1 is a recovery candidate.
+                # Worst case we grab a key string — still parseable after closing.
+                if stack:
+                    last_clean = i + 1
+            i += 1
             continue
-        if ch in "{[":
-            depth += 1
-        elif ch in "}]":
-            depth -= 1
-            if depth == 0:
-                last_clean_pos = i + 1
 
-    if last_clean_pos == 0:
-        # Never balanced — truncated before any close; try to recover anyway
-        last_clean_pos = len(text)
+        if ch == '"':
+            in_string = True
+        elif ch in ("{", "["):
+            stack.append(ch)
+        elif ch in ("}", "]"):
+            if stack:
+                stack.pop()
+                last_clean = i + 1
+                if not stack:
+                    break   # root object closed cleanly — parse_json_safe handles this
+        i += 1
 
-    truncated = text[:last_clean_pos].rstrip()
-    if truncated.endswith(","):
-        truncated = truncated[:-1]
+    if not last_clean or not stack:
+        # No recovery point, or root closed cleanly (not a truncation case)
+        return None
 
-    # Pass 2 — determine which closers are missing, handling unclosed strings.
-    # Helper: walk s, return (stack_of_closers, in_string_at_end, last_open_pos).
-    def _scan(s):
-        stk = []
-        in_str = False
-        esc = False
-        last_open = -1
-        for idx, ch in enumerate(s):
-            if esc:
-                esc = False
-                continue
-            if ch == "\\" and in_str:
-                esc = True
-                continue
-            if ch == '"':
-                if not in_str:
-                    last_open = idx
-                in_str = not in_str
-                continue
-            if in_str:
-                continue
-            if ch == "{":
-                stk.append("}")
-            elif ch == "[":
-                stk.append("]")
-            elif ch in "}]" and stk:
-                stk.pop()
-        return stk, in_str, last_open
+    candidate = s[:last_clean].rstrip()
 
-    stack, open_string, last_open = _scan(truncated)
+    # Drop trailing comma left by the truncated next element
+    if candidate.endswith(","):
+        candidate = candidate[:-1].rstrip()
 
-    if open_string and last_open >= 0:
-        # Truncated mid-string — backtrack to before the unclosed opening quote,
-        # drop any trailing comma, then recompute the stack for that prefix.
-        truncated = truncated[:last_open].rstrip()
-        if truncated.endswith(","):
-            truncated = truncated[:-1].rstrip()
-        stack, _, _ = _scan(truncated)
-
-    recovered = truncated + "".join(reversed(stack))
+    # Close every still-open container (innermost first)
+    for opener in reversed(stack):
+        candidate += "]" if opener == "[" else "}"
 
     try:
-        parsed = __import__("json").loads(recovered)
-        if isinstance(parsed, dict) and "facts" in parsed:
+        parsed = json.loads(candidate)
+        if isinstance(parsed, dict):
             return parsed
-    except __import__("json").JSONDecodeError:
+    except json.JSONDecodeError:
         pass
 
     return None
+
+
 def extract_list_from_response(text: str) -> list[str]:
     """Extract a list of items from LLM response (one per line or comma-separated)."""
     if not text:
@@ -1165,34 +1145,16 @@ async def extract_facts(
     filename: str,
     content: str,
     client: GeminiClient,
-    max_content_chars: int = 35000,
+    max_content_chars: int = 35000,  # Increased for full legal doc coverage
     scope_context: str = "",
     active_step: Optional["InvestigationStep"] = None,
     trace_ctx: Optional["TracingContext"] = None,
-    tier: ModelTier = ModelTier.LITE,
-    allow_salvage: bool = False,
-) -> tuple:
-    """Extract facts from a document.
-
-    Args:
-        tier: Model tier to use. LITE for attempt 1, FLASH for attempt 2.
-        allow_salvage: If True and parse fails, attempt _salvage_truncated_json
-                       as last resort. Only set True on the final attempt.
-
-    Returns:
-        (facts_dict, status) where status is one of:
-            "ok"           — clean parse (including facts: [])
-            "parse_failed" — parse failed; salvage empty or not attempted
-            "salvaged"     — partial facts recovered via last-resort salvage
-            "api_error"    — exception from client.complete() (503/timeout/etc.)
-    """
+) -> dict:
+    """Extract facts from a document. Uses LITE model for cost efficiency."""
     start_time = time.time()
-    func_name = "extract_facts" if tier == ModelTier.LITE else "extract_facts_retry_flash"
-    logger.info(
-        f"\u00f0\u009f\u0093\u0084 {func_name}: extracting from '{filename}' "
-        f"({len(content)} chars) [tier={tier.value}]"
-    )
+    logger.info(f"📄 extract_facts: extracting from '{filename}' ({len(content)} chars)")
 
+    # Truncate content if too long
     if len(content) > max_content_chars:
         content = content[:max_content_chars] + "\n... [truncated]"
         logger.debug(f"   Content truncated to {max_content_chars} chars")
@@ -1204,45 +1166,22 @@ async def extract_facts(
         content=content,
     )
 
-    _log_llm_call(func_name, tier, prompt, start_time)
-
-    # Catch all API-level errors (503, timeout, rate-limit, network).
-    # GeminiClient exhausts its own retry budget before raising, so an
-    # exception here is a genuine endpoint failure — not a transient blip.
-    response = None
-    try:
-        response = await client.complete(
-            prompt,
-            tier=tier,
-            active_step=active_step,
-            trace_ctx=trace_ctx,
-            generation_name=func_name,
-        )
-    except Exception as e:
-        logger.warning(f"   API error in {func_name} [{tier.value}]: {e}")
-        return {}, "api_error"
-
+    _log_llm_call("extract_facts", ModelTier.LITE, prompt, start_time)
+    response = await client.complete(prompt, tier=ModelTier.LITE, active_step=active_step,
+                                     trace_ctx=trace_ctx, generation_name="extract_facts")
     result = parse_json_safe(response)
-    if result is not None:
-        logger.info(
-            f"   Extracted: {len(result.get('facts', []))} facts, "
-            f"{len(result.get('quotes', []))} quotes"
-        )
-        _log_llm_result(func_name, result, time.time() - start_time)
-        return result, "ok"
 
-    logger.warning(f"   JSON parsing failed in {func_name} [{tier.value}]")
+    if result:
+        logger.info(f"   Extracted: {len(result.get('facts', []))} facts, {len(result.get('quotes', []))} quotes")
+        _log_llm_result("extract_facts", result, time.time() - start_time)
+        return result
 
-    if allow_salvage:
-        salvaged = _salvage_truncated_json(response)
-        if salvaged is not None:
-            salvaged_count = len(salvaged.get("facts", []))
-            logger.warning(
-                f"   Salvage recovered {salvaged_count} facts from truncated JSON"
-            )
-            return salvaged, "salvaged"
-
-    return {"facts": [], "quotes": [], "references": []}, "parse_failed"
+    logger.warning("   JSON parsing failed, returning empty extraction")
+    return {
+        "facts": [],
+        "quotes": [],
+        "references": [],
+    }
 
 
 async def replan(
@@ -1867,46 +1806,4 @@ async def decide_next_action(
                                      trace_ctx=trace_ctx, generation_name="decide_next_action")
     result = parse_json_safe(response)
 
-async def build_research_brief(
-    query: str,
-    case_law_results: str,
-    web_results: str,
-    client: GeminiClient,
-    active_step: Optional["InvestigationStep"] = None,
-    trace_ctx: Optional["TracingContext"] = None,
-) -> dict:
-    """FLASH: final research brief consumed by synthesis. Same output schema as the former analyze_external.
-
-    Returns: {key_precedents, legal_standards, regulations, combined_framework, summary}
-    """
-    start_time = time.time()
-    prompt = prompts.P_BUILD_BRIEF.format(
-        query=query,
-        case_law_results=case_law_results or "No case law results found.",
-        web_results=web_results or "No web/regulatory results found.",
-    )
-    _log_llm_call("build_research_brief", ModelTier.FLASH, prompt, start_time)
-    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step,
-                                     trace_ctx=trace_ctx, generation_name="build_research_brief")
-    result = parse_json_safe(response)
-
-    if isinstance(result, dict) and result:
-        _log_llm_result("build_research_brief", result, time.time() - start_time)
-        return result
-
-    if isinstance(result, list):
-        logger.warning(
-            "build_research_brief: LLM returned a JSON array (%d items) instead of a dict; "
-            "discarding and returning empty brief",
-            len(result),
-        )
-    else:
-        logger.warning("build_research_brief: JSON parse failed; returning empty brief")
-    return {
-        "key_precedents": [],
-        "legal_standards": [],
-        "regulations": [],
-        "regulatory_standards": [],
-        "combined_framework": "",
-        "summary": "",
-    }
+ 
