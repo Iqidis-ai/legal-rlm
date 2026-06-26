@@ -2276,6 +2276,11 @@ class RLMEngine:
                 middle_truncate=True,
             )
 
+        extraction_failures = self._format_extraction_failures(
+            state.findings.get("extraction_failures", {})
+        )
+        _failure_section = f"\n\n{extraction_failures}" if extraction_failures else ""
+
         checkpoint_findings = (
             "SOURCE LABELS: SEARCH_SNIPPET facts came from visible search-result context and may be used when directly supported. "
             "DOCUMENT_PREFIX_READ and DOCUMENT_TARGETED_READ facts came from document content.\n\n"
@@ -2285,6 +2290,7 @@ class RLMEngine:
             f"{coverage}\n\n"
             "=== PINNED REGIONS AVAILABLE TO SYNTHESIS (CHECKPOINT VIEW) ===\n"
             f"{checkpoint_pinned_content or 'No pinned regions.'}"
+            f"{_failure_section}"
         )
         synthesis_evidence = (
             "SOURCE LABELS: SEARCH_SNIPPET facts came from visible search-result context and may be used when directly supported. "
@@ -2295,6 +2301,7 @@ class RLMEngine:
             f"{cached_facts or 'No cached facts selected.'}\n\n"
             "=== COVERAGE / READ SCOPES ===\n"
             f"{coverage}"
+            f"{_failure_section}"
         )
         return {
             "current_facts": current_facts,
