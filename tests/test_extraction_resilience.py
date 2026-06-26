@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from irys.rlm.decisions import _salvage_truncated_json, extract_facts
+from irys.core.json_helpers import _salvage_truncated_json
+from irys.rlm.decisions import extract_facts
 from irys.rlm.engine import InvestigationCache, RLMEngine
 from irys.rlm.state import InvestigationState
 from irys.core.models import ModelTier
