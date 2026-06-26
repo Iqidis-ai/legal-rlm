@@ -107,6 +107,107 @@ def parse_json_safe(text: str) -> Optional[dict]:
     return None
 
 
+def _salvage_truncated_json(text: str) -> Optional[dict]:
+    """Last-resort JSON recovery for model output truncated mid-stream.
+
+    Walks from the first '{', tracks string/bracket state, trims to the last
+    cleanly-closed value, strips dangling commas, appends missing closers,
+    then re-parses. Returns the recovered dict only if it contains a 'facts'
+    key (the schema lists facts first, so it survives mid-array truncation).
+
+    Only invoked from extract_facts after both attempts fail with parse_failed.
+    Never called from parse_json_safe.
+    """
+    if not text:
+        return None
+
+    start = text.find("{")
+    if start < 0:
+        return None
+    text = text[start:]
+
+    # Pass 1 — find the last position where bracket depth returned to 0
+    depth = 0
+    in_string = False
+    escape_next = False
+    last_clean_pos = 0
+
+    for i, ch in enumerate(text):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+            if depth == 0:
+                last_clean_pos = i + 1
+
+    if last_clean_pos == 0:
+        # Never balanced — truncated before any close; try to recover anyway
+        last_clean_pos = len(text)
+
+    truncated = text[:last_clean_pos].rstrip()
+    if truncated.endswith(","):
+        truncated = truncated[:-1]
+
+    # Pass 2 — determine which closers are missing, handling unclosed strings.
+    # Helper: walk s, return (stack_of_closers, in_string_at_end, last_open_pos).
+    def _scan(s):
+        stk = []
+        in_str = False
+        esc = False
+        last_open = -1
+        for idx, ch in enumerate(s):
+            if esc:
+                esc = False
+                continue
+            if ch == "\\" and in_str:
+                esc = True
+                continue
+            if ch == '"':
+                if not in_str:
+                    last_open = idx
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == "{":
+                stk.append("}")
+            elif ch == "[":
+                stk.append("]")
+            elif ch in "}]" and stk:
+                stk.pop()
+        return stk, in_str, last_open
+
+    stack, open_string, last_open = _scan(truncated)
+
+    if open_string and last_open >= 0:
+        # Truncated mid-string — backtrack to before the unclosed opening quote,
+        # drop any trailing comma, then recompute the stack for that prefix.
+        truncated = truncated[:last_open].rstrip()
+        if truncated.endswith(","):
+            truncated = truncated[:-1].rstrip()
+        stack, _, _ = _scan(truncated)
+
+    recovered = truncated + "".join(reversed(stack))
+
+    try:
+        parsed = __import__("json").loads(recovered)
+        if isinstance(parsed, dict) and "facts" in parsed:
+            return parsed
+    except __import__("json").JSONDecodeError:
+        pass
+
+    return None
 def extract_list_from_response(text: str) -> list[str]:
     """Extract a list of items from LLM response (one per line or comma-separated)."""
     if not text:
@@ -1725,66 +1826,4 @@ async def decide_next_action(
                                      trace_ctx=trace_ctx, generation_name="decide_next_action")
     result = parse_json_safe(response)
 
-    if not isinstance(result, dict):
-        logger.warning("decide_next_action: JSON parse failed; treating as done")
-        return {"reasoning": "parse_failure", "actions": [], "done_after_this": True}
-
-    actions_raw = result.get("actions") or []
-    actions: list[dict] = []
-    if isinstance(actions_raw, list):
-        for a in actions_raw:
-            if isinstance(a, dict) and a.get("tool"):
-                actions.append({"tool": str(a["tool"]), "args": dict(a.get("args") or {})})
-
-    out = {
-        "reasoning": str(result.get("reasoning", "")),
-        "actions": actions,
-        "done_after_this": bool(result.get("done_after_this", False)),
-    }
-    _log_llm_result("decide_next_action", out, time.time() - start_time)
-    return out
-
-
-async def build_research_brief(
-    query: str,
-    case_law_results: str,
-    web_results: str,
-    client: GeminiClient,
-    active_step: Optional["InvestigationStep"] = None,
-    trace_ctx: Optional["TracingContext"] = None,
-) -> dict:
-    """FLASH: final research brief consumed by synthesis. Same output schema as the former analyze_external.
-
-    Returns: {key_precedents, legal_standards, regulations, combined_framework, summary}
-    """
-    start_time = time.time()
-    prompt = prompts.P_BUILD_BRIEF.format(
-        query=query,
-        case_law_results=case_law_results or "No case law results found.",
-        web_results=web_results or "No web/regulatory results found.",
-    )
-    _log_llm_call("build_research_brief", ModelTier.FLASH, prompt, start_time)
-    response = await client.complete(prompt, tier=ModelTier.FLASH, active_step=active_step,
-                                     trace_ctx=trace_ctx, generation_name="build_research_brief")
-    result = parse_json_safe(response)
-
-    if isinstance(result, dict) and result:
-        _log_llm_result("build_research_brief", result, time.time() - start_time)
-        return result
-
-    if isinstance(result, list):
-        logger.warning(
-            "build_research_brief: LLM returned a JSON array (%d items) instead of a dict; "
-            "discarding and returning empty brief",
-            len(result),
-        )
-    else:
-        logger.warning("build_research_brief: JSON parse failed; returning empty brief")
-    return {
-        "key_precedents": [],
-        "legal_standards": [],
-        "regulations": [],
-        "regulatory_standards": [],
-        "combined_framework": "",
-        "summary": "",
-    }
+ 
