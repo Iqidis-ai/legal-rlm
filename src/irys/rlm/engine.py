@@ -441,6 +441,55 @@ class RLMEngine:
         meta.extend(summarize_tabular_metadata(file_info.get("structure")))
         return f"  - {file_info['filename']} ({', '.join(meta)})"
 
+    @staticmethod
+    def _record_extraction_failure(
+        state: "InvestigationState",
+        scope_key: str,
+        filename: str,
+        chars_read: int,
+        status: str,
+        salvaged_count: int,
+        attempts_used: int,
+        tiers_used: list,
+    ) -> None:
+        """Write/overwrite an extraction failure record into state.findings."""
+        failures = state.findings.setdefault("extraction_failures", {})
+        failures[scope_key] = {
+            "filename": filename,
+            "chars_read": chars_read,
+            "status": status,
+            "salvaged_count": salvaged_count,
+            "attempts_used": attempts_used,
+            "tiers_used": tiers_used,
+        }
+
+    @staticmethod
+    def _format_extraction_failures(failures: dict) -> str:
+        """Render extraction failures as a warning section for LLM context.
+
+        Returns empty string when there are no failures (section is omitted).
+        """
+        if not failures:
+            return ""
+        lines = ["=== ⚠ EXTRACTION ISSUES (READ OK BUT EXTRACTION FAILED) ==="]
+        for scope_key, rec in failures.items():
+            fname = rec["filename"]
+            chars = rec["chars_read"]
+            st = rec["status"]
+            salvaged = rec["salvaged_count"]
+            n = rec["attempts_used"]
+            tiers = ", ".join(rec["tiers_used"])
+            if st == "salvaged":
+                detail = f"partial salvage={salvaged} facts"
+            else:
+                detail = "no salvage"
+            lines.append(
+                f"- {fname} [{scope_key[:40]}]: {chars:,} chars read, "
+                f"{st} after {n} attempts ({tiers}); "
+                f"{detail} — treat remaining terms as unverified."
+            )
+        return "\n".join(lines)
+
     async def _emit_lead_started(self, state: InvestigationState, lead: Lead):
         """Emit lead.started event and track timing."""
         self._lead_start_times[lead.id] = time.monotonic()
