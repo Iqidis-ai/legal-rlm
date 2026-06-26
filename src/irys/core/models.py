@@ -725,7 +725,19 @@ class GeminiClient:
             secondary_fallback_model=mc.secondary_fallback_model_id,
         )
         if overall_timeout is not None:
-            response = await asyncio.wait_for(fallback_coro, timeout=overall_timeout)
+            try:
+                response = await asyncio.wait_for(fallback_coro, timeout=overall_timeout)
+            # asyncio.TimeoutError is distinct from TimeoutError in Python <3.11
+            except (asyncio.TimeoutError, TimeoutError) as e:
+                parts = [f"primary={mc.model_id}"]
+                if mc.fallback_model_id:
+                    parts.append(f"fallback={mc.fallback_model_id}")
+                if mc.secondary_fallback_model_id:
+                    parts.append(f"secondary={mc.secondary_fallback_model_id}")
+                raise TimeoutError(
+                    f"LLM chain exceeded overall timeout of {overall_timeout}s "
+                    f"({', '.join(parts)})"
+                ) from e
         else:
             response = await fallback_coro
         call_latency_ms = int((time.monotonic() - call_start) * 1000)
