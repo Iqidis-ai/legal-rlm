@@ -2665,9 +2665,16 @@ class RLMEngine:
             extraction_limit = effective_limit
             scope_context = f"Read scope: {scope.label()}" if scope.label() != "prefix" else "Read scope: prefix"
 
-            # Use decisions layer to extract facts
+            # Use decisions layer to extract facts — LITE first, FLASH on failure
+            tiers_used: list[str] = []
+            extraction: dict = {}
+            _extraction_status: str = "ok"
+
+            # Attempt 1: LITE
+            cache.record_extraction_attempt(scope_key)
+            tiers_used.append("LITE")
             t_step_ef = self._telemetry.begin_step("extract_facts", "investigation_loop") if self._telemetry else None
-            extraction = await decisions.extract_facts(
+            extraction, _extraction_status = await decisions.extract_facts(
                 query=state.query,
                 filename=doc.filename,
                 content=content,
@@ -2676,9 +2683,44 @@ class RLMEngine:
                 scope_context=scope_context,
                 active_step=t_step_ef,
                 trace_ctx=self._trace_ctx,
+                tier=ModelTier.LITE,
+                allow_salvage=False,
             )
             if t_step_ef:
                 self._telemetry.end_step(t_step_ef)
+
+            # Attempt 2: FLASH — only if LITE failed and budget remains
+            if _extraction_status != "ok" and cache.extraction_budget_remaining(scope_key):
+                cache.record_extraction_attempt(scope_key)
+                tiers_used.append("FLASH")
+                t_step_ef2 = self._telemetry.begin_step("extract_facts_retry_flash", "investigation_loop") if self._telemetry else None
+                extraction, _extraction_status = await decisions.extract_facts(
+                    query=state.query,
+                    filename=doc.filename,
+                    content=content,
+                    client=self.client,
+                    max_content_chars=extraction_limit,
+                    scope_context=scope_context,
+                    active_step=t_step_ef2,
+                    trace_ctx=self._trace_ctx,
+                    tier=ModelTier.FLASH,
+                    allow_salvage=True,
+                )
+                if t_step_ef2:
+                    self._telemetry.end_step(t_step_ef2)
+
+            # Record failure if all attempts exhausted
+            if _extraction_status != "ok":
+                self._record_extraction_failure(
+                    state=state,
+                    scope_key=scope_key,
+                    filename=doc.filename,
+                    chars_read=len(content),
+                    status=_extraction_status,
+                    salvaged_count=len(extraction.get("facts", [])),
+                    attempts_used=cache.extraction_attempts.get(scope_key, 0),
+                    tiers_used=tiers_used,
+                )
 
             # Store facts and emit per-fact updates
             facts = extraction.get("facts", [])
