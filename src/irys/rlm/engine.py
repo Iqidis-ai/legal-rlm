@@ -9,7 +9,7 @@ OPTIMIZED VERSION:
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, ClassVar
 from pathlib import Path
 import asyncio
 import logging
@@ -109,11 +109,13 @@ class InvestigationCache:
     consecutive_read_failures: int = 0  # Track consecutive read failures
     total_read_failures: int = 0  # Track total read failures
     MAX_CONSECUTIVE_FAILURES: int = 5  # Abort after this many consecutive failures
+    MAX_EXTRACTION_ATTEMPTS: ClassVar[int] = 2  # LITE + FLASH retry budget per scope_key
 
     # Range-based coverage tracking — prevents redundant reads of already-
     # covered page ranges regardless of target/reason.
     # Maps normalized filepath → list of (start, end) page ranges already read.
     _covered_ranges: dict = field(default_factory=dict)
+    extraction_attempts: dict = field(default_factory=dict)  # scope_key -> attempt count
 
     def record_read_success(self):
         """Record a successful document read."""
@@ -145,6 +147,14 @@ class InvestigationCache:
     def is_irrelevant(self, filepath: str) -> bool:
         """Check if doc was marked irrelevant."""
         return filepath in self.irrelevant_docs
+
+    def record_extraction_attempt(self, scope_key: str) -> None:
+        """Increment the extraction attempt counter for scope_key."""
+        self.extraction_attempts[scope_key] = self.extraction_attempts.get(scope_key, 0) + 1
+
+    def extraction_budget_remaining(self, scope_key: str) -> bool:
+        """Return True if another extraction attempt is allowed for scope_key."""
+        return self.extraction_attempts.get(scope_key, 0) < self.MAX_EXTRACTION_ATTEMPTS
 
     # ------------------------------------------------------------------
     # Range coverage — interval subsumption
