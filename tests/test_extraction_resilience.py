@@ -339,3 +339,22 @@ def test_salvaged_status_included_in_failure_record():
     rec = state.findings["extraction_failures"]["scope1"]
     assert rec["status"] == "salvaged"
     assert rec["salvaged_count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Regression: create_summaries call site — extract_facts tuple unpack
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_extract_facts_tuple_unpack_at_summary_call_site():
+    """extract_facts returns (dict, status) — callers must unpack both values."""
+    client = AsyncMock()
+    client.complete = AsyncMock(return_value='{"facts": ["clause 1"], "quotes": []}')
+    result = await extract_facts("Summarize this document", "doc.pdf", "content", client)
+    # Must be a 2-tuple — callers like create_summaries use: extraction, _ = ...
+    assert isinstance(result, tuple), "extract_facts must return (dict, status) tuple"
+    assert len(result) == 2
+    facts_dict, status = result
+    assert isinstance(facts_dict, dict)
+    assert status == "ok"
+    assert facts_dict.get("facts") == ["clause 1"]
