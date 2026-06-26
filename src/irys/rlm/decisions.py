@@ -17,6 +17,7 @@ from typing import Optional, Any, TYPE_CHECKING
 from ..core.models import GeminiClient, ModelTier, SYSTEM_PROMPT_PRO, SYSTEM_PROMPT_FLASH_PLANNER
 from ..core.search import SearchHit, SearchResults
 from . import prompts
+from ..core.json_helpers import parse_json_safe, _salvage_truncated_json
 
 if TYPE_CHECKING:
     from ..core.telemetry import InvestigationStep
@@ -50,61 +51,6 @@ def _log_llm_result(func_name: str, result: Any, duration: float):
 # =============================================================================
 # JSON PARSING HELPERS
 # =============================================================================
-
-def parse_json_safe(text: str) -> Optional[dict]:
-    """Safely parse JSON from LLM response."""
-    if not text:
-        return None
-
-    # Try direct parse
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict):
-            return parsed
-        # Valid JSON but not a dict (e.g. bare int/string like "94") — fall through
-    except json.JSONDecodeError:
-        pass
-
-    # Try to extract JSON from markdown code blocks
-    if "```json" in text:
-        start = text.find("```json") + 7
-        end = text.find("```", start)
-        if end > start:
-            try:
-                parsed = json.loads(text[start:end].strip())
-                if isinstance(parsed, dict):
-                    return parsed
-            except json.JSONDecodeError:
-                pass
-
-    # Try to extract JSON from generic code blocks
-    if "```" in text:
-        start = text.find("```") + 3
-        # Skip language identifier if present
-        newline = text.find("\n", start)
-        if newline > start:
-            start = newline + 1
-        end = text.find("```", start)
-        if end > start:
-            try:
-                parsed = json.loads(text[start:end].strip())
-                if isinstance(parsed, dict):
-                    return parsed
-            except json.JSONDecodeError:
-                pass
-
-    # Try to find JSON object in text
-    brace_start = text.find("{")
-    brace_end = text.rfind("}") + 1
-    if brace_start >= 0 and brace_end > brace_start:
-        try:
-            parsed = json.loads(text[brace_start:brace_end])
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            pass
-
-    return None
 
 
 def extract_list_from_response(text: str) -> list[str]:
@@ -1064,16 +1010,34 @@ async def extract_facts(
     filename: str,
     content: str,
     client: GeminiClient,
-    max_content_chars: int = 35000,  # Increased for full legal doc coverage
+    max_content_chars: int = 35000,
     scope_context: str = "",
     active_step: Optional["InvestigationStep"] = None,
     trace_ctx: Optional["TracingContext"] = None,
-) -> dict:
-    """Extract facts from a document. Uses LITE model for cost efficiency."""
-    start_time = time.time()
-    logger.info(f"📄 extract_facts: extracting from '{filename}' ({len(content)} chars)")
+    tier: ModelTier = ModelTier.LITE,
+    allow_salvage: bool = False,
+) -> tuple:
+    """Extract facts from a document.
 
-    # Truncate content if too long
+    Args:
+        tier: Model tier to use. LITE for attempt 1, FLASH for attempt 2.
+        allow_salvage: If True and parse fails, attempt _salvage_truncated_json
+                       as last resort. Only set True on the final attempt.
+
+    Returns:
+        (facts_dict, status) where status is one of:
+            "ok"           — clean parse (including facts: [])
+            "parse_failed" — parse failed; salvage empty or not attempted
+            "salvaged"     — partial facts recovered via last-resort salvage
+            "api_error"    — exception from client.complete() (503/timeout/etc.)
+    """
+    start_time = time.time()
+    func_name = "extract_facts" if tier == ModelTier.LITE else "extract_facts_retry_flash"
+    logger.info(
+        f"\u00f0\u009f\u0093\u0084 {func_name}: extracting from '{filename}' "
+        f"({len(content)} chars) [tier={tier.value}]"
+    )
+
     if len(content) > max_content_chars:
         content = content[:max_content_chars] + "\n... [truncated]"
         logger.debug(f"   Content truncated to {max_content_chars} chars")
@@ -1085,22 +1049,45 @@ async def extract_facts(
         content=content,
     )
 
-    _log_llm_call("extract_facts", ModelTier.LITE, prompt, start_time)
-    response = await client.complete(prompt, tier=ModelTier.LITE, active_step=active_step,
-                                     trace_ctx=trace_ctx, generation_name="extract_facts")
+    _log_llm_call(func_name, tier, prompt, start_time)
+
+    # Catch all API-level errors (503, timeout, rate-limit, network).
+    # GeminiClient exhausts its own retry budget before raising, so an
+    # exception here is a genuine endpoint failure — not a transient blip.
+    response = None
+    try:
+        response = await client.complete(
+            prompt,
+            tier=tier,
+            active_step=active_step,
+            trace_ctx=trace_ctx,
+            generation_name=func_name,
+        )
+    except Exception as e:
+        logger.warning(f"   API error in {func_name} [{tier.value}]: {e}")
+        return {}, "api_error"
+
     result = parse_json_safe(response)
+    if result is not None:
+        logger.info(
+            f"   Extracted: {len(result.get('facts', []))} facts, "
+            f"{len(result.get('quotes', []))} quotes"
+        )
+        _log_llm_result(func_name, result, time.time() - start_time)
+        return result, "ok"
 
-    if result:
-        logger.info(f"   Extracted: {len(result.get('facts', []))} facts, {len(result.get('quotes', []))} quotes")
-        _log_llm_result("extract_facts", result, time.time() - start_time)
-        return result
+    logger.warning(f"   JSON parsing failed in {func_name} [{tier.value}]")
 
-    logger.warning("   JSON parsing failed, returning empty extraction")
-    return {
-        "facts": [],
-        "quotes": [],
-        "references": [],
-    }
+    if allow_salvage:
+        salvaged = _salvage_truncated_json(response)
+        if salvaged is not None:
+            salvaged_count = len(salvaged.get("facts", []))
+            logger.warning(
+                f"   Salvage recovered {salvaged_count} facts from truncated JSON"
+            )
+            return salvaged, "salvaged"
+
+    return {"facts": [], "quotes": [], "references": []}, "parse_failed"
 
 
 async def replan(
@@ -1631,7 +1618,6 @@ async def analyze_external(
         "combined_framework": "",
         "summary": "",
     }
-
 
 
 # =============================================================================
