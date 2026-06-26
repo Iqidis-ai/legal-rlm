@@ -9,7 +9,7 @@ OPTIMIZED VERSION:
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Callable, Any, ClassVar
+from typing import Optional, Callable, Any
 from pathlib import Path
 import asyncio
 import logging
@@ -109,13 +109,11 @@ class InvestigationCache:
     consecutive_read_failures: int = 0  # Track consecutive read failures
     total_read_failures: int = 0  # Track total read failures
     MAX_CONSECUTIVE_FAILURES: int = 5  # Abort after this many consecutive failures
-    MAX_EXTRACTION_ATTEMPTS: ClassVar[int] = 2  # LITE + FLASH retry budget per scope_key
 
     # Range-based coverage tracking — prevents redundant reads of already-
     # covered page ranges regardless of target/reason.
     # Maps normalized filepath → list of (start, end) page ranges already read.
     _covered_ranges: dict = field(default_factory=dict)
-    extraction_attempts: dict = field(default_factory=dict)  # scope_key -> attempt count
 
     def record_read_success(self):
         """Record a successful document read."""
@@ -147,14 +145,6 @@ class InvestigationCache:
     def is_irrelevant(self, filepath: str) -> bool:
         """Check if doc was marked irrelevant."""
         return filepath in self.irrelevant_docs
-
-    def record_extraction_attempt(self, scope_key: str) -> None:
-        """Increment the extraction attempt counter for scope_key."""
-        self.extraction_attempts[scope_key] = self.extraction_attempts.get(scope_key, 0) + 1
-
-    def extraction_budget_remaining(self, scope_key: str) -> bool:
-        """Return True if another extraction attempt is allowed for scope_key."""
-        return self.extraction_attempts.get(scope_key, 0) < self.MAX_EXTRACTION_ATTEMPTS
 
     # ------------------------------------------------------------------
     # Range coverage — interval subsumption
@@ -440,55 +430,6 @@ class RLMEngine:
             meta.append(f"{file_info['extracted_chars']:,} chars")
         meta.extend(summarize_tabular_metadata(file_info.get("structure")))
         return f"  - {file_info['filename']} ({', '.join(meta)})"
-
-    @staticmethod
-    def _record_extraction_failure(
-        state: "InvestigationState",
-        scope_key: str,
-        filename: str,
-        chars_read: int,
-        status: str,
-        salvaged_count: int,
-        attempts_used: int,
-        tiers_used: list,
-    ) -> None:
-        """Write/overwrite an extraction failure record into state.findings."""
-        failures = state.findings.setdefault("extraction_failures", {})
-        failures[scope_key] = {
-            "filename": filename,
-            "chars_read": chars_read,
-            "status": status,
-            "salvaged_count": salvaged_count,
-            "attempts_used": attempts_used,
-            "tiers_used": tiers_used,
-        }
-
-    @staticmethod
-    def _format_extraction_failures(failures: dict) -> str:
-        """Render extraction failures as a warning section for LLM context.
-
-        Returns empty string when there are no failures (section is omitted).
-        """
-        if not failures:
-            return ""
-        lines = ["=== ⚠ EXTRACTION ISSUES (READ OK BUT EXTRACTION FAILED) ==="]
-        for scope_key, rec in failures.items():
-            fname = rec["filename"]
-            chars = rec["chars_read"]
-            st = rec["status"]
-            salvaged = rec["salvaged_count"]
-            n = rec["attempts_used"]
-            tiers = ", ".join(rec["tiers_used"])
-            if st == "salvaged":
-                detail = f"partial salvage={salvaged} facts"
-            else:
-                detail = "no salvage"
-            lines.append(
-                f"- {fname} [{scope_key[:40]}]: {chars:,} chars read, "
-                f"{st} after {n} attempts ({tiers}); "
-                f"{detail} — treat remaining terms as unverified."
-            )
-        return "\n".join(lines)
 
     async def _emit_lead_started(self, state: InvestigationState, lead: Lead):
         """Emit lead.started event and track timing."""
@@ -2276,11 +2217,6 @@ class RLMEngine:
                 middle_truncate=True,
             )
 
-        extraction_failures = self._format_extraction_failures(
-            state.findings.get("extraction_failures", {})
-        )
-        _failure_section = f"\n\n{extraction_failures}" if extraction_failures else ""
-
         checkpoint_findings = (
             "SOURCE LABELS: SEARCH_SNIPPET facts came from visible search-result context and may be used when directly supported. "
             "DOCUMENT_PREFIX_READ and DOCUMENT_TARGETED_READ facts came from document content.\n\n"
@@ -2290,7 +2226,6 @@ class RLMEngine:
             f"{coverage}\n\n"
             "=== PINNED REGIONS AVAILABLE TO SYNTHESIS (CHECKPOINT VIEW) ===\n"
             f"{checkpoint_pinned_content or 'No pinned regions.'}"
-            f"{_failure_section}"
         )
         synthesis_evidence = (
             "SOURCE LABELS: SEARCH_SNIPPET facts came from visible search-result context and may be used when directly supported. "
@@ -2301,7 +2236,6 @@ class RLMEngine:
             f"{cached_facts or 'No cached facts selected.'}\n\n"
             "=== COVERAGE / READ SCOPES ===\n"
             f"{coverage}"
-            f"{_failure_section}"
         )
         return {
             "current_facts": current_facts,
@@ -2672,16 +2606,9 @@ class RLMEngine:
             extraction_limit = effective_limit
             scope_context = f"Read scope: {scope.label()}" if scope.label() != "prefix" else "Read scope: prefix"
 
-            # Use decisions layer to extract facts — LITE first, FLASH on failure
-            tiers_used: list[str] = []
-            extraction: dict = {}
-            _extraction_status: str = "ok"
-
-            # Attempt 1: LITE
-            cache.record_extraction_attempt(scope_key)
-            tiers_used.append("LITE")
+            # Use decisions layer to extract facts
             t_step_ef = self._telemetry.begin_step("extract_facts", "investigation_loop") if self._telemetry else None
-            extraction, _extraction_status = await decisions.extract_facts(
+            extraction = await decisions.extract_facts(
                 query=state.query,
                 filename=doc.filename,
                 content=content,
@@ -2690,44 +2617,9 @@ class RLMEngine:
                 scope_context=scope_context,
                 active_step=t_step_ef,
                 trace_ctx=self._trace_ctx,
-                tier=ModelTier.LITE,
-                allow_salvage=False,
             )
             if t_step_ef:
                 self._telemetry.end_step(t_step_ef)
-
-            # Attempt 2: FLASH — only if LITE failed and budget remains
-            if _extraction_status != "ok" and cache.extraction_budget_remaining(scope_key):
-                cache.record_extraction_attempt(scope_key)
-                tiers_used.append("FLASH")
-                t_step_ef2 = self._telemetry.begin_step("extract_facts_retry_flash", "investigation_loop") if self._telemetry else None
-                extraction, _extraction_status = await decisions.extract_facts(
-                    query=state.query,
-                    filename=doc.filename,
-                    content=content,
-                    client=self.client,
-                    max_content_chars=extraction_limit,
-                    scope_context=scope_context,
-                    active_step=t_step_ef2,
-                    trace_ctx=self._trace_ctx,
-                    tier=ModelTier.FLASH,
-                    allow_salvage=True,
-                )
-                if t_step_ef2:
-                    self._telemetry.end_step(t_step_ef2)
-
-            # Record failure if all attempts exhausted
-            if _extraction_status != "ok":
-                self._record_extraction_failure(
-                    state=state,
-                    scope_key=scope_key,
-                    filename=doc.filename,
-                    chars_read=len(content),
-                    status=_extraction_status,
-                    salvaged_count=len(extraction.get("facts", [])),
-                    attempts_used=cache.extraction_attempts.get(scope_key, 0),
-                    tiers_used=tiers_used,
-                )
 
             # Store facts and emit per-fact updates
             facts = extraction.get("facts", [])
