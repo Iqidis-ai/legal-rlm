@@ -29,6 +29,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class MalformedResponseError(Exception):
+    """Raised when the model returns a 200 with no usable text.
+
+    Covers Gemini 3.x's MALFORMED_FUNCTION_CALL finish reason (the model emits a
+    malformed internal function call and stops with empty text) and any other
+    empty/None completion. Raising this lets _call_with_fallback escalate to a
+    different model instead of silently returning an empty string.
+    """
+
+
 # =============================================================================
 # SYSTEM PROMPTS BY TIER
 # =============================================================================
@@ -515,14 +525,44 @@ class GeminiClient:
             logger.warning(f"Failed to initialize Vertex AI client: {e}")
             return None
 
+    @staticmethod
+    def _validate_response(response: Any, model: str) -> None:
+        """Raise MalformedResponseError if the response has no usable text.
+
+        Gemini 3.x can return HTTP 200 with finish_reason=MALFORMED_FUNCTION_CALL
+        and text=None. Without this check, `response.text or ""` swallows it and
+        no fallback is triggered. Raising forces _call_with_fallback to try the
+        next model.
+        """
+        candidates = getattr(response, "candidates", None)
+        finish = getattr(candidates[0], "finish_reason", None) if candidates else None
+        finish_str = str(finish) if finish is not None else ""
+
+        if "MALFORMED_FUNCTION_CALL" in finish_str:
+            raise MalformedResponseError(
+                f"{model} returned MALFORMED_FUNCTION_CALL (no text)"
+            )
+
+        try:
+            text = response.text
+        except Exception:
+            text = None
+        if not text:
+            raise MalformedResponseError(
+                f"{model} returned empty response (finish_reason={finish_str or 'unknown'})"
+            )
+
     async def _try_call(
         self, client: genai.Client, model: str, contents: list, config: Any, timeout: float, no_timeout: bool
     ) -> Any:
         """Make a single API call with timeout handling."""
         api_call = asyncio.to_thread(client.models.generate_content, model=model, contents=contents, config=config)
         if no_timeout:
-            return await api_call
-        return await asyncio.wait_for(api_call, timeout=timeout)
+            response = await api_call
+        else:
+            response = await asyncio.wait_for(api_call, timeout=timeout)
+        self._validate_response(response, model)
+        return response
 
     async def _call_with_fallback(
         self, primary_model: str, fallback_model: str, contents: list, config: Any, timeout: float, no_timeout: bool,
