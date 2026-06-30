@@ -1,0 +1,8 @@
+{
+  "query_num": 35,
+  "query": "Compare expert assessments of Gulfstream's estimating methodology.",
+  "status": "completed",
+  "elapsed_seconds": 55.2,
+  "output": "Happy to review. The workspace doesn’t include the case record; the scripts reference `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents`, which isn’t available here. If you want a document-cited analysis, please point me to the filings/exhibits in the workspace or copy them in. Also tell me the deliverable and governing law you want applied.\n\nPick one:\n1. Move or point me to the case documents in this workspace.\n2. Confirm you want me to proceed using `test_results/` (provisional, excerpt-only).\n3. Specify a focused deliverable (case brief, claims/defenses memo, evidence map, timeline, damages analysis).",
+  "error": null
+}

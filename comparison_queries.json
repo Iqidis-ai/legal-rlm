@@ -1,0 +1,35 @@
+{
+  "description": "Test queries for RLM vs Claude Code comparison",
+  "queries": [
+    {
+      "id": "q1",
+      "query": "What are the key claims in this case?",
+      "type": "comprehensive",
+      "expected_facts": ["7 causes of action", "$4,800,000 damages", "fraud", "breach of warranty", "negligent misrepresentation"]
+    },
+    {
+      "id": "q2",
+      "query": "What was Gulfstream's initial cost estimate and how did it compare to actual costs?",
+      "type": "factual_comparison",
+      "expected_facts": ["$835,931 initial", "$3,879,972.80 actual", "2,800 hours initial", "26,409 hours actual", "9.4x overrun", "10 months"]
+    },
+    {
+      "id": "q3",
+      "query": "What evidence shows a pattern of underestimation by Gulfstream?",
+      "type": "pattern_evidence",
+      "expected_facts": ["multiple aircraft data", "SN 5108", "SN 5061", "systematic underquoting"]
+    },
+    {
+      "id": "q4",
+      "query": "What are the specific dates when return to service was delayed?",
+      "type": "timeline",
+      "expected_facts": ["April 1 2024", "June 21", "August 1", "August 15", "November 22 2024"]
+    },
+    {
+      "id": "q5",
+      "query": "What Georgia laws and case citations support CITIOM's claims?",
+      "type": "legal_analysis",
+      "expected_facts": ["O.C.G.A.", "Holmes v. Clear Channel", "Wade v. Watson", "Georgia Fair Business Practices Act"]
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "query_num": 3,
+  "query": "What is the serial number of the aircraft in dispute?",
+  "status": "timeout",
+  "elapsed_seconds": 357.3,
+  "output": "",
+  "error": "Timeout after 300s"
+}

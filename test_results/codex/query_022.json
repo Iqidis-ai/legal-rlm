@@ -1,0 +1,8 @@
+{
+  "query_num": 22,
+  "query": "How do the expert reports from both sides differ in their assessment of damages?",
+  "status": "completed",
+  "elapsed_seconds": 3.7,
+  "output": "What exactly do you need from the CITIOM v. Gulfstream review (e.g., case summary, issue-spotting, procedural posture, key holdings, risk analysis, or a draft memo)? Also, are the case materials in this repo that you want me to read?",
+  "error": null
+}

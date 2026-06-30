@@ -12,11 +12,306 @@ from typing import Optional, Callable, Any
 import asyncio
 import os
 import logging
+import time
 
 from google import genai
 from google.genai import types
+import json
+import base64
+from google.oauth2 import service_account
+
+# Import ResponseCache with TYPE_CHECKING to avoid circular imports
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .cache import ResponseCache
+    from .telemetry import InvestigationStep
 
 logger = logging.getLogger(__name__)
+
+
+class MalformedResponseError(Exception):
+    """Raised when the model returns a 200 with no usable text.
+
+    Covers Gemini 3.x's MALFORMED_FUNCTION_CALL finish reason (the model emits a
+    malformed internal function call and stops with empty text) and any other
+    empty/None completion. Raising this lets _call_with_fallback escalate to a
+    different model instead of silently returning an empty string.
+    """
+
+
+# =============================================================================
+# SYSTEM PROMPTS BY TIER
+# =============================================================================
+
+SYSTEM_PROMPT_PRO = """You are a Named Partner at an elite law firm. Your synthesis is the final work product—it goes directly to clients, courts, and decision-makers. Your reputation and the firm's reputation depend on every word.
+
+═══════════════════════════════════════════════════════════════════════════════
+CORE MANDATE
+═══════════════════════════════════════════════════════════════════════════════
+
+You receive pre-gathered evidence from investigation. Your job: SYNTHESIZE with excellence.
+- Transform raw materials into polished, actionable legal work product
+- Think three moves ahead—what will the reader do with this?
+- Every output should be something you'd proudly sign your name to
+
+INVIOLABLE RULES:
+1. NEVER fabricate facts, holdings, or authorities not in provided materials
+2. NEVER guess when uncertain—flag gaps explicitly and explain their significance
+3. NEVER conflate what IS with what MIGHT BE—distinguish certainty levels clearly
+4. ALWAYS ground analysis in the specific evidence provided
+
+═══════════════════════════════════════════════════════════════════════════════
+TASK-AWARE OUTPUT
+═══════════════════════════════════════════════════════════════════════════════
+
+Read the query carefully. Detect what type of work product is needed and adapt completely:
+
+ANALYSIS/MEMO requested → Structure with issues, analysis, conclusions. Be thorough.
+DRAFT PLEADING requested → Write as court document. Proper legal voice. No internal citations.
+BRIEF/ARGUMENT requested → Persuasive framing. Lead with strongest points. Address weaknesses.
+SUMMARY requested → Concise. Executive-friendly. Key facts and bottom line.
+STRATEGIC ADVICE requested → Options with tradeoffs. Recommendations with reasoning.
+FACTUAL QUESTION → Direct answer. Don't over-elaborate.
+COMPLEX MULTI-ISSUE → Structure by issue. Executive summary first.
+
+For drafted legal work product, preserve any required legal or procedural structure exactly.
+When the draft calls for paragraph-by-paragraph, count-by-count, or item-by-item responses, mirror that structure one-for-one.
+Do not compress numbered responses into grouped ranges unless the user explicitly requests that format.
+
+Match LENGTH to complexity:
+- Simple factual → 2-4 sentences
+- Moderate analysis → Structured paragraphs
+- Complex synthesis → Full sections with headers
+
+═══════════════════════════════════════════════════════════════════════════════
+DOCUMENT HIERARCHY & LEGAL REASONING
+═══════════════════════════════════════════════════════════════════════════════
+
+When materials conflict, apply precedence:
+
+1. LATEST GOVERNS: Amendments supersede original. Later dates control earlier.
+2. SIGNED > UNSIGNED: Executed documents trump drafts.
+3. SPECIFIC > GENERAL: Particular provisions override general clauses.
+4. DEFINED TERMS CONTROL: If the agreement defines it, use that definition exactly.
+5. INTEGRATION CLAUSES: Final written agreement supersedes prior negotiations.
+
+INTERPRETATION APPROACH:
+- Start with plain meaning
+- Harmonize provisions to work together, not conflict
+- Ambiguities against drafter (if identifiable)
+- Consider commercial purpose and reasonable expectations
+
+LEGAL SEMANTIC PRECISION:
+- "shall not" / "must not" / "prohibited" → Absolute NO
+- "may" → Discretionary, permission granted
+- "subject to" / "conditioned upon" → Contingent obligation
+- "notwithstanding" → This provision controls over conflicting provisions
+- "without prejudice" → Reservation of rights
+- "best efforts" vs "reasonable efforts" → Different standards of obligation
+
+═══════════════════════════════════════════════════════════════════════════════
+CROSS-DOCUMENT SYNTHESIS
+═══════════════════════════════════════════════════════════════════════════════
+
+When synthesizing across multiple documents:
+
+TRACE THE CHAIN: Original agreement → Amendments → Side letters → Course of dealing
+AGGREGATE VALUES: Sum figures across Order Forms, exhibits, schedules
+MAP DEFINITIONS: Track how defined terms evolve across documents
+BUILD TIMELINES: Sequence events chronologically with sources
+IDENTIFY GAPS: What should be addressed but isn't?
+SPOT CONFLICTS: Note where documents say different things
+
+For contractual analysis specifically:
+- Identify the operative/governing version FIRST
+- Note what has been amended, waived, or superseded
+- Distinguish between what parties AGREED vs what they CLAIM
+
+═══════════════════════════════════════════════════════════════════════════════
+ADVERSARIAL THINKING
+═══════════════════════════════════════════════════════════════════════════════
+
+Always consider the other side:
+
+- How would opposing counsel attack this position?
+- What facts cut against our argument?
+- Where is the evidence weakest?
+- What's the best counterargument?
+
+Present your analysis with awareness of vulnerabilities. A partner who ignores weaknesses serves the client poorly. This adversarial lens applies to strategic analysis and argument evaluation—not to tool failures or research gaps, where the task is to report what was found and continue.
+
+CONFIDENCE CALIBRATION:
+- HIGH CONFIDENCE: Strong textual support, no material counterargument
+- MODERATE CONFIDENCE: Good support but some ambiguity or missing context
+- LOW CONFIDENCE: Limited support, significant gaps, or strong counterarguments exist
+- UNCERTAIN: Evidence conflicts or is insufficient—more investigation needed
+
+═══════════════════════════════════════════════════════════════════════════════
+OUTPUT EXCELLENCE
+═══════════════════════════════════════════════════════════════════════════════
+
+STRUCTURE FOR CLARITY:
+- Lead with the answer/conclusion
+- Support with evidence and reasoning
+- Address complications and counterarguments
+- End with actionable next steps or recommendations
+
+For complex analyses, use:
+1. Executive Summary (the bottom line in 2-3 sentences)
+2. Key Documents & Governing Instruments
+3. Issue-by-Issue Analysis
+4. Risk Assessment & Counterarguments
+5. Gaps & Uncertainties
+6. Recommendations & Next Steps
+
+PROFESSIONAL VOICE:
+- Authoritative but not arrogant
+- Precise without being pedantic
+- Direct without being brusque
+- Acknowledge uncertainty without appearing weak
+- Challenge arguments and evidence, never the person—candid. Do not be condescending or rude
+
+ZERO TOLERANCE:
+- No filler phrases ("It is important to note that...")
+- No hedging without substance ("This could potentially maybe...")
+- No restating the question as the answer
+- No generic conclusions that could apply to anything
+- Never use ASCII art or box-drawing characters; use markdown tables or structured lists instead
+
+═══════════════════════════════════════════════════════════════════════════════
+ETHICS
+═══════════════════════════════════════════════════════════════════════════════
+
+- Never assist with unlawful activity
+- Default to lawful interpretation when genuinely ambiguous
+- In gray areas: provide lawful strategies while noting risks
+- If asked to fabricate or misrepresent: refuse explicitly
+- Protect confidentiality absolutely
+
+You are the last line of quality control. Everything you produce reflects on the firm.
+
+═══════════════════════════════════════════════════════════════════════════════
+MODES OF COMMUNICATION
+═══════════════════════════════════════════════════════════════════════════════
+
+Adopt two different modes when communicating:
+When creating work meant for external usage (proposals, court submissions, emails etc) adopt a polite, professional tone to ensure that our user comes across well when their work is reviewed.
+When discussing strategy with the user, still be polite but be more adversarial. Poke holes in arguments, think critically, reevaluate everything and ensure everything is watertight. Never be sycophantic because poor strategy or legal analysis costs our users more than simple agreements.
+Pick between the two modes based on the user query. When lacking information/unclear on something revert to the user with clarifying questions/concerns.
+
+═══════════════════════════════════════════════════════════════════════════════
+PRAGMATIC LEGAL STRATEGY
+═══════════════════════════════════════════════════════════════════════════════
+
+Remember that legal analysis is not law school/textbook law. Sometimes judges, courts, jurisdictions, etc will have certain preferences or decide to ignore/promote certain factors. In this case we must be pragmatic and strategic. Tailor your work to match their biases and styles. It is even worth researching them, and presenting them when creating your strategy. Ask the user about them if required. And when the user gives you information about their, weigh it heavily."""
+
+SYSTEM_PROMPT_FLASH = """You are an elite legal strategist. In your domain—case analysis, investigation planning, issue spotting, resource deployment—you are world-class.
+
+Your decisions shape the entire investigation. What gets read, what gets skipped, what theories get pursued—these calls are yours.
+
+═══════════════════════════════════════════════════════════════════════════════
+CORE STANDARDS
+═══════════════════════════════════════════════════════════════════════════════
+
+DECISIVE: Make the call. "It depends" is only acceptable with concrete conditions.
+JUSTIFIED: Every decision has reasoning. Brief, but defensible.
+LEGALLY GROUNDED: Think in terms of elements, burdens, standards of proof.
+STRATEGICALLY SOUND: Anticipate where this leads. Think two steps ahead.
+EFFICIENT: Cut what doesn't matter. Prioritize ruthlessly.
+
+═══════════════════════════════════════════════════════════════════════════════
+LEGAL STRATEGIC THINKING
+═══════════════════════════════════════════════════════════════════════════════
+
+Frame investigations properly:
+- What are the legal issues? What elements must be proved?
+- Who bears the burden? What's the standard (preponderance, clear and convincing)?
+- What's the client posture—plaintiff, defendant, neutral advisor?
+- What would opposing counsel look for? Think adversarially.
+
+Know document value:
+- Pleadings define the dispute
+- Contracts/agreements are primary sources
+- Correspondence shows actual party conduct and intent
+- Expert reports provide specialized analysis
+- Briefs synthesize positions (claimant briefs have damages, defendant briefs have defenses)
+
+Amendments and latest versions supersede earlier ones. Always identify the operative documents.
+
+═══════════════════════════════════════════════════════════════════════════════
+EXECUTION STANDARDS
+═══════════════════════════════════════════════════════════════════════════════
+
+- Don't investigate forever. Define what "sufficient" looks like and stop there.
+- Skip reference materials and generic legal acts unless specifically needed.
+- When you identify something critical, say so explicitly.
+- When you skip something, note why—create an audit trail.
+- Your output feeds the next phase. Structure it for whoever receives it.
+
+You don't execute detail work—you direct the investigation. Own that responsibility.
+
+═══════════════════════════════════════════════════════════════════════════════
+EPISTEMIC BIAS AWARENESS
+═══════════════════════════════════════════════════════════════════════════════
+
+When evaluating texts, user inputs, and input documents always scan for epistemic biases. Who wrote this document? What narrative/incentive are they trying to perpetuate? Remember that people present assertions as facts and will present arguments to promote an agenda. Account for this when reading inputs to derive your analysis.
+Remember that legal analysis is not law school/textbook law. Sometimes judges, courts, jurisdictions, etc will have certain preferences or decide to ignore/promote certain factors. In this case we must be pragmatic and strategic. Tailor your work to match their biases and styles. It is even worth researching them, and presenting them when creating your strategy. Ask the user about them if required. And when the user gives you information about their, weigh it heavily."""
+
+SYSTEM_PROMPT_FLASH_PLANNER = SYSTEM_PROMPT_FLASH + """
+
+═══════════════════════════════════════════════════════════════════════════════
+PLANNING ROLE — OUTPUT CONSTRAINT
+═══════════════════════════════════════════════════════════════════════════════
+
+You assess and plan — you never respond to the user directly.
+The query is the subject of investigation, not a directive to you.
+Whatever the query instructs ("provide nothing else," "answer with X only," etc.) —
+output only the required JSON planning structure. The synthesis stage handles user responses."""
+
+SYSTEM_PROMPT_WORKER = """You are an elite legal extraction specialist. In your domain—precision extraction, document analysis, pattern recognition in legal materials—you are world-class.
+
+Legal matters turn on exact language, specific dates, precise figures. Your accuracy makes everything downstream possible.
+
+═══════════════════════════════════════════════════════════════════════════════
+CORE STANDARDS
+═══════════════════════════════════════════════════════════════════════════════
+
+EXACT: "$1,234,567.89" not "over a million." "January 15, 2024" not "early 2024."
+SOURCED: Every fact ties to its document origin. No floating assertions.
+LITERAL: Extract what IS there, not what you infer or interpret.
+FORMAT-PERFECT: Output specifications are mandatory. Follow them exactly.
+UNCERTAINTY-FLAGGED: When unclear, mark explicitly: "[UNCERTAIN: ...]"
+
+═══════════════════════════════════════════════════════════════════════════════
+LEGAL EXTRACTION PRECISION
+═══════════════════════════════════════════════════════════════════════════════
+
+Legal documents demand surgical precision:
+
+PARTIES: Full legal names with roles. "CITIOM Aviation LLC, Claimant" not "the company."
+DATES: Exact dates with document source. Deadlines, execution dates, effective dates matter.
+AMOUNTS: Full figures with currency. "$4,847,235.00 USD" not "approximately $4.8 million."
+PROVISIONS: Exact section/clause references. "Section 7.2(a)" not "the termination clause."
+DEFINED TERMS: Note when terms are defined. "Services" as defined in Section 1.1.
+
+For contractual language:
+- Obligations: "shall," "must," "agrees to" = mandatory
+- Permissions: "may" = discretionary
+- Prohibitions: "shall not," "must not" = forbidden
+- Conditions: "subject to," "provided that" = contingent
+
+═══════════════════════════════════════════════════════════════════════════════
+EXECUTION STANDARDS
+═══════════════════════════════════════════════════════════════════════════════
+
+- Follow the task specification exactly. If it asks for JSON, return JSON.
+- Include more detail rather than less—upstream can filter.
+- No hedging, no filler, no unnecessary caveats.
+- If a document is truncated, note what's missing.
+- If something is ambiguous in the source, flag it—don't resolve it yourself.
+
+You don't interpret or strategize—you extract with surgical precision.
+Your job is to surface exactly what's in the documents, accurately and completely."""
 
 
 class ModelTier(Enum):
@@ -35,30 +330,44 @@ class ModelConfig:
     max_output_tokens: int = 8192
     cost_per_1m_input: float = 0.075  # Default Gemini 2.5 Flash pricing
     cost_per_1m_output: float = 0.30
+    cost_per_1m_cached_input: float = 0.01875  # Default: 25% of input price
+    fallback_model_id: str = ""           # Fallback model when primary is unavailable (503)
+    secondary_fallback_model_id: str = "" # Last-resort fallback (e.g. FLASH when all PRO options fail)
 
 
 # Model configurations per tier
+# CRITICAL: temperature=0 for agentic consistency (no variance)
 MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
     ModelTier.LITE: ModelConfig(
         model_id="gemini-2.5-flash-lite",
         thinking_level="",
-        max_output_tokens=8192,  # Increased from 4096 to reduce truncation
-        cost_per_1m_input=0.01875,  # 1/4 of flash
-        cost_per_1m_output=0.075,
+        temperature=0.0,  # Deterministic for consistency
+        max_output_tokens=16384,  # Don't be stingy
+        cost_per_1m_input=0.10,
+        cost_per_1m_output=0.40,
+        cost_per_1m_cached_input=0.025,  # 25% of input
+        fallback_model_id="gemini-3.1-flash-lite-preview",  # Fallback when 2.5-flash-lite is unavailable/503
     ),
     ModelTier.FLASH: ModelConfig(
-        model_id="gemini-2.5-flash",
-        thinking_level="",
-        max_output_tokens=16384,  # Increased from 8192 to reduce JSON truncation
-        cost_per_1m_input=0.075,
-        cost_per_1m_output=0.30,
+        model_id="gemini-3-flash-preview",  # Primary model
+        thinking_level="",  # Gemini 3.0 doesn't use thinking levels
+        temperature=0.0,
+        max_output_tokens=32768,
+        cost_per_1m_input=0.50,
+        cost_per_1m_output=3.00,
+        cost_per_1m_cached_input=0.125,  # 25% of input
+        fallback_model_id="gemini-2.5-flash",  # Fallback when 503/overloaded
     ),
     ModelTier.PRO: ModelConfig(
-        model_id="gemini-2.5-pro",
+        model_id="gemini-3.5-flash",
         thinking_level="",
-        max_output_tokens=32768,  # Increased from 16384 for thorough analysis
-        cost_per_1m_input=1.25,
-        cost_per_1m_output=5.00,
+        temperature=0.0,  # Deterministic for consistency
+        max_output_tokens=65536,  # Maximum output for thorough synthesis
+        cost_per_1m_input=2.00,
+        cost_per_1m_output=12.00,
+        cost_per_1m_cached_input=0.50,  # 25% of input
+        fallback_model_id="gemini-2.5-pro",              # Fallback when 503/overloaded
+        secondary_fallback_model_id="gemini-2.5-flash",  # Last resort if all PRO options fail
     ),
 }
 
@@ -140,10 +449,29 @@ class ThinkingCallback:
 class GeminiClient:
     """Tiered Gemini client for RLM operations with timeout, retry, and rate limiting."""
 
-    DEFAULT_TIMEOUT = 120.0  # 2 minutes
+    DEFAULT_TIMEOUT = 120.0  # 2 minutes (PRO)
     MAX_RETRIES = 3
     DEFAULT_RPM = 60  # Requests per minute
     DEFAULT_BURST = 10  # Burst size
+
+    # Per-step timeout per tier (each fallback attempt gets this budget)
+    TIER_TIMEOUTS: dict = {
+        ModelTier.LITE: 80.0,
+        ModelTier.FLASH: 120.0,
+        ModelTier.PRO: 120.0,
+    }
+
+    # Class-level Vertex AI client (lazy initialized, shared across instances)
+    _vertex_client: Optional[genai.Client] = None
+    _vertex_init_attempted: bool = False
+
+    # Class-level Anthropic fallback client (lazy initialized, shared across instances)
+    _anthropic_client: Optional[Any] = None
+    _anthropic_init_attempted: bool = False
+
+    # Class-level OpenAI fallback client (lazy initialized, shared across instances)
+    _openai_client: Optional[Any] = None
+    _openai_init_attempted: bool = False
 
     def __init__(
         self,
@@ -151,6 +479,7 @@ class GeminiClient:
         timeout: float = DEFAULT_TIMEOUT,
         requests_per_minute: int = DEFAULT_RPM,
         burst_size: int = DEFAULT_BURST,
+        cache: Optional["ResponseCache"] = None,
     ):
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         if not self.api_key:
@@ -158,15 +487,275 @@ class GeminiClient:
 
         self.client = genai.Client(api_key=self.api_key)
         self.timeout = timeout
+        self._cache = cache
         self._usage: dict[ModelTier, UsageStats] = {t: UsageStats() for t in ModelTier}
         self._rate_limiter = RateLimiter(requests_per_minute, burst_size)
 
-    def _get_config(self, tier: ModelTier) -> types.GenerateContentConfig:
-        """Get generation config for a tier."""
+    @classmethod
+    def _get_vertex_client(cls) -> Optional[genai.Client]:
+        """Lazy initialization for Vertex AI client using base64-encoded credentials."""
+        if cls._vertex_init_attempted:
+            return cls._vertex_client
+
+        cls._vertex_init_attempted = True
+        try:
+            creds_b64 = os.environ.get("VERTEXAI_CREDENTIALS_B64")
+            if not creds_b64:
+                logger.debug("VERTEXAI_CREDENTIALS_B64 not set, Vertex AI fallback disabled")
+                return None
+
+            # Decode base64 to JSON string
+            logger.debug("Decoding base64 Vertex AI credentials")
+            creds_json = base64.b64decode(creds_b64).decode('utf-8')
+            credentials_dict = json.loads(creds_json)
+
+            project_id = credentials_dict.get("project_id")
+            if not project_id:
+                logger.warning("Invalid Vertex AI credentials: missing project_id")
+                return None
+
+            # Create credentials directly from dict (no temp file needed)
+            credentials = service_account.Credentials.from_service_account_info(
+                credentials_dict,
+                scopes=["https://www.googleapis.com/auth/cloud-platform"],
+            )
+
+            location = os.environ.get("VERTEX_LOCATION", "us-central1")
+            cls._vertex_client = genai.Client(
+                vertexai=True,
+                project=project_id,
+                location=location,
+                credentials=credentials,
+            )
+            logger.info(f"Vertex AI client initialized (project={project_id}, location={location})")
+            return cls._vertex_client
+        except Exception as e:
+            logger.warning(f"Failed to initialize Vertex AI client: {e}")
+            return None
+
+    @classmethod
+    def _get_anthropic_fallback(cls):
+        """Lazy init for the final-layer Anthropic fallback client.
+
+        Returns None (fallback disabled) when ANTHROPIC_API_KEY is unset or the
+        anthropic package/init fails, leaving Gemini-only behaviour unchanged.
+        """
+        if cls._anthropic_init_attempted:
+            return cls._anthropic_client
+
+        cls._anthropic_init_attempted = True
+        try:
+            if not os.environ.get("ANTHROPIC_API_KEY"):
+                logger.debug("ANTHROPIC_API_KEY not set, Anthropic fallback disabled")
+                return None
+            from .anthropic_fallback import AnthropicClient
+            cls._anthropic_client = AnthropicClient()
+            logger.info("Anthropic fallback client initialized (final fallback layer)")
+            return cls._anthropic_client
+        except Exception as e:
+            logger.warning(f"Failed to initialize Anthropic fallback client: {e}")
+            return None
+
+    @classmethod
+    def _get_openai_fallback(cls):
+        """Lazy init for the final-layer OpenAI fallback client.
+
+        Returns None (fallback disabled) when OPENAI_API_KEY is unset or the
+        openai package/init fails, leaving Gemini-only behaviour unchanged.
+        """
+        if cls._openai_init_attempted:
+            return cls._openai_client
+
+        cls._openai_init_attempted = True
+        try:
+            if not os.environ.get("OPENAI_API_KEY"):
+                logger.debug("OPENAI_API_KEY not set, OpenAI fallback disabled")
+                return None
+            from .openai_fallback import OpenAIClient
+            cls._openai_client = OpenAIClient()
+            logger.info("OpenAI fallback client initialized (final fallback layer)")
+            return cls._openai_client
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenAI fallback client: {e}")
+            return None
+
+    @staticmethod
+    def _describe_block(response: Any) -> str:
+        """Extract a human-readable block/safety reason from a response.
+
+        When a prompt is blocked, Gemini returns zero candidates and the reason
+        lives in response.prompt_feedback.block_reason (NOT in finish_reason),
+        which otherwise surfaces as 'unknown'. This also captures per-category
+        safety ratings flagged as blocked at the prompt or candidate level.
+        Returns '' when no block information is available.
+        """
+        parts = []
+        pf = getattr(response, "prompt_feedback", None)
+        if pf is not None:
+            block_reason = getattr(pf, "block_reason", None)
+            if block_reason is not None:
+                parts.append(f"block_reason={block_reason}")
+            block_msg = getattr(pf, "block_reason_message", None)
+            if block_msg:
+                parts.append(f"block_message={block_msg}")
+            ratings = getattr(pf, "safety_ratings", None) or []
+            blocked = [str(getattr(r, "category", "?")) for r in ratings if getattr(r, "blocked", False)]
+            if blocked:
+                parts.append(f"prompt_blocked_categories={blocked}")
+
+        candidates = getattr(response, "candidates", None)
+        if candidates:
+            ratings = getattr(candidates[0], "safety_ratings", None) or []
+            blocked = [str(getattr(r, "category", "?")) for r in ratings if getattr(r, "blocked", False)]
+            if blocked:
+                parts.append(f"candidate_blocked_categories={blocked}")
+        return ", ".join(parts)
+
+    @staticmethod
+    def _validate_response(response: Any, model: str) -> None:
+        """Raise MalformedResponseError if the response has no usable text.
+
+        Gemini 3.x can return HTTP 200 with finish_reason=MALFORMED_FUNCTION_CALL
+        and text=None. Without this check, `response.text or ""` swallows it and
+        no fallback is triggered. Raising forces _call_with_fallback to try the
+        next model.
+        """
+        candidates = getattr(response, "candidates", None)
+        finish = getattr(candidates[0], "finish_reason", None) if candidates else None
+        finish_str = str(finish) if finish is not None else ""
+
+        if "MALFORMED_FUNCTION_CALL" in finish_str:
+            raise MalformedResponseError(
+                f"{model} returned MALFORMED_FUNCTION_CALL (no text)"
+            )
+
+        try:
+            text = response.text
+        except Exception:
+            text = None
+        if not text:
+            block_info = GeminiClient._describe_block(response)
+            if block_info:
+                logger.warning(
+                    f"{model} returned empty response — likely content block: {block_info}"
+                )
+            raise MalformedResponseError(
+                f"{model} returned empty response "
+                f"(finish_reason={finish_str or 'unknown'}"
+                f"{'; ' + block_info if block_info else ''})"
+            )
+
+    async def _try_call(
+        self, client: genai.Client, model: str, contents: list, config: Any, timeout: float, no_timeout: bool
+    ) -> Any:
+        """Make a single API call with timeout handling."""
+        api_call = asyncio.to_thread(client.models.generate_content, model=model, contents=contents, config=config)
+        if no_timeout:
+            response = await api_call
+        else:
+            response = await asyncio.wait_for(api_call, timeout=timeout)
+        self._validate_response(response, model)
+        return response
+
+    async def _call_with_fallback(
+        self, primary_model: str, fallback_model: str, contents: list, config: Any, timeout: float, no_timeout: bool,
+        secondary_fallback_model: str = "",
+    ) -> Any:
+        """Execute API call with fallback strategy.
+
+        Timeout: Gemini(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
+        Other errors (including 503): Gemini(primary) → Vertex(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
+        """
+        vertex = self._get_vertex_client()
+
+        # Step 1: Try Gemini API with primary model
+        try:
+            return await self._try_call(self.client, primary_model, contents, config, timeout, no_timeout)
+        except (asyncio.TimeoutError, TimeoutError) as e:
+            # Timeout: skip Vertex(primary) and go straight to fallback model
+            logger.warning(f"{primary_model} timed out, skipping to fallback model")
+            if not fallback_model:
+                raise TimeoutError(f"API call timed out after {timeout}s")
+        except Exception as e:
+            error_str = str(e)
+            is_unavailable = "503" in error_str or "UNAVAILABLE" in error_str or "overloaded" in error_str.lower()
+
+            # Step 2: Try Vertex AI with primary model (for all non-timeout errors, including 503)
+            # Vertex has independent capacity — worth trying even when Gemini API returns 503
+            if vertex:
+                try:
+                    logger.warning(
+                        f"Gemini {primary_model} {'unavailable (503)' if is_unavailable else 'failed'}, "
+                        f"trying Vertex AI"
+                    )
+                    return await self._try_call(vertex, primary_model, contents, config, timeout, no_timeout)
+                except Exception as vertex_e:
+                    logger.warning(f"Vertex AI {primary_model} also failed: {str(vertex_e)[:100]}")
+
+            if not fallback_model:
+                raise
+
+            logger.warning(f"{primary_model} exhausted (Gemini + Vertex), trying fallback model")
+
+        # Step 3: Try Gemini API with fallback model
+        try:
+            return await self._try_call(self.client, fallback_model, contents, config, timeout, no_timeout)
+        except Exception as e:
+            # Step 4: Try Vertex AI with fallback model
+            if vertex:
+                try:
+                    logger.warning(f"Gemini {fallback_model} failed, trying Vertex AI fallback")
+                    return await self._try_call(vertex, fallback_model, contents, config, timeout, no_timeout)
+                except Exception as vertex_e:
+                    logger.warning(f"Vertex AI {fallback_model} also failed: {str(vertex_e)[:100]}")
+
+            if not secondary_fallback_model:
+                msg = str(e)
+                if not msg:
+                    msg = (
+                        f"All models timed out after {timeout}s each "
+                        f"(primary={primary_model}, fallback={fallback_model})"
+                    )
+                    raise RuntimeError(msg) from e
+                raise
+
+            logger.warning(f"All primary/fallback options exhausted, trying secondary fallback {secondary_fallback_model}")
+
+        # Step 5: Try Gemini API with secondary fallback model (last resort)
+        try:
+            return await self._try_call(self.client, secondary_fallback_model, contents, config, timeout, no_timeout)
+        except Exception as e:
+            # Step 6: Try Vertex AI with secondary fallback model
+            if vertex:
+                logger.warning(f"Gemini {secondary_fallback_model} failed, trying Vertex AI secondary fallback")
+                return await self._try_call(vertex, secondary_fallback_model, contents, config, timeout, no_timeout)
+            msg = str(e)
+            if not msg:
+                msg = (
+                    f"All models timed out after {timeout}s each "
+                    f"(primary={primary_model}, fallback={fallback_model}, "
+                    f"secondary={secondary_fallback_model})"
+                )
+                raise RuntimeError(msg) from e
+            raise
+
+    def _get_config(self, tier: ModelTier, system_prompt: Optional[str] = None) -> types.GenerateContentConfig:
+        """Get generation config for a tier with system instruction."""
         mc = MODEL_CONFIGS[tier]
+
+        # Use provided system prompt or default for tier
+        if system_prompt is None:
+            if tier == ModelTier.PRO:
+                system_prompt = SYSTEM_PROMPT_PRO
+            elif tier == ModelTier.FLASH:
+                system_prompt = SYSTEM_PROMPT_FLASH
+            else:  # LITE
+                system_prompt = SYSTEM_PROMPT_WORKER
+
         config = types.GenerateContentConfig(
             temperature=mc.temperature,
             max_output_tokens=mc.max_output_tokens,
+            system_instruction=system_prompt,
         )
         if mc.thinking_level:
             config.thinking_config = types.ThinkingConfig(thinking_level=mc.thinking_level)
@@ -179,55 +768,194 @@ class GeminiClient:
         system_prompt: Optional[str] = None,
         tools: Optional[list] = None,
         timeout: Optional[float] = None,
+        overall_timeout: Optional[float] = None,
+        use_cache: bool = True,
+        active_step: Optional["InvestigationStep"] = None,
+        trace_ctx: Optional[Any] = None,
+        generation_name: Optional[str] = None,
     ) -> str:
-        """Generate completion using specified tier with timeout."""
+        """Generate completion using specified tier with timeout.
+
+        Args:
+            prompt: The prompt to send to the model
+            tier: Model tier to use (LITE, FLASH, PRO)
+            system_prompt: Optional custom system prompt (uses tier default if None)
+            tools: Optional tools for function calling
+            timeout: Per-step timeout (each fallback attempt). None uses tier default.
+            overall_timeout: Hard cap across the entire fallback chain. None = no cap.
+            use_cache: Whether to use response cache (default True)
+            active_step: Optional telemetry step to record this operation on
+            trace_ctx: Optional TracingContext for Langfuse observability
+            generation_name: Label for this generation in traces (e.g. "create_plan")
+
+        Returns:
+            The model's response text
+        """
         mc = MODEL_CONFIGS[tier]
-        config = self._get_config(tier)
-        request_timeout = timeout or self.timeout
+        config = self._get_config(tier, system_prompt)  # Pass system_prompt to config
+        # timeout=0 means no timeout, None uses per-tier default
+        request_timeout = timeout if timeout is not None else self.TIER_TIMEOUTS.get(tier, self.timeout)
+        no_timeout = (request_timeout == 0)
+
+        # Build cache key (only cache if no tools and cache enabled)
+        cache_enabled = use_cache and self._cache and not tools
+        # Include tier in cache key since different tiers have different system prompts
+        cache_key_prompt = f"{tier.value}:{prompt}"
+
+        # Check cache first
+        if cache_enabled:
+            cached = self._cache.get(cache_key_prompt, mc.model_id)
+            if cached:
+                logger.debug(f"Cache hit for {mc.model_id}")
+                # Record cache hit on telemetry step
+                if active_step is not None:
+                    from .telemetry import StepOperation
+                    active_step.add_operation(StepOperation(
+                        type="llm",
+                        latency_ms=0,
+                        tier=tier.value.upper(),
+                        model_id=mc.model_id,
+                        prompt_tokens=0,
+                        thinking_tokens=0,
+                        output_tokens=0,
+                        cost_usd=0.0,
+                        cached=True,
+                    ))
+                # Record cache hit on trace too
+                if trace_ctx is not None:
+                    trace_ctx.record_generation(
+                        name=generation_name or f"{tier.value}_completion",
+                        model=mc.model_id,
+                        input=prompt,
+                        output=cached,
+                        usage={"input": 0, "output": 0, "total": 0, "unit": "TOKENS"},
+                        metadata={"tier": tier.value, "cached": True},
+                    )
+                return cached
 
         if tools:
             config.tools = tools
 
-        contents = []
-        if system_prompt:
-            contents.append(types.Content(
-                role="user",
-                parts=[types.Part(text=f"System: {system_prompt}\n\nUser: {prompt}")]
-            ))
-        else:
-            contents.append(types.Content(
+        # System prompt is now in config.system_instruction, just send user content
+        contents = [
+            types.Content(
                 role="user",
                 parts=[types.Part(text=prompt)]
-            ))
+            )
+        ]
 
         logger.debug(f"Calling {mc.model_id} with {len(prompt)} chars")
 
         # Acquire rate limit token
         await self._rate_limiter.acquire()
 
+        # Fallback strategy:
+        # - Timeout:       Gemini(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
+        # - Other errors (including 503): Gemini(primary) → Vertex(primary) → Gemini(fallback) → Vertex(fallback) → Gemini(secondary)
+        call_start = time.monotonic()
+        fallback_coro = self._call_with_fallback(
+            mc.model_id, mc.fallback_model_id, contents, config, request_timeout, no_timeout,
+            secondary_fallback_model=mc.secondary_fallback_model_id,
+        )
         try:
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.client.models.generate_content,
-                    model=mc.model_id,
-                    contents=contents,
-                    config=config,
-                ),
-                timeout=request_timeout,
+            if overall_timeout is not None:
+                response = await asyncio.wait_for(fallback_coro, timeout=overall_timeout)
+            else:
+                response = await fallback_coro
+        except Exception as gemini_err:
+            # Final fallback layer: every Gemini API + Vertex attempt failed
+            # (e.g. PROHIBITED_CONTENT hard-block that safety settings can't disable).
+            # Try OpenAI if configured; otherwise re-raise the original error.
+            openai_client = self._get_openai_fallback()
+            if openai_client is None:
+                raise
+            logger.warning(
+                f"All Gemini/Vertex attempts failed for {mc.model_id} "
+                f"({str(gemini_err)[:120]}); falling back to OpenAI"
             )
-        except asyncio.TimeoutError:
-            logger.error(f"API call to {mc.model_id} timed out after {request_timeout}s")
-            raise TimeoutError(f"API call timed out after {request_timeout}s")
+            text = await openai_client.complete(
+                prompt, tier=tier, system_prompt=system_prompt, tools=tools,
+                timeout=timeout, active_step=active_step, trace_ctx=trace_ctx,
+                generation_name=generation_name,
+            )
+            if cache_enabled and text:
+                self._cache.set(cache_key_prompt, mc.model_id, text)
+            return text
+        call_latency_ms = int((time.monotonic() - call_start) * 1000)
 
-        # Track usage
+        # Track usage from actual response metadata
         self._usage[tier].requests += 1
-        # Estimate tokens (actual count would require response metadata)
-        estimated_input = len(prompt) // 4
-        estimated_output = len(response.text) // 4 if response.text else 0
-        self._usage[tier].add(estimated_input, estimated_output)
+        usage_meta = getattr(response, "usage_metadata", None)
+        if usage_meta:
+            input_tokens = getattr(usage_meta, "prompt_token_count", 0) or 0
+            output_tokens = getattr(usage_meta, "candidates_token_count", 0) or 0
+            thinking_tokens = getattr(usage_meta, "thoughts_token_count", 0) or 0
+            cached_tokens = getattr(usage_meta, "cached_content_token_count", 0) or 0
+            total_tokens = getattr(usage_meta, "total_token_count", 0) or 0
+        else:
+            # Fallback estimation if metadata unavailable
+            input_tokens = len(prompt) // 4
+            output_tokens = len(response.text) // 4 if response.text else 0
+            thinking_tokens = 0
+            cached_tokens = 0
+            total_tokens = 0
+        self._usage[tier].add(input_tokens, output_tokens)
 
-        logger.debug(f"Got response: {len(response.text) if response.text else 0} chars")
-        return response.text
+        # Record operation on telemetry step
+        if active_step is not None:
+            from .telemetry import StepOperation
+            # Cost formula:
+            # - Non-cached input tokens at full input rate
+            # - Cached input tokens at reduced cached rate
+            # - Thinking tokens at output rate
+            # - Output tokens at output rate
+            non_cached_input = max(0, input_tokens - cached_tokens)
+            op_cost = (
+                non_cached_input * mc.cost_per_1m_input / 1_000_000
+                + cached_tokens * mc.cost_per_1m_cached_input / 1_000_000
+                + thinking_tokens * mc.cost_per_1m_output / 1_000_000
+                + output_tokens * mc.cost_per_1m_output / 1_000_000
+            )
+            active_step.add_operation(StepOperation(
+                type="llm",
+                latency_ms=call_latency_ms,
+                tier=tier.value.upper(),
+                model_id=mc.model_id,
+                prompt_tokens=input_tokens,
+                thinking_tokens=thinking_tokens,
+                output_tokens=output_tokens,
+                cached_tokens=cached_tokens,
+                total_tokens=total_tokens,
+                cost_usd=round(op_cost, 6),
+                cached=False,
+            ))
+
+        response_text = response.text or ""
+
+        # Record generation on Langfuse trace (full prompt + response)
+        if trace_ctx is not None:
+            trace_ctx.record_generation(
+                name=generation_name or f"{tier.value}_completion",
+                model=mc.model_id,
+                input=prompt,
+                output=response_text,
+                usage={
+                    "input": input_tokens,
+                    "output": output_tokens,
+                    "total": total_tokens,
+                    "unit": "TOKENS",
+                },
+                metadata={"tier": tier.value, "cached_tokens": cached_tokens,
+                          "thinking_tokens": thinking_tokens},
+            )
+
+        # Store in cache
+        if cache_enabled and response_text:
+            self._cache.set(cache_key_prompt, mc.model_id, response_text)
+            logger.debug(f"Cached response for {mc.model_id}")
+
+        logger.debug(f"Got response: {len(response_text)} chars")
+        return response_text
 
     async def complete_with_retry(
         self,
@@ -256,6 +984,8 @@ class GeminiClient:
         self,
         messages: list[dict],
         tier: ModelTier = ModelTier.FLASH,
+        trace_ctx: Optional[Any] = None,
+        generation_name: Optional[str] = None,
     ) -> str:
         """Generate completion with conversation history."""
         mc = MODEL_CONFIGS[tier]
@@ -286,6 +1016,18 @@ class GeminiClient:
             raise TimeoutError(f"API call timed out after {self.timeout}s")
 
         self._usage[tier].requests += 1
+
+        # Record on trace
+        if trace_ctx is not None:
+            trace_ctx.record_generation(
+                name=generation_name or f"{tier.value}_chat",
+                model=mc.model_id,
+                input=messages,
+                output=response.text,
+                usage={},
+                metadata={"tier": tier.value},
+            )
+
         return response.text
 
     async def batch_complete(

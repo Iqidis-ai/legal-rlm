@@ -488,9 +488,9 @@ docker-compose logs -f
 | 5 | Test health endpoint |
 | 6 | Configure chat service to call API |
 
-**Your API will be at:** `https://rlm.irys.ai`
+**Your API will be at:** `https://rlm.iryslegal.com`
 
-**Interactive docs at:** `https://rlm.irys.ai/docs`
+**Interactive docs at:** `https://rlm.iryslegal.com/docs`
 
 ---
 
@@ -526,7 +526,7 @@ EOF
 docker-compose up -d --build
 
 # Verify
-curl https://rlm.irys.ai/health
+curl https://rlm.iryslegal.com/health
 ```
 
 ### Certificate Auto-Renewal

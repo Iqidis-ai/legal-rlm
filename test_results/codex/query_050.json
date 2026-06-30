@@ -1,0 +1,8 @@
+{
+  "query_num": 50,
+  "query": "When were key personnel changes made during the inspection?",
+  "status": "completed",
+  "elapsed_seconds": 3.3,
+  "output": "I can help. What materials do you want me to review (brief, filings, opinion), and what kind of output do you need (issue summary, procedural history, risk assessment, holding/analysis, or argument critique)?",
+  "error": null
+}

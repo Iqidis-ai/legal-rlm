@@ -1,0 +1,199 @@
+{
+  "summary": {
+    "label": "BASELINE",
+    "timestamp": "2026-01-21T20:52:04.548335",
+    "total_queries": 12,
+    "completed": 12,
+    "failed": 0,
+    "total_duration_seconds": 2477.85,
+    "avg_duration_seconds": 205.68,
+    "avg_citations": 24.75,
+    "avg_docs_read": 9.42,
+    "avg_facts": 68.58,
+    "docs_found_rate": 100.0
+  },
+  "category_stats": {
+    "multi_document_synthesis": {
+      "total": 2,
+      "completed": 2,
+      "avg_duration": 206.16,
+      "avg_citations": 20.5
+    },
+    "timeline_construction": {
+      "total": 2,
+      "completed": 2,
+      "avg_duration": 180.78,
+      "avg_citations": 23.5
+    },
+    "legal_analysis": {
+      "total": 2,
+      "completed": 2,
+      "avg_duration": 174.6,
+      "avg_citations": 26.0
+    },
+    "contradiction_detection": {
+      "total": 2,
+      "completed": 2,
+      "avg_duration": 327.0,
+      "avg_citations": 31.5
+    },
+    "factual_extraction": {
+      "total": 2,
+      "completed": 2,
+      "avg_duration": 140.78,
+      "avg_citations": 25.0
+    },
+    "evidence_assessment": {
+      "total": 2,
+      "completed": 2,
+      "avg_duration": 204.75,
+      "avg_citations": 22.0
+    }
+  },
+  "results": [
+    {
+      "category": "factual_extraction",
+      "query": "What was Gulfstream's initial cost estimate for the 192-month inspection?",
+      "status": "completed",
+      "duration_seconds": 137.92,
+      "documents_read": 9,
+      "searches_performed": 3,
+      "facts_found": 50,
+      "citations": 25,
+      "output_length": 2284,
+      "error": null
+    },
+    {
+      "category": "factual_extraction",
+      "query": "When did CITIOM first deliver the aircraft to Gulfstream for inspection?",
+      "status": "completed",
+      "duration_seconds": 143.65,
+      "documents_read": 9,
+      "searches_performed": 3,
+      "facts_found": 33,
+      "citations": 25,
+      "output_length": 316,
+      "error": null
+    },
+    {
+      "category": "multi_document_synthesis",
+      "query": "What evidence across multiple documents supports that Gulfstream knew its estimates were unreliable?",
+      "status": "completed",
+      "duration_seconds": 252.23,
+      "documents_read": 9,
+      "searches_performed": 3,
+      "facts_found": 60,
+      "citations": 22,
+      "output_length": 6206,
+      "error": null
+    },
+    {
+      "category": "multi_document_synthesis",
+      "query": "How do the expert reports from both sides differ in their assessment of damages?",
+      "status": "completed",
+      "duration_seconds": 160.1,
+      "documents_read": 9,
+      "searches_performed": 3,
+      "facts_found": 63,
+      "citations": 19,
+      "output_length": 4413,
+      "error": null
+    },
+    {
+      "category": "timeline_construction",
+      "query": "Construct a complete timeline of the 192-month inspection from proposal to final invoice.",
+      "status": "completed",
+      "duration_seconds": 174.3,
+      "documents_read": 9,
+      "searches_performed": 3,
+      "facts_found": 77,
+      "citations": 26,
+      "output_length": 4263,
+      "error": null
+    },
+    {
+      "category": "timeline_construction",
+      "query": "What is the chronology of all estimate revisions?",
+      "status": "completed",
+      "duration_seconds": 187.25,
+      "documents_read": 9,
+      "searches_performed": 3,
+      "facts_found": 64,
+      "citations": 21,
+      "output_length": 870,
+      "error": null
+    },
+    {
+      "category": "contradiction_detection",
+      "query": "Are there contradictions between Gulfstream's proposal and actual work performed?",
+      "status": "completed",
+      "duration_seconds": 254.42,
+      "documents_read": 9,
+      "searches_performed": 3,
+      "facts_found": 74,
+      "citations": 24,
+      "output_length": 6696,
+      "error": null
+    },
+    {
+      "category": "contradiction_detection",
+      "query": "Do witness statements contradict documentary evidence?",
+      "status": "completed",
+      "duration_seconds": 399.58,
+      "documents_read": 15,
+      "searches_performed": 5,
+      "facts_found": 134,
+      "citations": 39,
+      "output_length": 6109,
+      "error": null
+    },
+    {
+      "category": "legal_analysis",
+      "query": "What legal elements must CITIOM prove to establish misrepresentation?",
+      "status": "completed",
+      "duration_seconds": 175.85,
+      "documents_read": 9,
+      "searches_performed": 3,
+      "facts_found": 80,
+      "citations": 27,
+      "output_length": 6691,
+      "error": null
+    },
+    {
+      "category": "legal_analysis",
+      "query": "What defenses does Gulfstream assert and what evidence supports them?",
+      "status": "completed",
+      "duration_seconds": 173.35,
+      "documents_read": 9,
+      "searches_performed": 3,
+      "facts_found": 77,
+      "citations": 25,
+      "output_length": 6075,
+      "error": null
+    },
+    {
+      "category": "evidence_assessment",
+      "query": "What is the strongest evidence supporting CITIOM's position?",
+      "status": "completed",
+      "duration_seconds": 161.67,
+      "documents_read": 8,
+      "searches_performed": 3,
+      "facts_found": 51,
+      "citations": 19,
+      "output_length": 631,
+      "error": null
+    },
+    {
+      "category": "evidence_assessment",
+      "query": "What evidence is most damaging to Gulfstream's defense?",
+      "status": "completed",
+      "duration_seconds": 247.83,
+      "documents_read": 9,
+      "searches_performed": 3,
+      "facts_found": 60,
+      "citations": 25,
+      "output_length": 6540,
+      "error": null
+    }
+  ]
+}

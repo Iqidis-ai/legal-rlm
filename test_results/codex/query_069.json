@@ -1,0 +1,8 @@
+{
+  "query_num": 69,
+  "query": "What conflicts exist between contract terms and actual performance?",
+  "status": "timeout",
+  "elapsed_seconds": 478.7,
+  "output": "",
+  "error": "Timeout after 300s"
+}

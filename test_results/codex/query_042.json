@@ -1,0 +1,8 @@
+{
+  "query_num": 42,
+  "query": "What is the chronology of all estimate revisions?",
+  "status": "completed",
+  "elapsed_seconds": 5.0,
+  "output": "I don’t have the case materials yet. Please share the record you want analyzed (opinion, docket entries, briefs, or a citation), and tell me the scope (e.g., summary of facts/procedure, holding, key legal issues, risks, or implications). Once I have that, I’ll provide a senior‑level legal analysis.",
+  "error": null
+}

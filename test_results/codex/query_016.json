@@ -1,0 +1,8 @@
+{
+  "query_num": 16,
+  "query": "What percentage did actual costs exceed the original estimate?",
+  "status": "timeout",
+  "elapsed_seconds": 488.9,
+  "output": "",
+  "error": "Timeout after 300s"
+}

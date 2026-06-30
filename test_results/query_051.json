@@ -1,0 +1,673 @@
+{
+  "query_num": 51,
+  "query": "What is the sequence of discovery requests and responses?",
+  "status": "completed",
+  "elapsed_seconds": 202.7,
+  "documents_read": 30,
+  "searches_performed": 11,
+  "citations_count": 75,
+  "max_depth_reached": 3,
+  "hypothesis": "The user is looking to create a comprehensive timeline and inventory of all discovery interactions between the parties, CITIOM and Gulfstream. This involves identifying not only the content of requests and responses but also the chronological flow, any points of contention such as alleged spoliation or failure to preserve records, and how those were resolved, which is critical for understanding the development of the case and potential grounds for appeal or further litigation related to discovery compliance.",
+  "final_output": "**MEMORANDUM**\n\n**TO:** Managing Partner\n**FROM:** Senior Partner\n**DATE:** October 26, 2023\n**RE:** Analysis of Discovery Sequence and Procedure in *Channel IT Isle of Man Ltd. v. Gulfstream Aerospace Corporation*\n\n---\n\n### **Executive Summary**\n\nThe available documentation does not provide a specific chronological log of discovery requests and responses exchanged between the parties. However, the evidence establishes a clear and formal procedural framework that governs the sequence of discovery, including rules for written requests, depositions, confidentiality, and dispute resolution, all under the authority of the Arbitral Tribunal. The parties have actively engaged in discovery under this framework, including the exchange of expert reports.\n\n### **Factual Background**\n\nThe dispute originates from a commercial transaction for aircraft maintenance. In May 2023, AVCON, on behalf of the Claimant, contacted Gulfstream Aerospace Corporation (\"Gulfstream\") for a quote regarding a 192-month inspection. Gulfstream provided Customer Support Proposal #Q-11876 in June 2023, which was subsequently approved in September 2023 [WFW Restructured - D. Farnham Expert Report.docx, p. 1 [UNVERIFIED]].\n\nFollowing a dispute over the performance of this work, Channel IT Isle of Man Ltd. (\"CITIOM\") initiated arbitration on May 31, 2024, pursuant to the dispute resolution clause in the proposal [Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf, p. 2 [UNVERIFIED]]. Gulfstream responded by filing a Notice of Defense and Counterclaim on August 7, 2024 [Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf, p. 2 [UNVERIFIED]]. CITIOM subsequently filed an Amended Statement of Claim (\"ASOC\") on September 9, 2024 [Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf, p. 2 [UNVERIFIED]]. The parties have since engaged in discovery, which has included the production of expert reports dated March and April 2025 [Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf, p. 2 [UNVERIFIED]].\n\n### **Analysis**\n\n#### **Key Findings**\n\n1.  **Formal Procedural Framework:** All discovery is governed by a Scheduling Order and a Protective Order issued pursuant to the International Institute for Conflict Prevention & Resolution (ICCPR) Rules [CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf, p. 1 [UNVERIFIED]]. This framework establishes the authority of the Arbitrators to manage the scope and timing of all discovery activities.\n\n2.  **Limitations on Discovery:** Written discovery and depositions are subject to quantitative and temporal limitations. The Scheduling Order imposes limits on the number of interrogatories, requests for admission, and requests for production, as well as the number and duration of depositions. These limits cannot be exceeded without leave from the Arbitrators [Report of Preliminary Hearing and Scheduling Order (002).docx, p. 1 [UNVERIFIED]].\n\n3.  **Strict Deadlines:** The discovery process adheres to strict deadlines. Critically, the parties are prohibited from submitting any written discovery requests within the 30-day period preceding the fact discovery deadline [Report of Preliminary Hearing and Scheduling Order (002).docx, p. 1 [UNVERIFIED]].\n\n4.  **Confidentiality and Dispute Resolution:** A detailed protocol exists for handling sensitive information. A Disclosing Party may designate materials as \"Confidential Material\" or \"Highly Confidential Material\" [CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf, p. 2, 6 [UNVERIFIED]]. If the Receiving Party disagrees with a designation, it must initiate a \"meet and confer\" process to resolve the issue in good faith before seeking the Tribunal’s intervention [CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf, p. 14 [UNVERIFIED]].\n\n5.  **Distinct Expert Discovery Phase:** Expert discovery operates on a separate track. The parties were required to notify the Arbitrators of their intent to present expert witnesses by a specified date, after which the Arbitrators were to set a distinct schedule for this phase of discovery [Report of Preliminary Hearing and Scheduling Order (002).docx, p. 1 [UNVERIFIED]]. Evidence confirms both CITIOM and Gulfstream have retained experts and exchanged reports, indicating this phase is underway or complete [Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf, p. 2 [UNVERIFIED]]; [CITIOM v. Gulfstream - LB Expert Rebuttal Report (4-21-25).pdf, p. 2 [UNVERIFIED]].\n\n#### **Supporting Evidence**\n\nThe strongest evidence for the procedural framework comes from the \"Report of Preliminary Hearing and Scheduling Order (002).docx\" and the \"CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf\". The Scheduling Order explicitly states, \"The parties are expected to limit written discovery requests and depositions...\" and notes that these limits \"cannot be exceeded without leave of the Arbitrators\" [Report of Preliminary Hearing and Scheduling Order (002).docx, p. 1 [UNVERIFIED]]. The Protective Order defines the scope of protected \"Case Material\" and establishes the procedure for designation disputes, requiring that parties \"must request a meet and confer\" and \"make a good faith effort to resolve the issue\" before involving the Tribunal [CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf, p. 2, 14 [UNVERIFIED]].\n\n#### **Contradictions or Concerns**\n\nThere are no direct contradictions in the evidence. The primary concern is the lack of specificity. The \"Report of Preliminary Hearing and Scheduling Order\" appears to be a template document with numerous blank fields for dates and numerical limits (e.g., \"Any request to amend the pleadings shall be filed on or before ______________\") [Report of Preliminary Hearing and Scheduling Order (002).docx, p. 1 [UNVERIFIED]]. Without an executed copy, the precise deadlines and limits governing the discovery sequence remain unknown. Furthermore, one expert report uses the term \"discovery\" in an engineering context (\"Inadequate Management of 'Discovery' Process\"), which refers to the physical inspection of the aircraft, not the legal exchange of information [NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf, p. 20 [UNVERIFIED]]. Care must be taken to distinguish between these uses.\n\n#### **Evidence Strength Assessment**\n\n**Rating: Moderate**\n\nThe evidence is strong in establishing the *rules and framework* for discovery. However, it is weak in detailing the *actual sequence* of requests and responses. The reliance on unverified template documents with blank fields significantly hinders the ability to construct a definitive, date-specific timeline of discovery events.\n\n### **Entities & Relationships**\n\n*   **Claimant:** Channel IT Isle of Man Ltd. ('CITIOM'), the party initiating the arbitration.\n*   **Respondent:** Gulfstream Aerospace Corporation ('Gulfstream' or 'GAC'), the manufacturer and service provider defending the claim and asserting a counterclaim.\n*   **Arbitral Tribunal:** The neutral body overseeing the proceedings and ruling on discovery and dispositive motions.\n*   **AVCON:** The entity that requested the initial service proposal from Gulfstream on behalf of CITIOM.\n*   **International Institute for Conflict Prevention & Resolution (ICCPR):** The institution whose rules govern the arbitration procedure.\n\n### **Gaps & Limitations**\n\n*   **Evidence NOT Found:** The investigation did not uncover the actual discovery instruments, such as Interrogatories, Requests for Production of Documents, or Requests for Admission served by either party. Likewise, specific responses, objections, deposition notices, or transcripts are absent from the provided materials.\n*   **Areas Needing Further Investigation:** The single most critical missing document is a fully executed version of the \"Report of Preliminary Hearing and Scheduling Order.\" This document would provide the concrete deadlines and quantitative limits that structured the entire discovery process.\n*   **Limitations of Available Documents:** The current documentation provides a theoretical blueprint for discovery but lacks the practical records of its execution. All cited documents are marked as unverified, which limits reliance on them as conclusive proof until their authenticity and finality can be established.\n\n### **Recommendations**\n\n1.  **Immediate Actions:**\n    *   Prioritize locating and obtaining the fully executed \"Report of Preliminary Hearing and Scheduling Order\" to confirm all operative deadlines and discovery limits.\n    *   Establish a master case timeline, populating it with the known filing dates and creating placeholders for specific discovery events.\n\n2.  **Additional Investigation Needed:**\n    *   Formally request and compile a complete set of all written discovery requests, responses, and objections exchanged between the parties.\n    *   Secure a log of all depositions conducted, identifying the deponent, date, and any motions or disputes related to the testimony.\n\n3.  **Risk Mitigation Steps:**\n    *   Conduct an immediate internal audit of our discovery compliance against the rules outlined in the Protective Order and the template Scheduling Order to anticipate and prepare for any potential challenges from opposing counsel regarding timeliness or completeness.\n    *   Verify that all document productions have strictly adhered to the designation protocols for \"Confidential Material\" and \"Highly Confidential Material\" to prevent any inadvertent waiver or breach of the Protective Order.",
+  "accumulated_facts": [
+    "If a Receiving Party disagrees with a Disclosing Party’s designation of information as Confidential Material or Highly Confidential, the Receiving Party must request a meet and confer. Parties must make a good faith effort to resolve the issue before requesting the Tribunal’s intervention.",
+    "Challenged information designated as Confidential Material or Highly Confidential will remain protected until the Tribunal resolves the challenge.",
+    "Written discovery is subject to limitations on the number of interrogatories (including subparts), requests for admission, and requests for production of documents, as well as limitations on the number and duration of depositions.",
+    "Discovery limitations cannot be exceeded without leave of the Arbitrators.",
+    "Parties shall not submit written discovery requests within 30 days of the fact discovery deadline.",
+    "Any request to amend pleadings must be filed by a specified date, and responses to permitted amendments are due within 20 days of the Arbitrators’ grant.",
+    "Dispositive motions require prior leave from the Arbitrators, which is obtained by submitting a request (via email or letter). The opposing party must respond to this request within 5 days of service.",
+    "If filing a dispositive motion is permitted, the Arbitrators will set the filing date and page limits after consulting the parties. The response to any motion is due within a specified number of days, and a five-page reply is permitted within a specified number of days.",
+    "A deadline is set for submitting an agreed protective order to the Arbitrators, with a provision for advising if the parties cannot agree on its form.",
+    "In May 2023, AVCON contacted Gulfstream to request a quote for an upcoming 192-month inspection. Gulfstream provided Customer Support Proposal #Q-11876 in June 2023, which AVCON approved in September 2023.",
+    "The parties in this action are Channel IT Isle of Man Ltd. ('Claimant') and Gulfstream Aerospace Corporation ('Respondent').",
+    "The parties expect to conduct discovery, including producing and disclosing information, which will be governed by a confidentiality agreement/protective order.",
+    "Discovery material may be designated as 'Highly Confidential Material' if it contains or constitutes trade secret information.",
+    "The parties retain the right to object to the production of documents they consider not subject to discovery.",
+    "The parties are expected to limit written discovery requests (interrogatories, requests for admission, requests for production) and depositions to those reasonably calculated to the case's needs, with specific (currently blank) numerical limits.",
+    "Any discovery limits (interrogatories, requests for admission, requests for production, depositions) cannot be exceeded without leave of the Arbitrators.",
+    "Fact discovery is subject to an unspecified conclusion date, and no written discovery requests may be submitted within 30 days of that deadline.",
+    "The parties were ordered to submit an agreed protective order to the Arbitrators by an unspecified deadline, and to advise the Arbitrators if they were unable to agree.",
+    "For expert discovery, the parties must notify the Arbitrators by an unspecified date if they will present expert witnesses, after which the Arbitrators will set the schedule for expert discovery.",
+    "An expert report dated March 21, 2025, references 'Initial Duct Removal and Corrosion Discovery' and 'Inadequate Management of \"Discovery\" Process' in the context of an inspection, indicating operational/engineering fact-finding rather than legal discovery requests.",
+    "The document is a Protective Order referencing a Confidentiality Agreement.",
+    "The Protective Order is issued pursuant to International Institute for Conflict Prevention & Resolution (ICCPR) Rules and Procedure Rule 11.",
+    "The Confidentiality Agreement is effective as of a date to be filled in.",
+    "Case Material includes documents, deposition transcripts, expert reports, briefs, testimony, filings, and any other information produced or disclosed.",
+    "Confidential Material is defined as information deemed by the Disclosing Party to be sensitive proprietary, commercial, technical, personally identifying, or other sensitive information.",
+    "Exceptions to Confidential Material include publicly available information (not due to Receiving Party's act/omission) and information gained independently of the Action.",
+    "Designation of Confidential Material can be done by marking \"Confidential Material\" or \"Confidential – Subject To Protective Order\" on the face of the writing and on each page/portion.",
+    "Failure to designate does not constitute a waiver of confidentiality claims, and designation can occur after disclosure/production.",
+    "Deposition testimony can be designated by statement on record or written notice within 30 days of transcript receipt.",
+    "All deposition transcripts are treated as Confidential Material for a 30-day period following delivery by the court reporter.",
+    "Gulfstream may partially redact documents designated \"Confidential Material\" in lieu of designating certain information \"Highly Confidential Material\", such as customer names or cost/profit information.",
+    "If Claimant objects to Gulfstream's redactions, parties agree to meet and confer in good faith; unresolved disagreements may be submitted to the Tribunal.",
+    "CITIOM commenced this Arbitration on May 31, 2024.",
+    "Respondent Gulfstream filed a Notice of Defense and Counterclaim dated August 7, 2024.",
+    "Claimant filed the Amended Statement of Claim (ASOC) on September 9, 2024.",
+    "The parties have subsequently engaged in discovery.",
+    "CITIOM has provided the expert reports of Mr. Danny Farnham (technical expert) and FAZ Forensics (accounting/damages expert).",
+    "Gulfstream prepared and presented the Customer Support Proposal dated 02 June 2023.",
+    "CITIOM alleges that Gulfstream has breached its warranty and failed to perform required warranty repairs within a reasonable time, causing the warranty to fail of its essential purpose.",
+    "Gulfstream allegedly failed to identify conditions requiring repair in 2020 and 2023, and misclassified warranty repairs for the 192-month inspection as CITIOM's account instead of Gulfstream's.",
+    "The Aircraft was out of service from January 29, 2024, through November 29, 2024, allegedly due to Gulfstream's delays and mismanagement.",
+    "CITIOM claims economic damages of approximately €2.4 million, comprised of €1,613,175 in lost financial contribution and €814,067 in additional consequential costs.",
+    "FAZ Forensics was retained by Watson Farley & Williams LLP (Counsel) to provide financial analysis and assess economic damages.",
+    "The expert's compensation is based on hourly rates and is not contingent on the conclusions reached or the arbitration's outcome.",
+    "The expert's opinions are based on professional training, experience, and evaluation of documents, including pleadings, agreements, contracts, invoices, emails, and flight hour/cost reports.",
+    "The expert made standard assumptions that provided documents are complete and true, and that all information is correct.",
+    "The expert has not independently verified the information and states that the procedures do not constitute an audit or review.",
+    "Georgia courts have established that a failure to preserve material records can support adverse inferences, even without bad faith, if the opposing party is prejudiced.",
+    "There are 'missing records' from Gulfstream, specifically related to comparative data, which CITIOM argues are important.",
+    "Gulfstream's internal correspondence confirms that 'SN 5174 was quoted in June 2023, so the downtime was included using the previous downtime methodology.'",
+    "Channel IT Isle of Man Ltd (represented by Mr. Bassim Haidar and Mr. Eunan Timmins) is experiencing extended downtime for their Gulfstream G550, serial number 5174, due to maintenance issues at Gulfstream's St. Louis facility.",
+    "The original work order quote estimated 2800 manhours for the 192-month inspection.",
+    "Discrepancies discovered during inspection have added an estimated 20,000 additional manhours to the project.",
+    "Gulfstream is providing overtime labor at no charge to expedite the work.",
+    "The estimated completion date has been revised multiple times, from an original unstated date to end of April (not possible), then to June 21st, and currently projected for mid-November.",
+    "Gulfstream states they have no way to determine how or where the aircraft has been operated, stored, and maintained, which impacts discrepancy discovery.",
+    "Failure to keep up with the progress payment schedule outlined in the terms and conditions will result in work stoppage.",
+    "CITIOM alleges Gulfstream breached its warranty and failed to perform required warranty repairs beginning in January 2024 within a reasonable period.",
+    "CITIOM alleges Gulfstream failed to identify conditions requiring repair in 2020 and 2023, and misclassified current warranty repairs as CITIOM's expense.",
+    "The Aircraft was out of service from January 29, 2024, through November 29, 2024, due to alleged delays and mismanagement by Gulfstream.",
+    "The expert report concludes CITIOM suffered economic damages of approximately €2.4 million due to Gulfstream's breaches and failures.",
+    "The damages are comprised of €1,613,175 in lost financial contribution and €814,067 in additional consequential costs.",
+    "FAZ Forensics was provided with monthly reports from Avcon Jet AG for the years 2022 through 2024.",
+    "The expert was asked to assume Gulfstream violated its agreements and that CITIOM can establish its claims.",
+    "D. Farnham authored an expert report for CITIOM, dated March 21, 2025 (also referenced as March 5, indicating potentially multiple versions or related reports).",
+    "The expert report identifies Gulfstream as a party that 'demonstrably failed to conduct standard research and assessment' for a G550 aircraft (SN 5174).",
+    "The report criticizes Gulfstream for not having knowledge of the aircraft's history or background, leading to unpreparedness for a major 192-month inspection.",
+    "Gulfstream's supply chain reportedly did not have a new ground air start duct available, necessitating a search for a serviceable used duct.",
+    "A proposal (Q – 11876 Rev 0) from Gulfstream was dated June 2, 2023, and mentioned estimated costs of 800k and 35-45 days for the inspection.",
+    "Mr. Hassan sent a letter to Mr. Timmins on April 8, 2024, addressing concerns about resources, manpower, and preparation for maintenance visits.",
+    "Mr. Zimmerman stated that in July 2023, Gulfstream introduced new data collection and analytic capabilities to provide historic outcomes for comparable aircraft.",
+    "A financial expert was appointed on October 1, 2021, to investigate certain transactions of a Luxembourg-based investment fund to determine eligibility and illiquidity, risk management, due diligence, and veracity of payments to third-party service providers.",
+    "A financial expert was appointed to investigate potential irregularities in European subsidiaries of a large UK group generating over €3 billion in revenues, which evidenced fraud leading to a successful insurance claim and civil/criminal legal proceedings in French courts.",
+    "Certain issues, specifically regarding the LBL 30.50 floor beam angle cap replacement, were 'only being investigated after our interventions.'",
+    "Serious concerns were raised about 'additional delays' and 'unanswered questions' related to the LBL 30.50 floor beam angle cap replacement.",
+    "There were challenges in maintaining consistent communication, including not being informed about the holiday schedule of the STM or any appointed deputies.",
+    "The document is an Expert Witness Report by Danny Farnham concerning Gulfstream Aerospace Corporation's performance during a 192-month inspection event for Claimant Channel Isle of Man Ltd.'s Gulfstream G550, Serial Number 5174.",
+    "Danny Farnham's observations span the duration of the 192-month inspection event, from January 29, 2024, to November 29, 2024, with his participation commencing on January 29, 2024, at a kick-off meeting at the Gulfstream St. Louis service center.",
+    "The report's purpose is to provide an independent expert evaluation of Gulfstream's performance, addressing pre-inspection planning, proposal development, work execution, corrosion management, project management, staffing, communication, and adherence to industry standards.",
+    "Section II.1 discusses 'Gulfstream's 192-Month Inspection Proposal,' and Section II.2 analyzes 'Gulfstream's Justification for Underestimation,' and Section II.3 addresses 'Proposal Process Deficiencies and Lack of Due Diligence.'",
+    "Section V addresses 'Corrosion Detection and Management Failures,' with subsections on 'Standard Corrosion Assessment Procedures,' 'Horizontal Stabilizer Corrosion Issues,' and 'Other Corrosion-related Issues.'",
+    "Section IX details 'Air Starter Duct Repair Problems,' including initial discovery of corrosion, outsourcing to Gulfstream Savannah, protracted evaluation and repair, and procurement delays, resulting in a total timeline of three months for this issue.",
+    "Section X discusses 'Issues with Outsourcing Components to Gulfstream Savannah Facility,' noting reliance on this facility for repairs and evaluations, negative impacts, and systemic issues.",
+    "Section XI covers 'Quote and Scope Management Issues,' including initial quote deficiencies, scope creep, lack of proactive scope management, and financial impacts.",
+    "Section XIII.3 explicitly states 'Causal Relationship Between Deficiencies and Delays (Explicit Statement).'",
+    "Leonard A. Beauchemin was retained by counsel for Gulfstream to serve as an expert in this arbitration.",
+    "Be অবিশ্বাস was asked to review the expert report prepared by Danny Farnham and documents relating to the 192-month inspection of the G550 S/N 5174 aircraft.",
+    "Be অবিশ্বাস has forty-two years of business jet aircraft maintenance and management experience.",
+    "Be অবিশ্বাস worked for nine years with Bombardier Maintenance Repair Organization (MRO) overseeing heavy inspection, structural repair, and modifications on similar class airframes.",
+    "Be অবিশ্বাস has managed and procured proposals for hundreds of business jet aircraft inspections and modifications across numerous MRO facilities, including Gulfstream.",
+    "Be অবিশ্বাস served on the Gulfstream committee responsible for developing the maintenance program for the GV (i.e., G550) aircraft.",
+    "Joseph Schuster is requesting approval for several items, including OH Exchange brake, RRCC coverage on engine related items, Honeywell coverage DCP, and open items marked in yellow on the latest WOA.",
+    "Florian Schaller is requesting immediate advice on these items and expresses a desire to avoid daily approvals from the Owner, suggesting a preference for a consolidated update.",
+    "Joseph Schuster explains that it is not possible to provide a single consolidated update for a project of this scope, and new items will appear daily. He warns that delaying approvals will negatively impact the overall project schedule due to labor and material availability.",
+    "Joseph Schuster states that while they are submitting applicable items to RRCC, Honeywell, and Structural Warranty for coverage, there are often delays in their responses, and work cannot commence prior to customer approval.",
+    "Ben Schouten, as Owner Rep, instructs Joseph Schuster not to delay progress related to RR corp care and Structural warranty items for corrosion, emphasizing that all work related to Airworthiness in these areas is approved by the Owner to avoid schedule delays.",
+    "Ben Schouten requests an option on both cockpit side windows, as they are available, and asks for pricing to seek Owner approval.",
+    "Joseph Schuster provides the OH exchange price for the brake as $115,074.00, noting that 'Over & Above or BER findings on core may increase that price.'",
+    "Joseph Schuster mentions that 'Replacement windows are available' for the side windows, and 'Discrepancy 8.12, 8.13 added for replacement pending customer approval.'",
+    "Joseph Schuster states that 'Part covered by HONEYWELL AVIONICS & MECHANICAL PROTECTION PLAN contract# 0440142346' when asked about Honeywell coverage DCP.",
+    "Joseph Schuster notes that 'We are working directly with RRCC for review and approval, however it is not always a quick process. Please do not delay approvals for pending RRCC response.'",
+    "A draft Aircraft Purchase Agreement was sent to Ilona Avramenko for review and approval on March 26, 2024.",
+    "An LOI (Letter of Intent) was finalized and agreed upon, with an estimated modification cost of USD 70,000.",
+    "The seller is hesitant to release aircraft information to Gulfstream until the LOI is signed and the deposit is in place.",
+    "A formal complaint regarding the efficiency and service during the 192 MOS inspection project for Gulfstream G550, SN 5174, OE-LIM was sent on July 30, 2024.",
+    "The estimated return to service (RTS) date for the aircraft has been repeatedly postponed since April 2024, with the latest projection being January 6, 2025, due to part unavailability (WTBF Frame PN 1159B51246-39).",
+    "Work on the aircraft ceased on June 17, 2024, due to an unpaid interim invoice.",
+    "The buyer/owner has had to actively pursue information regarding repair status and alternative methods due to insufficient communication from Gulfstream.",
+    "Gulfstream requested that the seller release information on the aircraft.",
+    "The seller requested that all information requests go through their on-site project manager, Danny Farnham, once an authorization form is signed.",
+    "AVCON JET AG formally expressed concerns and dissatisfaction regarding the efficiency and level of service during the 192 MOS inspection project for the Gulfstream G550, SN 5174, OE-LIM, initiated on January 28, 2024.",
+    "Since April 2024, the estimated return to service (RTS) date has been continually postponed without clear and timely explanations.",
+    "Work on the aircraft project ceased on June 17, 2024, due to an unpaid interim invoice, with outstanding billing concerns not being addressed.",
+    "AVCON JET AG stated that Danny (on-site representative) is often the only source of communication regarding project progress, and without his presence, they fear remaining uninformed.",
+    "Multiple parts sent out for repair have not yielded timely updates, and AVCON JET AG had to seek feedback directly from Savannah.",
+    "Attempts to address alternative methods to shorten ground time only surfaced after AVCON JET AG's persistent efforts.",
+    "Gulfstream requested information on the aircraft.",
+    "Once the authorization form is signed, all information requests should go through the seller's on-site project manager, Danny Farnham.",
+    "AVCON JET AG is expressing concerns and dissatisfaction regarding the efficiency and level of service during the 192 MOS inspection project for Gulfstream G550, SN 5174, OE-LIM.",
+    "AVCON JET AG has had to seek feedback directly from Savannah regarding parts sent out for repair.",
+    "Claimant CITIOM asserts that Gulfstream's failure to preserve material records may support adverse inferences due to the prejudice caused to CITIOM.",
+    "Internal correspondence from Gulfstream, referenced by CITIOM, confirms that 'SN 5174 was quoted in June 2023, so the downtime was included using the previous downtime methodology,' providing context for the alleged missing records.",
+    "Documents with production numbers GAC0024127 (Gulfstream) and CIT00001–CIT00028 (CITIOM) have been referenced in pre-hearing briefs, indicating that document discovery has occurred.",
+    "Joint exhibits JX-114 (GAC0006002, December 6, 2023 Work Authorization) and JX-127 (GAC0005804, January 26, 2024 Work Authorization) have been created and referenced, indicating agreement on the use of certain produced documents.",
+    "Gulfstream issued Customer Support Proposal #Q-11876 Rev 0, dated June 2, 2023, for the 192-month inspection of the aircraft.",
+    "The Customer Support Proposal #Q-11876 Rev 0 was approved by AVCON JET in September 2023.",
+    "Expert reports (e.g., D. Farnham's) assert that Proposal #Q-11876 Rev 0 was deficient, failing to include expected estimates of costs and downtime for correcting discrepancies found during the inspection, thereby creating a misleading impression.",
+    "A letter dated April 8, 2024, from Mr. Hassan to Mr. Timmins is referenced, where Mr. Hassan notes concerns regarding resources, manpower, and preparation for maintenance visits, stating Gulfstream's inability to determine aircraft operation/storage history impacting discrepancies.",
+    "A telephonic preliminary hearing and scheduling conference was held on August 21, 2024.",
+    "The Tribunal issued the Report of Preliminary Hearing and Scheduling Order dated October 23, 2024.",
+    "An urgent TSTO request concerning G550, SN 5174 manpower was initiated.",
+    "The current request is a 'refresh' of an original letter sent in April to their Legal Counsel.",
+    "There is a stated goal to get an approved draft to Mark Burns by Close of Business (COB) on August 15, 2024.",
+    "Bassim Haidar expressed extreme dissatisfaction with an 11-month delay for a 192 check on his aircraft (SN 5174).",
+    "Danny Farnham described Gulfstream's efforts to augment staffing as a 'failed commitment' and 'dismal effort' in 'mismanagement of facilities and resources'.",
+    "Farnham detailed consistent issues with manpower: not adequate, not consistent, some not experienced, and experienced technicians being moved to other projects or training.",
+    "The project involves a 12-15 million dollar asset (aircraft).",
+    "An expert report by D. Farnham for CITIOM (dated March 21, 2025) discusses a discrepancy documented for corrosion in the Floor Beam LBL 30.50 Cap Angle, where the corroded portion was removed before non-destructive testing (NDT).",
+    "Engineering initially prescribed a repair for the Floor Beam LBL 30.50 Cap Angle requiring beam replacement and aircraft shoring, estimated to take hundreds of hours and extend downtime.",
+    "The initial engineering disposition for the Floor Beam LBL 30.50 Cap Angle repair was later revised to a simpler fastener replacement after an 'expert challenge', which the report indicates demonstrates the initial assessment was unnecessarily complex and costly.",
+    "The expert report characterizes the initial over-scoped repair plan and subsequent reversal for the Floor Beam LBL 30.50 Cap Angle as underscoring inefficiencies in Gulfstream's engineering assessment and decision-making processes at the St. Louis facility.",
+    "A financial expert was appointed to investigate certain transactions by a Luxembourg-based investment fund concerning eligibility, illiquidity, risk management, due diligence, and payment veracity, potentially leading to civil and criminal legal proceedings in Luxembourg courts.",
+    "A financial expert was appointed to investigate potential irregularities in European subsidiaries of a large UK group, which evidenced fraud and led to a successful insurance claim, potentially involving civil and criminal legal proceedings in French courts.",
+    "There were serious concerns about delays and unanswered questions regarding an LBL 30.50 floor beam angle cap replacement, with these issues only being investigated after 'our interventions'.",
+    "Communication was challenging, with a lack of information regarding the holiday schedule of the STM or any appointed deputies.",
+    "An \"Urgent TSTO request\" regarding manpower for G550, SN 5174 was sent on August 15, 2024.",
+    "Bassim Haidar expressed extreme dissatisfaction with the 11-month delay for a 192 check and difficulty getting his aircraft back, calling it 'unbelievable'.",
+    "Danny Farnham, representing the owner, criticized Gulfstream's alleged failed commitment to increase experienced technician staffing for the project over the last 6 months.",
+    "Farnham described the manpower flow as 'not adequate, not consistent, some not experienced, etc.', and noted experienced technicians being moved to other projects or for training.",
+    "The email chain indicates an attempt to get an approved draft to 'Mark' by Close of Business (COB) on August 15, 2024.",
+    "Danny Farnham was retained to provide expert opinions in this arbitration regarding Gulfstream's handling of the 192-month inspection of a G550.",
+    "The initial Gulfstream proposal quoted 2,800 manhours / 35-45 business days for the 192-month inspection.",
+    "The final actual scope of the project grew to over 26,000 labor hours.",
+    "Corrosion was found in repeated areas, including the horizontal stabilizer, forward fuselage frame, and APU access door, which had been worked on during previous inspections (144-month or July 2023).",
+    "Farnham suggests that experienced technicians were reassigned from the aircraft and there was over-reliance on inexperienced labor.",
+    "Farnham intervened on the floor beam LBL 30.50 cap angle, proposing an alternative to engineering that saved labor hours.",
+    "Industry standard practice for MROs is to provide realistic 'out-the-door' estimates, often including discrepancy estimates or ranges.",
+    "Gulfstream's defense is that major inspections uncover unforeseen discrepancies and that each aircraft is unique.",
+    "Farnham rebuts that Gulfstream had complete historical data, including corrosion-heavy prior inspections, and that standard practice includes flagging likely discrepancies and offering ROM estimates.",
+    "Farnham states that Gulfstream performed over 20 comparable inspections at St. Louis with downtime far exceeding 35-45 days.",
+    "Farnham asserts that reputable MROs provide budgetary contingency ranges for discrepancies, and that Gulfstream's failure to do so created a misleading picture.",
+    "Farnham contends that corrosion found reappeared in identical spots previously worked on, suggesting prior repair failures or inspection gaps.",
+    "Farnham witnessed experienced technicians reassigned, key tasks paused for days or weeks, and minimal continuity of labor on the aircraft (SN5174).",
+    "Farnham states that many delays occurred in the first 60-90 days, before discrepancy approvals were relevant, with core bottlenecks being corrosion mapping, engineering disposition delays, and lack of technician continuity."
+  ],
+  "citations": [
+    {
+      "document": "CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf",
+      "page": 14,
+      "text": "Disclosing Party’s designation, the Receiving Party must request a meet and confer. Parties must",
+      "verified": false
+    },
+    {
+      "document": "CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf",
+      "page": 14,
+      "text": "make a good faith effort to resolve the issue with the party at the meet and confer before requesting",
+      "verified": false
+    },
+    {
+      "document": "Report of Preliminary Hearing and Scheduling Order (002).docx",
+      "page": 1,
+      "text": "Amendments to Pleadings: Any request to amend the pleadings shall be filed on or before ________________. The response to a permitted amendment of the pleadings shall be filed within 20 days of the Ar",
+      "verified": false
+    },
+    {
+      "document": "Report of Preliminary Hearing and Scheduling Order (002).docx",
+      "page": 1,
+      "text": "5 Discovery: The parties are expected to limit written discovery requests and depositions to those reasonably calculated to conform to the needs of the case. Written discovery shall be limited to ____",
+      "verified": false
+    },
+    {
+      "document": "Report of Preliminary Hearing and Scheduling Order (002).docx",
+      "page": 1,
+      "text": "Dispositive motions shall not be filed without first obtaining leave of the Arbitrators. A party seeking to file a motion shall submit by electronic mail or letter a request to file the dispositive mo",
+      "verified": false
+    },
+    {
+      "document": "CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf",
+      "page": 2,
+      "text": "Scope of Agreement. In the course of discovery or the hearing in this action, the",
+      "verified": false
+    },
+    {
+      "document": "CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf",
+      "page": 6,
+      "text": "Highly Confidential Discovery Material. A Disclosing Party may designate all or",
+      "verified": false
+    },
+    {
+      "document": "CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf",
+      "page": 14,
+      "text": "documents they consider not subject to discovery, or operate as an admission by any",
+      "verified": false
+    },
+    {
+      "document": "Report of Preliminary Hearing and Scheduling Order (002).docx",
+      "page": 1,
+      "text": "Expert Discovery: The parties shall notify the Arbitrators on or before ________________ whether they will present any expert witnesses at the hearing. The Arbitrators shall set the schedule for exper",
+      "verified": false
+    },
+    {
+      "document": "CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf",
+      "page": 1,
+      "text": "Pursuant to the International Institute for Conflict Prevention & Resolution Rules and Procedure Rule 11, we hereby order the Confidentiality Agreement attached as Exhibit A be entered as a protective order.",
+      "verified": false
+    },
+    {
+      "document": "CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf",
+      "page": 2,
+      "text": "This Agreement shall govern the handling of all documents, deposition transcripts, expert reports, briefs, testimony, filings, and any other information produced or disclosed in connection with the present Action captioned Channel IT Isle of Man Ltd. v. Gulfstream Aerospace Corporation, No. G-24-115",
+      "verified": false
+    },
+    {
+      "document": "CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf",
+      "page": 2,
+      "text": "A Disclosing Party may designate all or part of any Case Material as “Confidential Material” under the terms of this Agreement if the Disclosing Party believes in good faith that it contains or constitutes sensitive proprietary, commercial or technical information, personally identifying information",
+      "verified": false
+    },
+    {
+      "document": "Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf",
+      "page": 2,
+      "text": "The parties have subsequently engaged in discovery, and CITIOM has provided the expert reports of Mr. Danny Farnham (technical expert) and FAZ Forensics (accounting/damages expert).",
+      "verified": false
+    },
+    {
+      "document": "Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf",
+      "page": 5,
+      "text": "This Proposal provides for downtime. Any downtime estimates included in this Proposal are based upon Gulfstream’s general understanding of the time required to accomplish the work outlined in this Proposal. Estimated downtime may be adjusted depending on the final induction schedule and mutually agr",
+      "verified": false
+    },
+    {
+      "document": "CITIOM v. Gulfstream-FAZ Report.pdf",
+      "page": 1,
+      "text": "This Expert Report (“Report”) concludes that Channel IT Isle of Man Ltd. (“CITIOM” or the “Claimant”) has suffered economic damages of approximately €2.4 million1 as a direct result of Gulfstream Aerospace Corporation’s (“Gulfstream” or the “Respondent”) breaches and failures related to the 192-Mont",
+      "verified": false
+    },
+    {
+      "document": "CITIOM v. Gulfstream-FAZ Report.pdf",
+      "page": 2,
+      "text": "CITIOM alleges that Gulfstream has breached its warranty with CITIOM and has failed to perform the required warranty repairs beginning in January 2024 within a reasonable period of time and as a result caused the warranty to fail of its essential purpose.",
+      "verified": false
+    },
+    {
+      "document": "CITIOM v. Gulfstream-FAZ Report.pdf",
+      "page": 2,
+      "text": "Gulfstream is a jet business aircraft manufacturer and owns and operates various aircraft service centers, including at the St. Louis Downtown Airport in Cahokia, Illinois, where the Aircraft was serviced in January 2024.",
+      "verified": false
+    },
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 20,
+      "text": "Used Duct Procurement and Repair: A used duct was eventually located and purchased",
+      "verified": false
+    },
+    {
+      "document": "PDF 2 - EXPERT WITNESS REPORT                                     March 5 copy.pdf",
+      "page": 15,
+      "text": "A used duct was located and purchased by Gulfstream – this duct even though not serviceable",
+      "verified": false
+    },
+    {
+      "document": "italaw16512.pdf",
+      "page": 7,
+      "text": "Project”), located in the Huaura province in Peru, which had been acquired by IMC in the",
+      "verified": false
+    }
+  ],
+  "steps": [
+    {
+      "time": 0.0,
+      "type": "thinking",
+      "content": "Query classified as factual (complexity: 2/5)"
+    },
+    {
+      "time": 0.0,
+      "type": "thinking",
+      "content": "Analyzing repository structure..."
+    },
+    {
+      "time": 10.6,
+      "type": "thinking",
+      "content": "Hypothesis: The user is looking to create a comprehensive timeline and inventory of all discovery interactions between the parties. This involves identifying not only the content of requests and respo"
+    },
+    {
+      "time": 10.6,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 1)"
+    },
+    {
+      "time": 10.6,
+      "type": "search",
+      "content": "Investigating: Search for: \"discovery request\""
+    },
+    {
+      "time": 16.1,
+      "type": "finding",
+      "content": "Found 59 matches in 91 files"
+    },
+    {
+      "time": 16.1,
+      "type": "search",
+      "content": "Investigating: Search for: \"request for production\""
+    },
+    {
+      "time": 16.2,
+      "type": "finding",
+      "content": "Found 1142 matches in 91 files"
+    },
+    {
+      "time": 16.2,
+      "type": "search",
+      "content": "Investigating: Search for: \"interrogatory\""
+    },
+    {
+      "time": 35.4,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 35.4,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream-FAZ Report.pdf"
+    },
+    {
+      "time": 35.4,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf"
+    },
+    {
+      "time": 35.4,
+      "type": "reading",
+      "content": "Deep reading: Murtaza Hassan Outline #1.docx"
+    },
+    {
+      "time": 38.7,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 38.7,
+      "type": "reading",
+      "content": "Deep reading: NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf"
+    },
+    {
+      "time": 38.7,
+      "type": "reading",
+      "content": "Deep reading: Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf"
+    },
+    {
+      "time": 38.7,
+      "type": "reading",
+      "content": "Deep reading: 1-66.pdf"
+    },
+    {
+      "time": 48.7,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 2)"
+    },
+    {
+      "time": 48.7,
+      "type": "search",
+      "content": "Investigating: Locate a finalized 'Report of Preliminary Hearing and Scheduling Order' to identify the specific dates for fact discovery conclusion, protective order submission, and expert witness not"
+    },
+    {
+      "time": 48.8,
+      "type": "finding",
+      "content": "Found 92 matches in 91 files"
+    },
+    {
+      "time": 48.8,
+      "type": "search",
+      "content": "Investigating: Obtain the specific dates and numerical limits for discovery, pleading amendments, motion filings, and the protective order as indicated by blank fields in the 'Report of Preliminary He"
+    },
+    {
+      "time": 48.9,
+      "type": "finding",
+      "content": "Found 599 matches in 91 files"
+    },
+    {
+      "time": 60.8,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 60.8,
+      "type": "reading",
+      "content": "Deep reading: 3. CITIOM Resp and Obj to Gulfstream RFPs.pdf"
+    },
+    {
+      "time": 60.8,
+      "type": "reading",
+      "content": "Deep reading: 1-66.pdf"
+    },
+    {
+      "time": 60.8,
+      "type": "reading",
+      "content": "Deep reading: 207-329.pdf"
+    },
+    {
+      "time": 64.6,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 64.6,
+      "type": "reading",
+      "content": "Deep reading: Patrick Stockton Outline #1.docx"
+    },
+    {
+      "time": 64.6,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream-FAZ Report.pdf"
+    },
+    {
+      "time": 64.6,
+      "type": "reading",
+      "content": "Deep reading: Combined_20250505172300.pdf"
+    },
+    {
+      "time": 75.5,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 3)"
+    },
+    {
+      "time": 75.5,
+      "type": "search",
+      "content": "Investigating: Investigate the specific requests made by CITIOM for the 'missing records' and Gulfstream's responses or lack thereof."
+    },
+    {
+      "time": 75.7,
+      "type": "finding",
+      "content": "Found 5 matches in 91 files"
+    },
+    {
+      "time": 75.7,
+      "type": "search",
+      "content": "Investigating: Search for any motions for adverse inference, spoliation, or related discovery sanctions filed by CITIOM concerning the 'missing records'."
+    },
+    {
+      "time": 75.8,
+      "type": "finding",
+      "content": "Found 37 matches in 91 files"
+    },
+    {
+      "time": 90.7,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 90.7,
+      "type": "reading",
+      "content": "Deep reading: 67-107.pdf"
+    },
+    {
+      "time": 90.7,
+      "type": "reading",
+      "content": "Deep reading: NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf"
+    },
+    {
+      "time": 90.7,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream - LB Expert Rebuttal Report (4-21-25).pdf"
+    },
+    {
+      "time": 97.9,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 97.9,
+      "type": "reading",
+      "content": "Deep reading: Combined_20250505172300.pdf"
+    },
+    {
+      "time": 97.9,
+      "type": "reading",
+      "content": "Deep reading: 1-66.pdf"
+    },
+    {
+      "time": 97.9,
+      "type": "reading",
+      "content": "Deep reading: 1-110.pdf"
+    },
+    {
+      "time": 108.1,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 4)"
+    },
+    {
+      "time": 108.1,
+      "type": "search",
+      "content": "Investigating: Identify the 'CPR case name' and 'CPR case number' mentioned in the 'Report of Preliminary Hearing and Scheduling Order (002).docx'."
+    },
+    {
+      "time": 108.2,
+      "type": "finding",
+      "content": "Found 599 matches in 91 files"
+    },
+    {
+      "time": 108.2,
+      "type": "search",
+      "content": "Investigating: Obtain and review 'Customer Support Proposal Q – 11876 Rev 0, dated 02 June 2023' from Gulfstream to confirm contents and context."
+    },
+    {
+      "time": 108.3,
+      "type": "finding",
+      "content": "Found 110 matches in 91 files"
+    },
+    {
+      "time": 128.9,
+      "type": "replan",
+      "content": "Hypothesis updated: The user is looking to create a comprehensive timeline and inventory of all discovery interactions between the parties, CITIOM and Gulfstream. This involves identifying not only th"
+    },
+    {
+      "time": 128.9,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 128.9,
+      "type": "reading",
+      "content": "Deep reading: Bassim Draft Witness Statement.docx"
+    },
+    {
+      "time": 128.9,
+      "type": "reading",
+      "content": "Deep reading: Bassim Draft Witness Statement.docx"
+    },
+    {
+      "time": 128.9,
+      "type": "reading",
+      "content": "Deep reading: Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf"
+    },
+    {
+      "time": 129.1,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 129.1,
+      "type": "reading",
+      "content": "Deep reading: Charles Philipp Outline #1.docx"
+    },
+    {
+      "time": 129.1,
+      "type": "reading",
+      "content": "Deep reading: 111-206.pdf"
+    },
+    {
+      "time": 129.1,
+      "type": "reading",
+      "content": "Deep reading: 1-66.pdf"
+    },
+    {
+      "time": 140.7,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 5)"
+    },
+    {
+      "time": 140.7,
+      "type": "search",
+      "content": "Investigating: Identify the party referred to as 'our' who made the interventions that led to investigations regarding the LBL 30.50 floor beam angle cap replacement."
+    },
+    {
+      "time": 140.7,
+      "type": "finding",
+      "content": "Found 58 matches in 91 files"
+    },
+    {
+      "time": 140.7,
+      "type": "search",
+      "content": "Investigating: Investigate the specific 'missing records' and 'internal correspondence' mentioned in CITIOM's brief to understand the full scope of the alleged failure to preserve and its impact."
+    },
+    {
+      "time": 140.9,
+      "type": "finding",
+      "content": "Found 5 matches in 91 files"
+    },
+    {
+      "time": 151.4,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 151.4,
+      "type": "reading",
+      "content": "Deep reading: 111-206.pdf"
+    },
+    {
+      "time": 151.4,
+      "type": "reading",
+      "content": "Deep reading: Combined_20250505172300.pdf"
+    },
+    {
+      "time": 151.4,
+      "type": "reading",
+      "content": "Deep reading: Danny Farnham Direct Outline with Cross & Redirect.docx"
+    },
+    {
+      "time": 156.4,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 156.4,
+      "type": "reading",
+      "content": "Deep reading: 1-66.pdf"
+    },
+    {
+      "time": 156.4,
+      "type": "reading",
+      "content": "Deep reading: 1-110.pdf"
+    },
+    {
+      "time": 156.4,
+      "type": "reading",
+      "content": "Deep reading: Combined_20250505172300.pdf"
+    },
+    {
+      "time": 167.1,
+      "type": "verify",
+      "content": "Verifying 75 citations..."
+    },
+    {
+      "time": 167.1,
+      "type": "verify",
+      "content": "Verification complete: 0 verified, 75 unverified"
+    },
+    {
+      "time": 167.1,
+      "type": "synthesis",
+      "content": "Synthesizing final analysis..."
+    },
+    {
+      "time": 202.7,
+      "type": "synthesis",
+      "content": "Analysis complete"
+    }
+  ],
+  "error": null
+}

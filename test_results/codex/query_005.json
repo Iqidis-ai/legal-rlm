@@ -1,0 +1,8 @@
+{
+  "query_num": 5,
+  "query": "What was the originally promised return-to-service date?",
+  "status": "completed",
+  "elapsed_seconds": 11.9,
+  "output": "I can help, but I need the case materials in this workspace. Which files should I review (briefs, opinions, docket, key exhibits), and do you want a specific focus (e.g., liability, damages, procedural posture, appellate issues)?",
+  "error": null
+}

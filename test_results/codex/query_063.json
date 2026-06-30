@@ -1,0 +1,8 @@
+{
+  "query_num": 63,
+  "query": "Do cross-examination materials reveal contradictions in testimony?",
+  "status": "timeout",
+  "elapsed_seconds": 560.8,
+  "output": "",
+  "error": "Timeout after 300s"
+}

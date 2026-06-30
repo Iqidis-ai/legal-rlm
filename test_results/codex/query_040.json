@@ -1,0 +1,8 @@
+{
+  "query_num": 40,
+  "query": "What do multiple documents reveal about Gulfstream's internal processes?",
+  "status": "completed",
+  "elapsed_seconds": 3.8,
+  "output": "Happy to help. What kind of review do you want for CITIOM v. Gulfstream (e.g., case summary, issue spotting, procedural posture, key holdings, risks, or litigation strategy), and are there local files in `C:\\Users\\devan\\OneDrive\\Desktop\\Projects\\RLMs` you want me to use?",
+  "error": null
+}

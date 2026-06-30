@@ -1,6 +1,7 @@
 """Document search - grep-style search across document repository.
 
 No vectors. Direct text matching with context.
+Scoring/ranking delegated to LLM decisions layer.
 """
 
 from pathlib import Path
@@ -8,108 +9,12 @@ from dataclasses import dataclass, field
 from typing import Optional
 import re
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .reader import DocumentReader, DocumentContent
 
 logger = logging.getLogger(__name__)
-
-# Document type priority weights for legal document analysis
-DOCUMENT_PRIORITY = {
-    # High priority - core legal documents
-    "contract": 1.5,
-    "agreement": 1.5,
-    "amendment": 1.4,
-    "exhibit": 1.3,
-    "declaration": 1.3,
-    "affidavit": 1.3,
-    "complaint": 1.4,
-    "motion": 1.3,
-    "order": 1.4,
-    "judgment": 1.5,
-    # Medium priority - supporting documents
-    "memo": 1.2,
-    "memorandum": 1.2,
-    "letter": 1.1,
-    "report": 1.2,
-    "analysis": 1.2,
-    # Lower priority - correspondence
-    "email": 0.9,
-    "correspondence": 0.9,
-    "note": 0.8,
-    "draft": 0.8,
-}
-
-
-def get_document_priority(filename: str) -> float:
-    """Get priority weight for a document based on its name/type."""
-    filename_lower = filename.lower()
-
-    for doc_type, priority in DOCUMENT_PRIORITY.items():
-        if doc_type in filename_lower:
-            return priority
-
-    return 1.0  # Default priority
-
-
-# Legal term synonyms for query expansion
-LEGAL_SYNONYMS = {
-    "agreement": ["contract", "covenant", "arrangement", "understanding"],
-    "contract": ["agreement", "covenant", "arrangement"],
-    "breach": ["violation", "default", "non-compliance", "failure"],
-    "terminate": ["cancel", "end", "rescind", "void"],
-    "liability": ["responsibility", "obligation", "duty"],
-    "damages": ["compensation", "remedy", "recovery", "losses"],
-    "indemnify": ["hold harmless", "compensate", "reimburse"],
-    "confidential": ["proprietary", "secret", "private"],
-    "warranty": ["guarantee", "representation", "assurance"],
-    "obligation": ["duty", "requirement", "responsibility"],
-    "party": ["parties", "signatory", "counterparty"],
-    "execute": ["sign", "enter into", "consummate"],
-    "material": ["significant", "substantial", "important"],
-    "consent": ["approval", "permission", "authorization"],
-    "notice": ["notification", "communication", "written notice"],
-}
-
-
-def expand_query(query: str, max_expansions: int = 3) -> list[str]:
-    """Expand a search query with synonyms and related terms."""
-    expanded = [query]
-    query_lower = query.lower()
-
-    for term, synonyms in LEGAL_SYNONYMS.items():
-        if term in query_lower:
-            # Add queries with synonyms
-            for synonym in synonyms[:max_expansions]:
-                expanded_query = query_lower.replace(term, synonym)
-                if expanded_query not in expanded:
-                    expanded.append(expanded_query)
-
-    return expanded[:max_expansions + 1]
-
-
-def generate_related_searches(query: str) -> list[str]:
-    """Generate related search queries based on the original."""
-    related = []
-    query_lower = query.lower()
-
-    # Extract key terms (words longer than 3 chars)
-    words = [w for w in query_lower.split() if len(w) > 3]
-
-    # Generate phrase variations
-    if len(words) >= 2:
-        # Pairs of terms
-        for i in range(len(words) - 1):
-            related.append(f"{words[i]} {words[i+1]}")
-
-    # Add common legal modifiers
-    modifiers = ["material", "significant", "breach of", "failure to"]
-    for word in words[:2]:
-        for modifier in modifiers[:2]:
-            if modifier not in query_lower:
-                related.append(f"{modifier} {word}")
-
-    return related[:5]
 
 
 @dataclass
@@ -122,9 +27,7 @@ class SearchHit:
     match_text: str
     context_before: list[str] = field(default_factory=list)
     context_after: list[str] = field(default_factory=list)
-    score: float = 1.0  # For ranking
-    match_count: int = 1  # Matches in this line
-    exact_match: bool = False  # Whether this is an exact phrase match
+    match_count: int = 1  # Number of matches in this line
 
     @property
     def context(self) -> str:
@@ -142,17 +45,6 @@ class SearchHit:
         """Get citation string."""
         return f"{self.filename}, p. {self.page_num}"
 
-    @property
-    def context_richness(self) -> float:
-        """Score based on context quality."""
-        score = 0.0
-        # More context = better
-        score += len(self.context_before) * 0.1
-        score += len(self.context_after) * 0.1
-        # Longer match text = more specific
-        score += min(len(self.match_text) / 100, 0.5)
-        return score
-
 
 @dataclass
 class SearchResults:
@@ -163,8 +55,8 @@ class SearchResults:
     total_matches: int
 
     def top(self, n: int = 10) -> list[SearchHit]:
-        """Get top N results by score."""
-        return sorted(self.hits, key=lambda h: h.score, reverse=True)[:n]
+        """Get first N results (no scoring - LLM will pick relevant ones)."""
+        return self.hits[:n]
 
     def by_file(self) -> dict[str, list[SearchHit]]:
         """Group results by file."""
@@ -175,13 +67,34 @@ class SearchResults:
             grouped[hit.file_path].append(hit)
         return grouped
 
+    def format_for_llm(self, max_hits: int = 20) -> str:
+        """Format results for LLM consumption."""
+        if not self.hits:
+            return "No matches found."
+
+        lines = [f"Found {self.total_matches} matches in {self.files_searched} files:"]
+        for i, hit in enumerate(self.hits[:max_hits]):
+            lines.append(f"\n[{i+1}] {hit.citation}")
+            lines.append(hit.context)
+
+        if self.total_matches > max_hits:
+            lines.append(f"\n... and {self.total_matches - max_hits} more matches")
+
+        return "\n".join(lines)
+
 
 class DocumentSearch:
-    """Grep-style search across documents."""
+    """Grep-style search across documents.
 
-    def __init__(self, reader: Optional[DocumentReader] = None):
+    Thread-safe: Uses a lock to protect concurrent cache access.
+    No scoring - returns raw matches for LLM to evaluate.
+    """
+
+    def __init__(self, reader: Optional[DocumentReader] = None, max_cache_size: int = 100):
         self.reader = reader or DocumentReader()
         self._doc_cache: dict[str, DocumentContent] = {}
+        self._cache_lock = threading.Lock()
+        self._max_cache_size = max_cache_size
 
     def search(
         self,
@@ -204,8 +117,11 @@ class DocumentSearch:
             max_workers: Max parallel workers
 
         Returns:
-            SearchResults with all matches
+            SearchResults with all matches (unscored)
         """
+        if not query.strip():
+            return SearchResults(query=query, hits=[], files_searched=0, total_matches=0)
+
         flags = 0 if case_sensitive else re.IGNORECASE
 
         if regex:
@@ -216,11 +132,16 @@ class DocumentSearch:
         all_hits: list[SearchHit] = []
         files_searched = 0
 
+        # Image files (.png/.jpg/.jpeg) require async OCR — they have no extractable
+        # text content for grep-style search and must be excluded here.
+        _ASYNC_ONLY = {".png", ".jpg", ".jpeg"}
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
                 executor.submit(
-                    self._search_file, f, pattern, context_lines, query
-                ): f for f in files if self.reader.can_read(f)
+                    self._search_file, f, pattern, context_lines
+                ): f for f in files
+                if self.reader.can_read(f) and f.suffix.lower() not in _ASYNC_ONLY
             }
 
             for future in as_completed(futures):
@@ -232,9 +153,6 @@ class DocumentSearch:
                 except Exception as e:
                     logger.warning(f"Error searching {file_path}: {e}")
 
-        # Score results with multi-factor ranking
-        self._score_results(all_hits, query)
-
         return SearchResults(
             query=query,
             hits=all_hits,
@@ -242,71 +160,97 @@ class DocumentSearch:
             total_matches=len(all_hits),
         )
 
-    def _score_results(self, hits: list[SearchHit], query: str):
-        """Apply multi-factor scoring to search results."""
-        if not hits:
-            return
+    def smart_search(
+        self,
+        query: str,
+        files: list[Path],
+        regex: bool = False,
+        case_sensitive: bool = False,
+        context_lines: int = 2,
+        max_workers: int = 10,
+    ) -> SearchResults:
+        """Search with fallback to OR search on individual terms.
 
-        # Calculate file-level statistics
-        file_counts: dict[str, int] = {}
-        file_page_spread: dict[str, set] = {}
+        Tries exact phrase match first. If no results and query has multiple words,
+        splits into individual terms and searches for each, deduplicating results.
+        """
+        # First try exact match
+        exact_results = self.search(
+            query=query,
+            files=files,
+            regex=regex,
+            case_sensitive=case_sensitive,
+            context_lines=context_lines,
+            max_workers=max_workers,
+        )
 
-        for hit in hits:
-            file_counts[hit.file_path] = file_counts.get(hit.file_path, 0) + 1
-            if hit.file_path not in file_page_spread:
-                file_page_spread[hit.file_path] = set()
-            file_page_spread[hit.file_path].add(hit.page_num)
+        # If we got results, return them
+        if exact_results.hits:
+            return exact_results
 
-        # Score each hit
-        for hit in hits:
-            score = 1.0
+        # Split query into terms
+        terms = [t for t in re.split(r"\s+", query.strip()) if t and len(t) > 2]
+        if len(terms) <= 1:
+            return exact_results
 
-            # Factor 1: Match density in file (0.1-0.5)
-            density = file_counts[hit.file_path]
-            score += min(density * 0.1, 0.5)
+        # Search for each term
+        unique_terms = list(dict.fromkeys(terms))  # Preserve order, remove dupes
+        all_hits: list[SearchHit] = []
+        files_searched = 0
 
-            # Factor 2: Page spread (matches on multiple pages = higher relevance)
-            page_spread = len(file_page_spread[hit.file_path])
-            score += min(page_spread * 0.05, 0.3)
+        for term in unique_terms:
+            term_results = self.search(
+                query=term,
+                files=files,
+                regex=regex,
+                case_sensitive=case_sensitive,
+                context_lines=context_lines,
+                max_workers=max_workers,
+            )
+            all_hits.extend(term_results.hits)
+            if not files_searched:
+                files_searched = term_results.files_searched
 
-            # Factor 3: Position boost (earlier in document = slightly higher)
-            position_factor = 1.0 / (1.0 + hit.page_num * 0.01)
-            score += position_factor * 0.2
+        # Deduplicate hits by (file, page, line)
+        deduped: dict[tuple[str, int, int], SearchHit] = {}
+        for hit in all_hits:
+            key = (hit.file_path, hit.page_num, hit.line_num)
+            existing = deduped.get(key)
+            if existing:
+                existing.match_count += hit.match_count
+            else:
+                deduped[key] = hit
 
-            # Factor 4: Context richness
-            score += hit.context_richness
+        deduped_hits = list(deduped.values())
 
-            # Factor 5: Exact match bonus
-            if hit.exact_match:
-                score += 0.5
-
-            # Factor 6: Match length bonus (longer matches = more specific)
-            query_words = len(query.split())
-            match_words = len(hit.match_text.split())
-            if match_words >= query_words:
-                score += 0.2
-
-            # Factor 7: Document type priority
-            doc_priority = get_document_priority(hit.filename)
-            score *= doc_priority
-
-            hit.score = score
+        return SearchResults(
+            query=" OR ".join(unique_terms),
+            hits=deduped_hits,
+            files_searched=files_searched,
+            total_matches=len(deduped_hits),
+        )
 
     def _search_file(
         self,
         file_path: Path,
         pattern: re.Pattern,
         context_lines: int,
-        original_query: str = "",
     ) -> list[SearchHit]:
         """Search a single file for pattern matches."""
-        # Check cache
         cache_key = str(file_path)
-        if cache_key in self._doc_cache:
-            doc = self._doc_cache[cache_key]
-        else:
-            doc = self.reader.read(file_path)
-            self._doc_cache[cache_key] = doc
+
+        # Check cache with lock
+        with self._cache_lock:
+            if cache_key in self._doc_cache:
+                doc = self._doc_cache[cache_key]
+            else:
+                doc = self.reader.read(file_path)
+                # LRU-style eviction if cache too large
+                if len(self._doc_cache) >= self._max_cache_size:
+                    # Remove oldest entry
+                    oldest_key = next(iter(self._doc_cache))
+                    del self._doc_cache[oldest_key]
+                self._doc_cache[cache_key] = doc
 
         hits = []
 
@@ -316,9 +260,6 @@ class DocumentSearch:
             for i, line in enumerate(lines):
                 matches = list(pattern.finditer(line))
                 if matches:
-                    # Check for exact phrase match
-                    exact_match = original_query.lower() in line.lower() if original_query else False
-
                     hits.append(SearchHit(
                         file_path=doc.path,
                         filename=doc.filename,
@@ -334,7 +275,6 @@ class DocumentSearch:
                             for j in range(i + 1, min(len(lines), i + 1 + context_lines))
                         ],
                         match_count=len(matches),
-                        exact_match=exact_match,
                     ))
 
         return hits
@@ -383,4 +323,10 @@ class DocumentSearch:
 
     def clear_cache(self):
         """Clear document cache."""
-        self._doc_cache.clear()
+        with self._cache_lock:
+            self._doc_cache.clear()
+
+    @property
+    def cache_size(self) -> int:
+        """Get current cache size."""
+        return len(self._doc_cache)

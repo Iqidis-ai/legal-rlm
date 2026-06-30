@@ -1,0 +1,8 @@
+{
+  "query_num": 32,
+  "query": "What do all witness statements say about communication between parties?",
+  "status": "timeout",
+  "elapsed_seconds": 690.9,
+  "output": "",
+  "error": "Timeout after 300s"
+}

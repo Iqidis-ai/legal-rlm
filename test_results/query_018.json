@@ -1,0 +1,792 @@
+{
+  "query_num": 18,
+  "query": "What was Joe Rivera's position at Gulfstream?",
+  "status": "completed",
+  "elapsed_seconds": 163.1,
+  "documents_read": 33,
+  "searches_performed": 11,
+  "citations_count": 91,
+  "max_depth_reached": 3,
+  "hypothesis": "It remains highly probable that the query 'Joe Rivera' may be a misnomer for 'Joe Schuster', as 'Joe Rivera' is not mentioned in the provided search results. 'Joe Schuster' is also not mentioned in these specific search results. Gulfstream Aerospace Corporation is confirmed as a party in a legal action (CITIOM v. GAC) and as involved in aircraft maintenance/inspections, specifically regarding corrosion issues during 144-month (2020), July 2023, and 192-Month Inspections. The specific position of 'Joe Schuster' as 'Ops Manager' and his involvement in work order communications, while stated in other expert reports, is not found in these particular search results.",
+  "final_output": "**MEMORANDUM**\n\n**TO:** The File\n**FROM:** Senior Partner\n**DATE:** May 24, 2024\n**RE:** Investigation into the Position and Role of Joseph Rivera at Gulfstream Aerospace Corporation in re CITIOM v. GAC\n\n***\n\n### **Executive Summary**\n\nThe available evidence indicates that Joseph Rivera is an employee of Gulfstream Aerospace Corporation involved in communications concerning warranty coverage and customer pricing. His specific title and formal position are not identified in the reviewed documents. The initial query may have conflated Joseph Rivera with a separate individual, Joe Schuster, who is identified in expert reports as an \"Ops Manager\" at Gulfstream, directly involved in the technical oversight of aircraft repairs.\n\n### **Factual Background**\n\nThis inquiry arises from the ongoing arbitration between Channel IT Isle of Man Ltd. (“CITIOM”) and Gulfstream Aerospace Corporation (“Gulfstream”) concerning the 192-month inspection of Gulfstream G550, serial number 5174 (“the Aircraft”). The inspection began on January 29, 2024, at Gulfstream’s St. Louis Service Center [NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf, p. 4] [UNVERIFIED].\n\nThe original work order quoted approximately 2,800 manhours for the inspection [207-329.pdf, p. 2] [UNVERIFIED]. However, due to the discovery of extensive corrosion and other discrepancies, the project’s scope expanded dramatically, with estimates growing to over 20,000 additional manhours [207-329.pdf, p. 2] [UNVERIFIED]. This led to significant delays, with an initial estimated completion of June 21, 2024, being pushed to mid-November 2024 [207-329.pdf, p. 2] [UNVERIFIED].\n\nDuring the course of this maintenance event, two individuals with similar first names appear in the documentation: Joseph Rivera and Joe Schuster. Between March 27 and March 29, 2024, Joseph Rivera was party to email communications regarding an \"additional warranty coverage request\" and customer \"frustration with pricing and downtime\" for the Aircraft [Combined_20250505172300.pdf, pp. 31-32] [UNVERIFIED].\n\nSeparately, an expert witness report references Joe Schuster as the \"Ops Manager\" [PDF 2 - EXPERT WITNESS REPORT March 5 copy.pdf, p. 16] [UNVERIFIED]. Mr. Schuster was reportedly involved in technical discussions regarding repair proposals and was the subject of an allegation by the expert witness of having \"outright lied\" about clearance issues for certain repairs [PDF 2 - EXPERT WITNESS REPORT March 5 copy.pdf, p. 15] [UNVERIFIED].\n\n### **Analysis**\n\n#### **Key Findings**\n\n*   **Joseph Rivera is a Gulfstream employee whose communications pertain to warranty and customer finance matters.** His email address, `Joseph.Rivera@gulfstream.com`, is present on correspondence dated March 28-29, 2024, concerning \"5001 and 5174 additional warranty coverage request\" and structural corrosion issues [Combined_20250505172300.pdf, pp. 31-32] [UNVERIFIED]; [111-206.pdf, pp. 4, 10, 15, 23] [UNVERIFIED].\n*   **Joseph Rivera's specific job title is not identified in the reviewed documents.** While his involvement in warranty and pricing discussions is clear, no document states his formal position or title within Gulfstream's corporate structure.\n*   **Joe Schuster, a distinct individual, is identified as the \"Ops Manager\" at Gulfstream.** An expert witness report explicitly names \"the Ops Manager, Joe Schuster\" and details his involvement in operational and technical matters related to the Aircraft's repair [PDF 2 - EXPERT WITNESS REPORT March 5 copy.pdf, p. 16] [UNVERIFIED].\n*   **Joe Schuster had direct involvement in technical repair decisions.** He participated in discussions with an on-site engineer regarding repair proposals, such as doubler installations and beam replacements, and was accused by the expert of misrepresenting facts regarding repair clearances [PDF 2 - EXPERT WITNESS REPORT March 5 copy.pdf, p. 15] [UNVERIFIED].\n\n#### **Supporting Evidence**\n\nThe strongest evidence identifying Joseph Rivera is his direct participation in email chains using a Gulfstream corporate email address. An email sent by him on March 28, 2024, regarding \"G550 5174\" demonstrates his involvement in the specific matter at hand [Combined_20250505172300.pdf, p. 32] [UNVERIFIED]. He frequently communicates with other documented Gulfstream employees, including Derek Zimmerman and April Morina, further establishing his employment with the company [111-206.pdf, pp. 4, 15] [UNVERIFIED].\n\nEvidence regarding Joe Schuster is derived entirely from what appears to be an expert witness report for CITIOM. This report identifies him as \"Ops Manager\" and alleges he \"made a comment expressing his concerns\" about certain technicians and had \"outright lied\" regarding repair feasibility [PDF 2 - EXPERT WITNESS REPORT March 5 copy.pdf, pp. 15-16] [UNVERIFIED].\n\n#### **Contradictions or Concerns**\n\nThe primary concern is the potential for confusion between Joseph Rivera and Joe Schuster due to their similar first names. The working hypothesis suggested the query \"Joe Rivera\" was a misnomer for \"Joe Schuster.\" However, the evidence confirms the existence of two separate individuals affiliated with Gulfstream, each with distinct roles relevant to the ongoing dispute. There is no contradictory evidence suggesting they are the same person.\n\n#### **Evidence Strength Assessment**\n\n**Weak.** This assessment is based on the fact that nearly all documentary citations pertaining to Joseph Rivera and Joe Schuster are marked as **[UNVERIFIED]**. The analysis relies on extracted text from documents that have not been authenticated or reviewed in their entirety. The conclusions are therefore contingent on the accuracy and context of these unverified snippets.\n\n### **Entities & Relationships**\n\n*   **Channel IT Isle of Man Ltd. (CITIOM):** Claimant in the arbitration and owner of the Aircraft.\n*   **Gulfstream Aerospace Corporation:** Respondent and maintenance/repair provider.\n*   **Joseph Rivera:** Gulfstream employee involved in email correspondence regarding warranty and pricing. Role and title are otherwise undefined.\n*   **Joe Schuster:** Identified as \"Ops Manager\" at Gulfstream. Involved in technical oversight of repairs on the Aircraft.\n*   **Danny Farnham:** CITIOM's expert witness who authored a report on Gulfstream's performance [NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf, p. 4] [UNVERIFIED].\n\n### **Gaps & Limitations**\n\n*   **Evidence Not Found:** A formal job title, job description, or position on an organizational chart for Joseph Rivera. Full, verified copies of the source documents containing the cited evidence.\n*   **Areas Needing Further Investigation:** The specific responsibilities of Joseph Rivera and his authority regarding warranty claims. The reporting structure for both Mr. Rivera and Mr. Schuster. The factual basis for the expert's allegations against Mr. Schuster.\n*   **Limitations of Available Documents:** The analysis is severely constrained by the unverified nature of the source material. Without the full documents, the context of the communications and allegations cannot be fully ascertained, and the risk of misinterpretation is high.\n\n### **Recommendations**\n\n1.  **Immediate Actions:**\n    *   Update the case file and witness lists to clearly differentiate between Joseph Rivera and Joe Schuster, noting their distinct, apparent roles.\n    *   Draft preliminary deposition outlines for both individuals based on the current findings, focusing on their respective areas of involvement (warranty/pricing for Rivera, operations/repairs for Schuster).\n\n2.  **Additional Investigation Needed:**\n    *   Prioritize obtaining and authenticating the source documents cited herein, specifically the expert reports (`D. Farnham Expert Report`, `EXPERT WITNESS REPORT March 5 copy.pdf`) and the email compilations (`111-206.pdf`, `Combined_20250505172300.pdf`).\n    *   Serve document requests on Gulfstream for its organizational chart for the St. Louis Service Center for the relevant period, along with personnel files and job descriptions for both Mr. Rivera and Mr. Schuster.\n\n3.  **Risk Mitigation Steps:**\n    *   Refrain from including any uncorroborated allegations, such as the claim that Joe Schuster \"lied,\" in any formal pleadings or briefs until the source document has been fully verified and the context properly evaluated.\n    *   Proceed with the assumption that both individuals are material witnesses whose roles, though different, are both relevant to the core issues of the dispute (cost, delay, and performance).",
+  "accumulated_facts": [
+    "The name 'Joe Rivera' does not appear in the provided search results.",
+    "A 'Joe Schuster' is identified as the 'Ops Manager' at Gulfstream.",
+    "Joe Schuster participated in discussions with an on-site engineer regarding repair proposals (e.g., doubler installation, shoring, beam replacement) and was alleged to have 'lied' regarding clearance issues for repairs.",
+    "Joe Schuster expressed concerns in June about 'on loan' technicians causing more problems.",
+    "An individual named 'Joe' (without a last name) was expected to return on a Wednesday, with meetings to be set up upon his return, in the context of discussions about project schedules and structural findings at Gulfstream.",
+    "Joseph Rivera is an employee at Gulfstream, using the email address Joseph.Rivera@gulfstream.com.",
+    "Joseph Rivera was involved in email communications concerning Gulfstream G550 aircraft models 5174 and 5001, specifically regarding 'additional warranty coverage request' and customer 'frustration with pricing and downtime'.",
+    "Joseph Rivera sent emails on March 28, 2024, and March 29, 2024, regarding these aircraft issues.",
+    "Joseph Rivera is employed by Gulfstream, as indicated by his email address 'Joseph.Rivera@gulfstream.com' and frequent internal communication within Gulfstream.",
+    "Joseph Rivera was involved in email correspondence between March 27 and March 29, 2024, concerning '5001 and 5174 additional warranty coverage request' and 'G550 5174' aircraft issues, specifically mentioning 'structural corrosion'.",
+    "Joseph Rivera frequently communicates with other Gulfstream employees including Derek Zimmerman, April Morina, Murtaza Hassan, Paul Kuyoth, Aubry Mayse, Mohammed Alghanim, Brian Burrows, Lor Izzard, Michael Kehoe, Mike West, Becky Elliott, Craig Klebe, Jeff Belland, and Justin McCartney.",
+    "Florian Schaller requested warranty consideration/program covered item list with confirmations for cost overview.",
+    "Florian Schaller asked for news on the rudder and a rough estimate for Return to Service (RTS).",
+    "Joseph Schuster confirmed that the exchange reservoir was delivered to the aircraft that week.",
+    "Joseph Schuster stated that an updated list of covered items would be shared early the following week.",
+    "Joseph Schuster provided a repair exchange price of $74,803.89 for the HYDR - RIGHT RESERVOIR ASSY (PIN: 1159H50126-45).",
+    "Gulfstream initially proposed sending the customer's unit for repair due to lack of available stock for the reservoir.",
+    "Gulfstream later advised against customer property repair for the hydraulic reservoir due to a leak from the bootstrap and significant lead time for detail repair parts.",
+    "Florian Schaller inquired about a repair option for the trim wheel.",
+    "Gulfstream Aerospace Corporation is responding to Mr. Bassim Haidar of Channel IT Isle of Man Ltd regarding the maintenance of Gulfstream G550, serial number 5174.",
+    "The original work order quote for the 192-month inspection estimated 2800 manhours.",
+    "Discrepancies discovered during inspection have added an estimated 20,000 additional manhours to the project.",
+    "Gulfstream is providing overtime labor at no charge to expedite the work.",
+    "The estimated completion date is projected to be mid-November (in the August 15, 2024 letter).",
+    "An earlier letter dated April 8, 2024, estimated completion by June 21st for the same aircraft and maintenance event.",
+    "Gulfstream states they have no way to determine how or where the aircraft has been operated, stored, and maintained, which impacts discrepancies.",
+    "Failure to keep up with the progress payment schedule will result in work stoppage.",
+    "Danny Farnham is providing an expert witness report for the arbitration case G-24-115-AA between Channel Isle of Man Ltd. (Claimant) and Gulfstream Aerospace Corporation (Respondent).",
+    "The report focuses on the 192-month inspection event for Gulfstream G550, Serial Number 5174, conducted by Gulfstream at its St. Louis Service Center from January 29, 2024, to November 29, 2024.",
+    "Danny Farnham's involvement began with the input/kick-off meeting on January 29, 2024, at the Gulfstream St. Louis service center.",
+    "The report aims to provide an independent expert evaluation of Gulfstream's performance, including pre-inspection planning, proposal development, work execution, corrosion management, project management, staffing, communication, and adherence to industry standards.",
+    "The expert report will analyze Gulfstream's 192-month inspection workscope and estimates, proposal process deficiencies, pre-maintenance assessment and planning deficiencies, and contract/proposal analysis.",
+    "Corrosion detection and management failures are a significant focus of the report, including standard procedures and specific issues with the horizontal stabilizer.",
+    "The report will also examine workforce and management failures at the St. Louis facility, communication and documentation failures, and general organizational challenges at Gulfstream.",
+    "Technical issue management deficiencies, including specific examples like the air starter duct repair problems, will be analyzed.",
+    "Issues with outsourcing components to the Gulfstream Savannah facility and quote/scope management issues are also covered.",
+    "The report intends to offer a general opinion on the financial impact of delays and mismanagement, including additional costs and repairs that should have been covered under warranty or identified earlier.",
+    "The expert's conclusions will summarize opinions, detail key findings regarding Gulfstream's performance, explicitly state the causal relationship between deficiencies and delays, and list industry standard violations.",
+    "A draft Purchase Agreement for an Aircraft was attached to an email on March 26, 2024, for review and approval.",
+    "A Letter of Intent (LOI) was finalized and sent for execution on March 15, 2024.",
+    "An estimate of modification costs for the aircraft was inserted into the LOI as USD 70,000.",
+    "Gulfstream requested information on the aircraft, but the seller was hesitant until the LOI was signed and the deposit was in place.",
+    "Concerns were formally expressed regarding the efficiency and service level of the 192 MOS inspection project for Gulfstream G550, SN 5174, OE-LIM.",
+    "The project was initiated on January 28, 2024.",
+    "Estimated Return to Service (RTS) dates have been continually postponed since April 2024.",
+    "Work ceased on June 17, 2024, due to an unpaid interim invoice.",
+    "A key part, WTBF Frame PN 1159B51246-39, became unavailable, pushing the RTS to January 6th, 2025.",
+    "Concerns exist regarding the LBL 30.50 floor beam angle cap replacement and previously uncommunicated repair options.",
+    "Communication has been challenging, with a lack of information regarding STM holiday schedules and appointed deputies.",
+    "The on-site representative, Danny, is often the only source of communication regarding project progress.",
+    "Multiple parts sent out for repair have not yielded timely updates, requiring direct feedback seeking from Savannah.",
+    "A G550 aircraft, Serial Number 5174, is undergoing a '192 check'.",
+    "The owner is expressing extreme dissatisfaction with the 11-month delay for the 192 check and the struggle to get their aircraft back.",
+    "The owner (represented by Bassim Haidar and Danny Farnham) claims Gulfstream's commitment to increasing manpower for this project has been a 'failed commitment'.",
+    "The owner criticizes Gulfstream's manpower allocation as 'dismal' and 'seriously lacking', citing issues with inadequacy, inconsistency, lack of experience, and experienced technicians being moved to other projects or sent for training.",
+    "An email from Beth Mitchell to Murtaza Hassan and Michael Kehoe requests review and approval of a 'refresh' of a letter originally sent in April to their Legal Counsel.",
+    "The current email chain is an attempt to get an approved draft to Mark Burns by COB (Close Of Business).",
+    "The email from Danny Farnham was sent to Murtaza Hassan, CC'ing Joseph Allen, Joseph Schuster, Derek Zimmerman, joseph.rivera@gulfstream.com, Bas Hai, Mark Muller, and Ben Schouten.",
+    "Gulfstream G550, serial number 5174, is undergoing maintenance at the St. Louis facility.",
+    "The original work order quote estimated 2800 manhours for the 192-month inspection.",
+    "The estimated completion date is projected for mid-November (August X, 2024 letter) or June 21st (April 8, 2024 letter).",
+    "Completion date is subject to change depending on repair dispositions provided by engineering once corrosion is evaluated.",
+    "An email from Danny Farnham to Murtaza Hassan (and others) dated August 13, 2024, expresses dissatisfaction with the manpower allocation for G550, SN 5174, and the resulting delays in its return.",
+    "Danny Farnham states that over the last 6 months, Gulfstream has failed to increase manpower loading on the project despite promises.",
+    "Danny Farnham describes the manpower as 'not adequate, not consistent, some not experienced, etc.' and notes that experienced technicians have been moved to other projects.",
+    "The current email chain is initiated by Beth Mitchell on August 15, 2024, requesting review of a 'refresh' of a letter sent in April to their Legal Counsel regarding the G550, SN 5174 manpower issue.",
+    "Mark Burns on August 15, 2024, instructs Derek Zimmerman to 'draft a response to his questions' and to 'respond COB your time' concerning the G550, SN 5174 manpower issue.",
+    "Bassim Haidar emailed Mark Burns on August 13, 2024, stating '11 months for a 192 check and we are struggling to get my aircraft back. This is unbelievable'.",
+    "The email from Danny Farnham on page 4 of this document is CC'd to 'joseph.rivera@gulfstream.com'.",
+    "No direct facts regarding Joe Rivera, Joe Schuster, Gulfstream, or an 'Ops Manager' position were found in the provided search results.",
+    "Joseph Schuster communicated regarding 'work order detail' and 'duplicate work' on an unspecified date, likely in 2022, referencing item number SC17240.",
+    "Gulfstream served as the Aircraft’s exclusive maintenance provider.",
+    "Email regarding '5174 LOI Final' was sent on March 26, 2024.",
+    "LOI states an estimate of modification costs at USD 70K, with any surplus to be refunded to the buyer.",
+    "Seller is hesitant to release aircraft information until the LOI is signed and the deposit is in place.",
+    "Gulfstream G550, SN 5174, OE-LIM, inspection project initiated on January 28, 2024.",
+    "RTS was extended to January 6th, 2025, due to the unavailability of a replacement for WTBF Frame PN 1159B51246-39.",
+    "RTS forecast extended to December 16th, 2024, citing unclear reasons related to the left hand floor beam angle cap.",
+    "Danny Farnham is identified as the seller's on-site project manager.",
+    "Michael Makarius is the CCO of AVCON JET AG.",
+    "The estimated completion date is projected to be mid-November.",
+    "Completion date is subject to change depending on repair dispositions from engineering regarding corrosion evaluation.",
+    "Gulfstream has no way to determine how or where the aircraft has been operated, stored, and maintained, all of which impact discovered discrepancies.",
+    "An end of April completion of this maintenance visit is not possible.",
+    "The estimated completion date was June 21st in a communication dated April 8, 2024.",
+    "CITIOM commenced this Arbitration on May 31, 2024.",
+    "Respondent Gulfstream filed a Notice of Defense and Counterclaim dated August 7, 2024.",
+    "The Arbitration Tribunal issued the Report of Preliminary Hearing and Scheduling Order dated October 23, 2024.",
+    "Claimant filed the Amended Statement of Claim (ASOC) on September 9, 2024.",
+    "Gulfstream prepared and presented the Customer Support Proposal dated 02 June 2023 (the 'Proposal') for the 192-month inspection of the Aircraft.",
+    "The Aircraft, Gulfstream G550, bears serial number 5174.",
+    "The 192-month inspection was ultimately completed and the Aircraft returned to service in November 2024.",
+    "The estimated return to service date was approximately nine months prior to the actual return in November 2024.",
+    "An Aircraft Purchase Agreement draft was sent to Ilona Avramenko for review and approval.",
+    "The seller accepted an additional comment in the LOI, inserting an estimate of modification costs at USD 70K.",
+    "A formal complaint was lodged regarding the efficiency and service during the 192 MOS inspection project for Gulfstream G550, SN 5174, OE-LIM, initiated on January 28, 2024.",
+    "The estimated Return to Service (RTS) date for the Gulfstream G550, SN 5174, OE-LIM has been repeatedly postponed since April 2024.",
+    "A specific part, WTBF Frame PN 1159B51246-39, is unavailable, with an estimated replacement date of January 6th, 2025, impacting the RTS.",
+    "The on-site representative, Danny, is identified as the primary source of communication regarding project progress.",
+    "A draft Aircraft Purchase Agreement was sent to Ilona Avramenko for review and approval on March 26, 2024.",
+    "An LOI (Letter of Intent) was finalized and attached to an email on March 15, 2024.",
+    "The LOI includes an estimate of modification costs at USD 70K.",
+    "A required replacement part, WTBF Frame PN 1159B51246-39, has an estimated availability date of January 6th, 2025.",
+    "Concerns are raised about additional delays caused by required replacements and unanswered questions regarding the LBL 30.50 floor beam angle cap replacement.",
+    "Communication issues include not being informed about the holiday schedule of the STM or appointed deputies, and deputy responses not being forthcoming.",
+    "Danny Farnham is identified as the on-site representative and a primary source of communication regarding project progress.",
+    "Alternative methods to shorten ground time only surfaced after persistent efforts from AVCON JET AG.",
+    "Gulfstream Aerospace Corporation is a party (Respondent) in a legal action, Channel IT Isle of Man Ltd. v. Gulfstream Aerospace Corporation, Case No. G-24-115-AA.",
+    "Gulfstream is involved in providing '192-Month Inspection Workscope and Estimates' and '192-Month Inspection Proposal,' indicating its role as a maintenance or inspection provider.",
+    "The name 'Joe Rivera' is not mentioned in any of the provided search results.",
+    "Leonard A. Beauchemin was retained by counsel for Gulfstream to serve as an expert in this arbitration.",
+    "Beauchemin was asked to review the expert report prepared by Danny Farnham and documents relating to the 192-month inspection of the G550 S/N 5174 aircraft.",
+    "Beauchemin has forty-two years of business jet aircraft maintenance and management experience.",
+    "Beauchemin previously worked for nine years with Bombardier Maintenance Repair Organization (MRO) where he oversaw heavy inspection, structural repair, and modifications on similar class airframes.",
+    "Beauchemin managed and procured proposals for hundreds of business jet aircraft inspections and modifications across numerous MRO facilities, including Gulfstream.",
+    "Beauchemin served on the Gulfstream committee responsible for developing the maintenance program for the GV (i.e., G550) aircraft.",
+    "Gulfstream provided a proposal for Claimant's consideration for a major structural inspection on Claimant's Gulfstream G550 aircraft.",
+    "The proposal followed Gulfstream's standard quoting process by providing an estimate of cost and downtime for the inspection itself, not for correcting discrepancies.",
+    "Gulfstream's practice was not to estimate costs and downtime for correcting discrepancies because the nature and scope of defects are unknown until the aircraft is opened.",
+    "The proposal explicitly states multiple times that 'correction of discrepancies is not included in the quoted price' and that 'repairs to the Aircraft resulting from discrepancies . . . discovered during the [inspection]' are not included.",
+    "Claimant retained Avcon Jet, A.G. to manage the aircraft and arrange the maintenance visit, and Avcon Jet executed the proposal on behalf of Claimant.",
+    "Claimant also utilized Danny Farnham as an onsite representative, who had experience with Gulfstream's proposal process.",
+    "Claimant argued that it is industry standard for repair stations to include cost and downtime estimates for repair work in connection with major structural inspections.",
+    "Gulfstream discovered significant corrosion on the Aircraft that far exceeded what was typically experienced on other G550 aircraft.",
+    "The Aircraft took more than 27,000 hours to complete, compared to the fleet average of approximately 5,400 hours for the inspection and correction of discrepancies.",
+    "Gulfstream's 20-year structural warranty covered the costs associated with structural repairs.",
+    "Of the 27,000+ hours worked, 16,270 hours were billed to warranty, equating to $3.5 million of revenue-generating work at Gulfstream's cost.",
+    "Claimant alleges spoliation of evidence and seeks an adverse inference due to Gulfstream no longer having copies of all emails related to the proposal.",
+    "Gulfstream has a document retention policy that provides for deletion of email messages after a certain time period unless archived.",
+    "The proposal was issued in June 2023, and the dispute arose several months into 2024 after the maintenance visit commenced.",
+    "Leonard A. Beauchemin was retained by counsel for Gulfstream to serve as an expert witness in the arbitration between Channel Isle of Man Ltd. and Gulfstream Aerospace Corporation.",
+    "Beauchemin has forty-two years of business jet aircraft maintenance and management experience, including positions from technician to Vice President.",
+    "Beauchemin served as Chairperson of the Maintenance Committee of the National Business Aviation Association (NBAA).",
+    "Beauchemin served as Chairperson of the Bombardier Global Express (GX) Maintenance Program Industry Steering Committee (ISC), leading MSG-3 activities from 1997 to 2013.",
+    "Beauchemin also holds the role of ISC Chairperson for the Bombardier 600 series.",
+    "Beauchemin has experience with Gulfstream aircraft (GII, GIIB, and GIVSP) while Director of Maintenance for Eastman Kodak.",
+    "Beauchemin has experience managing and overseeing a fleet of aircraft including Gulfstream GIIB, GIII, GIV, and GV, as well as numerous other aircraft models from various manufacturers.",
+    "Gulfstream's Defense claims that the increased downtime (from 35-45 working days to approximately 160 working days) was due to repairs for \"discrepancies in the Aircraft (including without limitation corrosion) discovered during the performance\" that were not included in the 2023 Proposal.",
+    "The St. Louis Service Center was selected by Gulfstream to perform the 192-month inspection and maintenance tasks.",
+    "The 192-month inspection requires substantial disassembly of the aircraft, including removal of the interior, galley, cabin seating, furniture, flooring, and other components.",
+    "The corrosion repair process is described as time and manpower-intensive, involving grinding, measuring, submitting measurements to engineers, and engineers approving repairs or providing additional measures.",
+    "Gulfstream's 20-year structural warranty covers costs associated with structural repairs due to structural corrosion.",
+    "Gulfstream claims 9,822 hours have been allocated to the Gulfstream warranty for corrosion and structural discrepancies, representing 55% of the man-hours spent on the inspection.",
+    "Gulfstream states its warranty covers structural repairs but not the removal of minor corrosion, which is considered a standard maintenance task. Gulfstream determines warranty coverage.",
+    "The Gulfstream Work Authorization Terms and Conditions (T&C) contain an exclusion of damages clause (Section 8) that broadly disclaims liability for punitive, special, incidental, or consequential damages, including loss of use, loss of time, inconvenience, diminution in value, or commercial loss.",
+    "The 2023 Proposal states that downtime estimates are not contractual commitments and may be adjusted due to final induction schedules, facility selection, and additional work required.",
+    "Georgia law implies a 'reasonable time' for performance when a contract is silent on the matter, as per McMillan v. Quincey.",
+    "Contractual limitations on damages are generally valid under Georgia law, unless they purport to relieve liability for gross negligence or willful/wanton conduct.",
+    "Gulfstream also warranties previous work for 12 months or 1,000 hours of flight time, with the sole remedy being repair or replacement.",
+    "Gulfstream Aerospace Corporation operates a St Louis Service Center, which had its Tier rating downgraded from Tier 4 to Tier 3, though the exact timing relative to SN 5174's input is unknown.",
+    "Aircraft SN 5174, a Gulfstream 550 manufactured in 2008, underwent a 192-month inspection at the Gulfstream St Louis Service Center.",
+    "A 'member of management on location' at the St Louis Service Center provided verbal information regarding the Tier downgrade.",
+    "Financial experts were appointed to investigate certain transactions and potential irregularities in European subsidiaries of a large UK group, leading to findings of fraud and successful insurance claims.",
+    "Required replacements, including questions regarding the LBL 30.50 floor beam angle cap replacement, were being investigated following interventions, with concerns about additional delays and communication issues regarding the STM (Senior Technical Manager) and deputies.",
+    "Bassim Haidar is the founder and CEO of Channel IT Isle of Man Ltd. (CITIOM), the Claimant.",
+    "CITIOM purchased the Gulfstream G550 aircraft (MSN 5174) in late 2018 / early 2019 from NetJets.",
+    "CITIOM engaged Avcon Jet AG ('Avcon') to manage and operate the Aircraft, commencing January 2, 2019.",
+    "Avcon is responsible for managing the aircraft, maintenance programs, booking charters, and arranging flights.",
+    "CITIOM purchased the Honeywell Maintenance Service Plan and the Rolls-Royce CorporateCare program.",
+    "Bassim Haidar pays for these maintenance programs and all maintenance on the Aircraft.",
+    "The crew's training is by Avcon, but the cost for the crew is borne by Bassim Haidar.",
+    "The Aircraft is typically kept at Farnborough Airport in the UK, with parking costs borne by CITIOM.",
+    "The 144-month inspection was facilitated by Avcon in 2020 and performed by Gulfstream at its Savannah facility.",
+    "The 144-month inspection cost approximately $1 million, significantly more than the initial quote of around $350,000.",
+    "During the 144-month inspection, Gulfstream found internal corrosion in the horizontal stabilizer.",
+    "Gulfstream also performed maintenance on the Aircraft in July-August 2023, working on leading edges and the APU area.",
+    "Bassim Haidar believes corrosion issues found in the 192-month inspection should have been identified during the July 2023 or even the 144-month inspection.",
+    "The 192-month inspection required booking slots three months in advance and soliciting proposals six months in advance.",
+    "Avcon solicited proposals for the 192-month inspection from Gulfstream FAB, Gulfstream US, and Jet Aviation EMEA.",
+    "Only Gulfstream or Jet Aviation facilities were considered to maintain warranty coverage.",
+    "A significant part, WTBF Frame PN 1159B51246-39, is unavailable, with an estimated replacement date of January 6th, 2025.",
+    "Questions regarding the LBL 30.50 floor beam angle cap replacement have remained unanswered.",
+    "Communication regarding the STM holiday schedule and appointed deputies was not provided.",
+    "No individual named 'Joe Rivera' is mentioned in the provided search results.",
+    "Gulfstream Aerospace Corporation (GAC) is a party in a legal action titled 'CITIOM v. GAC'.",
+    "Gulfstream's maintenance practices are under scrutiny for failing to adequately identify and address corrosion issues during previous maintenance events, specifically the 144-month inspection in 2020 and July 2023 maintenance, which led to recurrence during the 192-Month Inspection.",
+    "No mention of 'Joe Rivera' or any specific position for 'Joe Rivera' at Gulfstream Aerospace Corporation (GAC) is found in the provided search results.",
+    "Gulfstream is involved in aircraft maintenance and inspections, specifically the 144-month inspection (2020), July 2023 maintenance, and 192-month inspection, which are noted for alleged failures to identify and address corrosion issues.",
+    "The document is CITIOM's First Requests for Production on Gulfstream Aerospace Corporation.",
+    "The arbitration case number is G-24-115-AA.",
+    "The arbitration is under the International Institute for Conflict Prevention & Resolution Rules and Procedures.",
+    "The proposal referred to is dated 02 June 2023 and prepared by Gulfstream for the Aircraft/Avcon Jet AG.",
+    "The Aircraft is identified as a Gulfstream G550, bearing serial number 5174.",
+    "Requests for production are governed by a draft scheduling order circulated on October 15, 2024, and prior email correspondence on October 16, 2024.",
+    "Claimant is Channel Isle Of Man Ltd., and Respondent is Gulfstream Aerospace Corporation.",
+    "Danny Farnham is the expert witness.",
+    "The report evaluates Gulfstream's performance during the 192-Month Inspection of Gulfstream G550, Serial Number 5174.",
+    "The expert's observation period for the 192-Month Inspection was from January 29, 2024, to November 29, 2024.",
+    "The expert's participation commenced on January 29, 2024, with an input/kick-off meeting at the Gulfstream St. Louis service center.",
+    "The report assesses Gulfstream's pre-inspection planning, proposal development, execution of work, corrosion management, project management, staffing, communication, and adherence to industry standards.",
+    "The report discusses Gulfstream's 192-Month Inspection Proposal and justifications for underestimation.",
+    "The report details deficiencies in pre-maintenance assessment and planning, including knowledge of aircraft history.",
+    "The report analyzes Gulfstream's contract and proposal development against industry standards.",
+    "Significant focus is placed on corrosion detection and management failures, including specific issues with the horizontal stabilizer.",
+    "The report addresses workforce and management failures related to the 192-Month Inspection, including staffing inadequacies at the St. Louis facility.",
+    "A comparative analysis with industry standards is conducted, benchmarking Gulfstream against independent MROs for cost and downtime.",
+    "Technical issue management deficiencies are detailed, with specific examples provided.",
+    "The report extensively discusses problems with the Air Starter Duct repair, including delays in evaluation, repair, and procurement.",
+    "Issues with outsourcing components to the Gulfstream Savannah facility are analyzed, noting negative impacts and systemic problems.",
+    "Quote and scope management issues are discussed, including initial deficiencies, scope creep, and financial impacts.",
+    "The report provides a general opinion on the financial impact of delays and mismanagement.",
+    "The report includes opinions on repairs that should have been covered under warranty or identified in prior maintenance.",
+    "The report concludes with a summary of expert opinions, key findings, causal relationships between deficiencies and delays, and a list of identified industry standard violations.",
+    "Danny Farnham was retained to assess Gulfstream’s performance during the 192-month inspection of Aircraft SN 5174.",
+    "Mr. Farnham directly observed the inspection at Gulfstream’s St. Louis facility and analyzed project documentation.",
+    "The June 2, 2023 proposal estimated 2,800 manhours and a certain downtime.",
+    "The final manhour count for the inspection exceeded 26,000 hours.",
+    "Corrosion issues discovered during the 192-month inspection had been previously addressed by Gulfstream in 2020 or 2023.",
+    "The St. Louis facility was observed to be chronically understaffed, relying on inexperienced technicians, and deprioritizing Aircraft SN 5174.",
+    "192-month inspection scopes for G550 aircraft are generally predictable across the fleet and follow a fixed checklist with known risk zones.",
+    "Reputable MROs, such as Jet Aviation, typically include discrepancy contingencies (ROMs) in their quotes.",
+    "The document is a Protective Order in an arbitration case under the International Institute for Conflict Prevention & Resolution Rules and Procedures.",
+    "The parties to the arbitration are Channel IT Isle of Man Ltd. (Claimant and Counter-Respondent) and Gulfstream Aerospace Corporation (Respondent and Counter-Claimant).",
+    "The Protective Order incorporates by reference the Confidentiality Agreement attached as Exhibit A.",
+    "The Confidentiality Agreement defines 'Confidential Material' as information deemed confidential by the Disclosing Party, including sensitive proprietary, commercial, technical, or personally identifying information.",
+    "Information that is publicly available or gained through independent means outside the Action is excluded from the definition of 'Confidential Material'.",
+    "Designation of Confidential Material requires marking documents with 'Confidential Material' or 'Confidential – Subject To Protective Order' on each page.",
+    "Failure to designate a document as Confidential Material does not waive the claim of confidentiality, and designation can occur post-disclosure.",
+    "Deposition testimony can be designated as Confidential Material by a statement on the record or within 30 days of receipt of the transcript.",
+    "All deposition transcripts are treated as Confidential Material for 30 days following delivery by the court reporter.",
+    "Confidential Material and its copies/summaries shall not be used or disclosed for purposes other than the Action, except as permitted.",
+    "Recipients have a duty to safeguard Confidential Material from unauthorized disclosure and secure it.",
+    "Disclosure of Confidential Material is permitted to specific categories of persons, including counsel, employees, authors/recipients, arbitrators, court reporters, experts, and certain third-party witnesses.",
+    "Experts, consultants, and third-party witnesses require completion of a certification (Exhibit 1) before receiving Confidential Material.",
+    "Disclosure to any other person requires completion of the certification (Exhibit 1) and an Order of the Tribunal or written agreement of the Disclosing Party.",
+    "A Disclosing Party can designate material as 'Highly Confidential Material' if it contains trade secret information, proprietary/competitively sensitive financial information, and/or customer identifying information.",
+    "Gulfstream may partially redact documents containing customer names or cost/profit information and produce them with a 'Confidential Material' designation instead of 'Highly Confidential Material'.",
+    "If Claimant objects to Gulfstream's redactions, the parties agree to meet and confer in good faith, and if unresolved, the issue may be submitted to the Tribunal.",
+    "Designation of Highly Confidential Material requires marking documents with 'Highly Confidential Material' or 'Highly Confidential – Subject To Protective Order'.",
+    "Similar to Confidential Material, failure to designate does not waive claims, and designation can occur post-disclosure.",
+    "Deposition testimony disclosing or derived from Highly Confidential Material can be designated as such, with similar procedural rules to Confidential Material designation.",
+    "Beauchemin is the founder and Managing Director of AeroTechna Solutions, LLC, an aviation advisory, technical management and training company.",
+    "Beauchemin held positions of technician, crew chief, foreman, supervisor, manager, director and Vice President of maintenance for both private and charter aircraft companies."
+  ],
+  "citations": [
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 13,
+      "text": "The on-site engineer and Joe Schuster advised that there was insufficient clearance for a",
+      "verified": false
+    },
+    {
+      "document": "PDF 2 - EXPERT WITNESS REPORT                                     March 5 copy.pdf",
+      "page": 15,
+      "text": "with the onsite engineer and Joe Schuster I proposed the installation of a doubler to the beam",
+      "verified": false
+    },
+    {
+      "document": "PDF 2 - EXPERT WITNESS REPORT                                     March 5 copy.pdf",
+      "page": 15,
+      "text": "Comment - These actions proved that the engineer and Joe Schuster had outright lied to me",
+      "verified": false
+    },
+    {
+      "document": "PDF 2 - EXPERT WITNESS REPORT                                     March 5 copy.pdf",
+      "page": 16,
+      "text": "At one point, (June time frame) the Ops Manager, Joe Schuster made a comment expressing his",
+      "verified": false
+    },
+    {
+      "document": "111-206.pdf",
+      "page": 4,
+      "text": "<Derek.Zimmerman@gulfstream.com>, joseph.rivera@gulfstream.com,",
+      "verified": false
+    },
+    {
+      "document": "111-206.pdf",
+      "page": 10,
+      "text": "Aubry <aubry.mayse@gulfstream.com>; Rivera, Joseph <Joseph.Rivera@gulfstream.com>; Alghanim,",
+      "verified": false
+    },
+    {
+      "document": "111-206.pdf",
+      "page": 15,
+      "text": "Morina, April [april.morina@gulfstream.com); Rivera, Joseph [Joseph.Rivera@gulfstream.com)",
+      "verified": false
+    },
+    {
+      "document": "111-206.pdf",
+      "page": 23,
+      "text": "West, Mike [mike.west@gulfstream.com); Rivera, Joseph [Joseph.Rivera@gulfstream.com); Mayse, Aubry",
+      "verified": false
+    },
+    {
+      "document": "Combined_20250505172300.pdf",
+      "page": 31,
+      "text": "From: Rivera, Joseph <Joseph.Rivera@gulfstream.com>",
+      "verified": false
+    },
+    {
+      "document": "Combined_20250505172300.pdf",
+      "page": 32,
+      "text": "From: Rivera, Joseph <Joseph.Rivera@gulfstream.com>",
+      "verified": false
+    },
+    {
+      "document": "Combined_20250505172300.pdf",
+      "page": 32,
+      "text": "To: Morina, April <april.morina@gulfstream.com >; Rivera, Joseph",
+      "verified": false
+    },
+    {
+      "document": "Combined_20250505172300.pdf",
+      "page": 57,
+      "text": "<aubry.mayse@gulfstream.com >; Rivera, Joseph <Joseph.Rivera@gulfstream.com >; Alghanim, Mohammed",
+      "verified": false
+    },
+    {
+      "document": "Combined_20250505172300.pdf",
+      "page": 120,
+      "text": "Aubry <aubry.mayse@gulfstream.com>; Rivera, Joseph <Joseph.Rivera@gulfstream.com>; Alghanim,",
+      "verified": false
+    },
+    {
+      "document": "464-544.pdf",
+      "page": 2,
+      "text": "Can you please share the warranty consideration/programm covered item list with confirmations for cost overview?",
+      "verified": false
+    },
+    {
+      "document": "464-544.pdf",
+      "page": 2,
+      "text": "Any news on the rudder. Please indicate a rough estimate RTS. we need to inform the owner on the expected or best case RTS.",
+      "verified": false
+    },
+    {
+      "document": "464-544.pdf",
+      "page": 3,
+      "text": "Exchange reservoir was delivered this week to the aircraft.",
+      "verified": false
+    },
+    {
+      "document": "207-329.pdf",
+      "page": 2,
+      "text": "The original work order quote estimated 2800 manhours was needed to perform the required inspections and services associated with the 192-month inspection. The number and type of discrepancies that were discovered during the inspection process, beyond the original work scope and requiring rectificat",
+      "verified": false
+    },
+    {
+      "document": "207-329.pdf",
+      "page": 2,
+      "text": "I assure you we are working diligently to address the numerous challenges that have been encountered. I note your concerns regarding resources, manpower, and preparation for maintenance visits. My leadership team has and continues to be engaged in the allocation of additional labor resources to your",
+      "verified": false
+    },
+    {
+      "document": "207-329.pdf",
+      "page": 2,
+      "text": "Based upon our current projection, the estimated completion date will likely be in mid-November.",
+      "verified": false
+    },
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 4,
+      "text": "This Expert Witness Report by Danny Farnham is based on firsthand, on-site observation of work performed by Gulfstream Aerospace Corporation (“Gulfstream”) at its St. Louis Service Center, as well as direct communication and interaction with Gulfstream employees and management.",
+      "verified": false
+    }
+  ],
+  "steps": [
+    {
+      "time": 0.0,
+      "type": "thinking",
+      "content": "Query classified as unknown (complexity: 1/5)"
+    },
+    {
+      "time": 0.0,
+      "type": "thinking",
+      "content": "Analyzing repository structure..."
+    },
+    {
+      "time": 12.1,
+      "type": "thinking",
+      "content": "Hypothesis: It is highly probable that Joe Rivera's position at Gulfstream is explicitly stated within discovery responses provided by Gulfstream, witness lists, or examination outlines if he was a wi"
+    },
+    {
+      "time": 12.1,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 1)"
+    },
+    {
+      "time": 12.1,
+      "type": "search",
+      "content": "Investigating: Search for: \"Joe Rivera\" AND Gulfstream AND (position OR title OR role OR employee OR employment OR manager OR director OR \"Vice President\" OR \"VP\" OR officer OR lead OR engineer OR spe"
+    },
+    {
+      "time": 17.1,
+      "type": "finding",
+      "content": "Found 303 matches in 91 files"
+    },
+    {
+      "time": 17.1,
+      "type": "search",
+      "content": "Investigating: Search for: \"J. Rivera\" AND Gulfstream AND (position OR title OR role)"
+    },
+    {
+      "time": 17.3,
+      "type": "finding",
+      "content": "Found 116 matches in 91 files"
+    },
+    {
+      "time": 17.3,
+      "type": "search",
+      "content": "Investigating: Search for: \"Rivera, Joe\" AND Gulfstream AND (position OR title OR role)"
+    },
+    {
+      "time": 17.4,
+      "type": "finding",
+      "content": "Found 46 matches in 91 files"
+    },
+    {
+      "time": 28.2,
+      "type": "replan",
+      "content": "Hypothesis updated: It is highly probable that the query 'Joe Rivera' may be a misnomer for 'Joe Schuster', whose position at Gulfstream as 'Ops Manager' is explicitly stated in expert reports and rel"
+    },
+    {
+      "time": 28.2,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 28.2,
+      "type": "reading",
+      "content": "Deep reading: 1-110.pdf"
+    },
+    {
+      "time": 28.2,
+      "type": "reading",
+      "content": "Deep reading: NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf"
+    },
+    {
+      "time": 28.2,
+      "type": "reading",
+      "content": "Deep reading: 464-544.pdf"
+    },
+    {
+      "time": 28.3,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 28.3,
+      "type": "reading",
+      "content": "Deep reading: 207-329.pdf"
+    },
+    {
+      "time": 28.3,
+      "type": "reading",
+      "content": "Deep reading: 111-206.pdf"
+    },
+    {
+      "time": 28.3,
+      "type": "reading",
+      "content": "Deep reading: 1-110.pdf"
+    },
+    {
+      "time": 30.1,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 30.1,
+      "type": "reading",
+      "content": "Deep reading: 207-329.pdf"
+    },
+    {
+      "time": 30.1,
+      "type": "reading",
+      "content": "Deep reading: 111-206.pdf"
+    },
+    {
+      "time": 30.1,
+      "type": "reading",
+      "content": "Deep reading: Joe Rivera Outline #1.docx"
+    },
+    {
+      "time": 40.2,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 2)"
+    },
+    {
+      "time": 40.2,
+      "type": "search",
+      "content": "Investigating: Verify if 'Joe Rivera' is a potential typo or misnomer for 'Joe Schuster', given that all relevant results refer to Schuster."
+    },
+    {
+      "time": 40.3,
+      "type": "finding",
+      "content": "Found 50 matches in 91 files"
+    },
+    {
+      "time": 40.3,
+      "type": "search",
+      "content": "Investigating: Investigate the role of 'Joe Schuster' as 'Ops Manager' at Gulfstream, specifically in relation to the aircraft repair issues and technician performance concerns mentioned in the expert"
+    },
+    {
+      "time": 40.4,
+      "type": "finding",
+      "content": "Found 5 matches in 91 files"
+    },
+    {
+      "time": 50.4,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 50.4,
+      "type": "reading",
+      "content": "Deep reading: Combined_20250505172300.pdf"
+    },
+    {
+      "time": 50.4,
+      "type": "reading",
+      "content": "Deep reading: 1-66.pdf"
+    },
+    {
+      "time": 50.4,
+      "type": "reading",
+      "content": "Deep reading: 1-110.pdf"
+    },
+    {
+      "time": 52.1,
+      "type": "replan",
+      "content": "Hypothesis updated: It is highly probable that the query 'Joe Rivera' may be a misnomer for 'Joe Schuster', who is confirmed to be involved in communications regarding work order details. While his sp"
+    },
+    {
+      "time": 52.1,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 52.1,
+      "type": "reading",
+      "content": "Deep reading: Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf"
+    },
+    {
+      "time": 52.1,
+      "type": "reading",
+      "content": "Deep reading: 1-66.pdf"
+    },
+    {
+      "time": 52.1,
+      "type": "reading",
+      "content": "Deep reading: 207-329.pdf"
+    },
+    {
+      "time": 60.5,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 3)"
+    },
+    {
+      "time": 60.5,
+      "type": "search",
+      "content": "Investigating: Examine the full document 'Combined_20250505172300.pdf' for additional context surrounding Joseph Schuster's communication on page 271, specifically looking for email headers, signature"
+    },
+    {
+      "time": 60.6,
+      "type": "finding",
+      "content": "Found 4 matches in 91 files"
+    },
+    {
+      "time": 60.6,
+      "type": "search",
+      "content": "Investigating: Search for: Gulfstream AND Rivera AND witness AND (position OR title)"
+    },
+    {
+      "time": 60.7,
+      "type": "finding",
+      "content": "Found 12939 matches in 91 files"
+    },
+    {
+      "time": 66.3,
+      "type": "replan",
+      "content": "Hypothesis updated: It is highly probable that the query 'Joe Rivera' may be a misnomer for 'Joe Schuster', who is confirmed to be involved in communications regarding work order details. While his sp"
+    },
+    {
+      "time": 66.3,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 66.3,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream - LB Expert Rebuttal Report (4-21-25).pdf"
+    },
+    {
+      "time": 66.3,
+      "type": "reading",
+      "content": "Deep reading: Gulfstream - Prehearing Brief .pdf"
+    },
+    {
+      "time": 66.3,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream - LB Expert Rebuttal Report (4-21-25).pdf"
+    },
+    {
+      "time": 70.7,
+      "type": "replan",
+      "content": "Hypothesis updated: It remains highly probable that the query 'Joe Rivera' may be a misnomer for 'Joe Schuster', as 'Joe Rivera' is not mentioned in the available documents. Gulfstream Aerospace Corpo"
+    },
+    {
+      "time": 70.7,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 70.7,
+      "type": "reading",
+      "content": "Deep reading: Joe Rivera Outline #1.docx"
+    },
+    {
+      "time": 70.7,
+      "type": "reading",
+      "content": "Deep reading: In re CITCOM v Gulfstream - Analysis of Claims and Defenses Related to Repairs on GS550-5174(80915932.pdf"
+    },
+    {
+      "time": 70.7,
+      "type": "reading",
+      "content": "Deep reading: 7. Leonard B - Cross Exam & Impeachment.docx"
+    },
+    {
+      "time": 81.7,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 4)"
+    },
+    {
+      "time": 81.7,
+      "type": "search",
+      "content": "Investigating: Investigate the roles of other Gulfstream employees frequently in communication with Joseph Rivera, such as Derek Zimmerman, April Morina, Murtaza Hassan, Michael Kehoe, Mike West, and "
+    },
+    {
+      "time": 81.8,
+      "type": "finding",
+      "content": "Found 5 matches in 91 files"
+    },
+    {
+      "time": 81.8,
+      "type": "search",
+      "content": "Investigating: Examine other documents related to the 'G550 5174' and 'G550 5001' aircraft, particularly those concerning 'warranty coverage request' or customer disputes, as these might explicitly de"
+    },
+    {
+      "time": 81.9,
+      "type": "finding",
+      "content": "Found 2352 matches in 91 files"
+    },
+    {
+      "time": 91.3,
+      "type": "replan",
+      "content": "Hypothesis updated: It remains highly probable that the query 'Joe Rivera' may be a misnomer for 'Joe Schuster', as 'Joe Rivera' is not mentioned in the available documents. 'Joe Schuster' is also not"
+    },
+    {
+      "time": 91.3,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 91.3,
+      "type": "reading",
+      "content": "Deep reading: 1. Joe Rivera - Cross Exam & Impeachment .docx"
+    },
+    {
+      "time": 91.3,
+      "type": "reading",
+      "content": "Deep reading: Combined_20250505172300.pdf"
+    },
+    {
+      "time": 91.3,
+      "type": "reading",
+      "content": "Deep reading: Bassim Draft Witness Statement.docx"
+    },
+    {
+      "time": 93.5,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 93.5,
+      "type": "reading",
+      "content": "Deep reading: 1-110.pdf"
+    },
+    {
+      "time": 93.5,
+      "type": "reading",
+      "content": "Deep reading: Combined_20250505172300.pdf"
+    },
+    {
+      "time": 93.5,
+      "type": "reading",
+      "content": "Deep reading: 1-66.pdf"
+    },
+    {
+      "time": 104.5,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 5)"
+    },
+    {
+      "time": 104.5,
+      "type": "search",
+      "content": "Investigating: Identify the 'expert reports' referenced in the current hypothesis that state Joe Schuster's position as 'Ops Manager' at Gulfstream."
+    },
+    {
+      "time": 104.6,
+      "type": "finding",
+      "content": "Found 193 matches in 91 files"
+    },
+    {
+      "time": 104.6,
+      "type": "search",
+      "content": "Investigating: Identify and examine the 'other expert reports' mentioned in the hypothesis that state 'Joe Schuster' as 'Ops Manager' at Gulfstream."
+    },
+    {
+      "time": 104.7,
+      "type": "finding",
+      "content": "Found 193 matches in 91 files"
+    },
+    {
+      "time": 116.0,
+      "type": "replan",
+      "content": "Hypothesis updated: It remains highly probable that the query 'Joe Rivera' may be a misnomer for 'Joe Schuster', as 'Joe Rivera' is not mentioned in the provided search results. 'Joe Schuster' is also"
+    },
+    {
+      "time": 116.0,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 116.0,
+      "type": "reading",
+      "content": "Deep reading: CITIOM First Req for Production on Gulfstream - Oct 18 2024.pdf"
+    },
+    {
+      "time": 116.0,
+      "type": "reading",
+      "content": "Deep reading: NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf"
+    },
+    {
+      "time": 116.0,
+      "type": "reading",
+      "content": "Deep reading: 1-66.pdf"
+    },
+    {
+      "time": 119.3,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 119.3,
+      "type": "reading",
+      "content": "Deep reading: 2. Danny Farnham Direct Outline with Cross & Redirect.docx"
+    },
+    {
+      "time": 119.3,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream - LB Expert Rebuttal Report (4-21-25).pdf"
+    },
+    {
+      "time": 119.3,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf"
+    },
+    {
+      "time": 129.6,
+      "type": "verify",
+      "content": "Verifying 91 citations..."
+    },
+    {
+      "time": 129.6,
+      "type": "verify",
+      "content": "Verification complete: 7 verified, 84 unverified"
+    },
+    {
+      "time": 129.6,
+      "type": "synthesis",
+      "content": "Synthesizing final analysis..."
+    },
+    {
+      "time": 163.1,
+      "type": "synthesis",
+      "content": "Analysis complete"
+    }
+  ],
+  "error": null
+}

@@ -1,0 +1,8 @@
+{
+  "query_num": 31,
+  "query": "Compare the Pre-Hearing Briefs from both parties on the estimate issue.",
+  "status": "timeout",
+  "elapsed_seconds": 364.6,
+  "output": "",
+  "error": "Timeout after 300s"
+}

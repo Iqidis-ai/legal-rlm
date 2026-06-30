@@ -1,0 +1,8 @@
+{
+  "query_num": 100,
+  "query": "Which documents are most likely to be dispositive?",
+  "status": "error",
+  "elapsed_seconds": 0.1,
+  "output": "",
+  "error": "[WinError 2] The system cannot find the file specified"
+}

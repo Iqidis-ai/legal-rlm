@@ -12,6 +12,7 @@ import logging
 from .core.models import GeminiClient, ModelTier
 from .core.repository import MatterRepository
 from .core.cache import ResponseCache, LRUCache
+from .core.tracing import TracingProvider, NoOpProvider
 from .core.utils import (
     setup_logging,
     TelemetryCollector,
@@ -43,6 +44,13 @@ class IrysConfig:
     cache_ttl_seconds: int = 3600
     output_format: str = "markdown"
     log_level: str = "INFO"
+    enable_inline_citations: bool = True
+    # S3 settings (optional; local disk used if not set)
+    s3_bucket: Optional[str] = None
+    s3_region: str = "us-east-1"
+    s3_prefix: Optional[str] = None  # matter-level prefix, e.g. "matters/case-123"
+    aws_access_key_id: Optional[str] = None
+    aws_secret_access_key: Optional[str] = None
 
 
 class Irys:
@@ -58,12 +66,13 @@ class Irys:
         print(result.output)
     """
 
-    def __init__(self, config: Optional[IrysConfig] = None, **kwargs):
+    def __init__(self, config: Optional[IrysConfig] = None, tracing_provider: Optional[TracingProvider] = None, **kwargs):
         """
         Initialize Irys.
 
         Args:
             config: IrysConfig object or individual parameters as kwargs
+            tracing_provider: Optional TracingProvider for observability (e.g. LangfuseProvider)
         """
         if config:
             self.config = config
@@ -78,10 +87,13 @@ class Irys:
         self._engine: Optional[RLMEngine] = None
         self._cache: Optional[ResponseCache] = None
         self._telemetry = TelemetryCollector()
+        self._tracing_provider: TracingProvider = tracing_provider or NoOpProvider()
 
         # Callbacks
         self._on_progress: Optional[Callable] = None
         self._on_step: Optional[Callable] = None
+        self._on_citation: Optional[Callable] = None
+        self._on_fact: Optional[Callable] = None
 
     def _ensure_initialized(self):
         """Ensure components are initialized."""
@@ -93,16 +105,26 @@ class Irys:
                 ttl_seconds=self.config.cache_ttl_seconds)
 
         if self._engine is None:
+            s3_prefix = (self.config.s3_prefix or "").strip("/")
             engine_config = RLMConfig(
                 max_depth=self.config.max_depth,
                 max_leads_per_level=self.config.max_leads_per_level,
                 checkpoint_dir=self.config.checkpoint_dir,
+                s3_bucket=self.config.s3_bucket,
+                s3_region=self.config.s3_region,
+                s3_checkpoint_prefix=f"{s3_prefix}/checkpoints" if s3_prefix else None,
+                s3_facts_prefix=f"{s3_prefix}/facts" if s3_prefix else None,
+                aws_access_key_id=self.config.aws_access_key_id,
+                aws_secret_access_key=self.config.aws_secret_access_key,
             )
             self._engine = RLMEngine(
                 gemini_client=self._client,
                 config=engine_config,
                 on_step=self._on_step,
                 on_progress=self._on_progress,
+                on_citation=self._on_citation,
+                on_fact=self._on_fact,
+                tracing_provider=self._tracing_provider,
             )
 
     def on_progress(self, callback: Callable[[dict], None]):
@@ -117,11 +139,30 @@ class Irys:
         if self._engine:
             self._engine.on_step = callback
 
+    def on_citation(self, callback: Callable):
+        """Register citation callback."""
+        self._on_citation = callback
+        if self._engine:
+            self._engine.on_citation = callback
+
+    def on_fact(self, callback: Callable):
+        """Register fact callback."""
+        self._on_fact = callback
+        if self._engine:
+            self._engine.on_fact = callback
+
     async def investigate(
         self,
         query: str,
         repository: str | Path,
         template: Optional[str] = None,
+        seed_facts: Optional[list[str]] = None,
+        seed_citations: Optional[list[dict]] = None,
+        context: Optional[Any] = None,
+        message_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        setup_duration_ms: int = 0,
     ) -> "InvestigationResult":
         """
         Run an investigation.
@@ -130,6 +171,16 @@ class Irys:
             query: The legal question to investigate
             repository: Path to document repository
             template: Optional investigation template name
+            seed_facts: Prior-session facts to seed into investigation
+            seed_citations: Prior-session citations to seed into investigation
+            context: Optional InvestigationContext with conversation_history,
+                     planning_instructions, and output_instructions
+            message_id: Optional caller-supplied message ID for telemetry cross-referencing
+            user_id: Optional caller-supplied user ID; stored on the telemetry log so
+                     the investigation can be attributed to a user even after the
+                     originating message/chat is deleted
+            session_id: Chat/conversation session ID; used as Langfuse sessionId so
+                        all traces from one chat session can be grouped and retrieved
 
         Returns:
             InvestigationResult with findings and output
@@ -155,7 +206,16 @@ class Irys:
         # Run investigation
         self._telemetry.start_operation("investigation")
         try:
-            state = await self._engine.investigate(query, repository)
+            state = await self._engine.investigate(
+                query, repository,
+                seed_facts=seed_facts,
+                seed_citations=seed_citations,
+                context=context,
+                message_id=message_id,
+                user_id=user_id,
+                session_id=session_id,
+                setup_duration_ms=setup_duration_ms,
+            )
         finally:
             self._telemetry.end_operation(
                 "investigation",
@@ -166,6 +226,29 @@ class Irys:
         # Format output
         formatter = get_formatter(self.config.output_format)
         output = formatter.format(state)
+
+        # Post-processing: inline citation injection (optional)
+        # Grab trace_ctx BEFORE finalize so citation LLM call is in the trace
+        trace_ctx = self._engine.get_trace_ctx() if self._engine else None
+
+        if self.config.enable_inline_citations:
+            from .service.inline_citation_service import InlineCitationService
+            output, reordered_citations, injection_diag = await InlineCitationService.inject(
+                answer=output,
+                citations=state.citations,
+                config=self.config,
+                trace_ctx=trace_ctx,
+            )
+
+            state.citations[:] = reordered_citations
+
+            # Attach injection diagnostics to telemetry for DB persistence
+            if injection_diag and state.telemetry_summary is not None:
+                state.telemetry_summary["citation_injection"] = injection_diag
+
+        # Finalize the Langfuse trace after all post-processing is done
+        if self._engine:
+            await self._engine.finalize_trace(state)
 
         return InvestigationResult(
             state=state,
@@ -273,11 +356,17 @@ class InvestigationResult:
 
     @property
     def confidence(self) -> dict:
+        """Simple confidence based on evidence gathered."""
         return self.state.get_confidence_score()
 
     @property
-    def quality(self):
-        return self.state.assess_answer_quality()
+    def quality(self) -> dict:
+        """Simple quality assessment."""
+        return {
+            "citations": len(self.state.citations),
+            "facts": len(self.state.findings.get("accumulated_facts", [])),
+            "documents_read": self.state.documents_read,
+        }
 
     def to_format(self, format_type: str) -> str:
         """Convert to different output format."""

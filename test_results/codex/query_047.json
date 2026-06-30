@@ -1,0 +1,8 @@
+{
+  "query_num": 47,
+  "query": "When did Gulfstream first acknowledge the estimate would be exceeded?",
+  "status": "timeout",
+  "elapsed_seconds": 575.2,
+  "output": "",
+  "error": "Timeout after 300s"
+}

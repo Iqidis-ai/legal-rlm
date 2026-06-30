@@ -1,0 +1,651 @@
+{
+  "system": "codex",
+  "timestamp": "2026-01-15T02:07:53.662968",
+  "total_queries": 80,
+  "successful": 61,
+  "failed": 19,
+  "elapsed_minutes": 224.0,
+  "results": [
+    {
+      "query_num": 1,
+      "query": "What was Gulfstream's initial cost estimate for the 192-month inspection?",
+      "status": "timeout",
+      "elapsed_seconds": 676.3,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 2,
+      "query": "When did CITIOM first deliver the aircraft to Gulfstream for inspection?",
+      "status": "timeout",
+      "elapsed_seconds": 460.8,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 3,
+      "query": "What is the serial number of the aircraft in dispute?",
+      "status": "timeout",
+      "elapsed_seconds": 357.3,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 4,
+      "query": "Who is Bassim Haider and what role did he play in this dispute?",
+      "status": "completed",
+      "elapsed_seconds": 11.9,
+      "output": "Got it. To review CITIOM v. Gulfstream, I’ll need the case materials you want analyzed (briefs, orders, opinion, record excerpts). Which documents should I use, and what scope do you want (issue spotting, holding/rationale summary, procedural posture, strengths/weaknesses, or something else)?",
+      "error": null
+    },
+    {
+      "query_num": 5,
+      "query": "What was the originally promised return-to-service date?",
+      "status": "completed",
+      "elapsed_seconds": 11.9,
+      "output": "I can help, but I need the case materials in this workspace. Which files should I review (briefs, opinions, docket, key exhibits), and do you want a specific focus (e.g., liability, damages, procedural posture, appellate issues)?",
+      "error": null
+    },
+    {
+      "query_num": 6,
+      "query": "How many days did the aircraft actually remain out of service?",
+      "status": "completed",
+      "elapsed_seconds": 86.1,
+      "output": "I’m ready to review, but I don’t have the case record in this workspace. The repo only references documents outside the sandbox at `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents`, and the only case content here is generated snippets in `test_results\\`.  \n\nPlease tell me which documents to use (or copy them into the project), and what scope you want: timeline/procedural posture, claims/defenses elements, evidence strengths/weaknesses, damages analysis, or a full memo.",
+      "error": null
+    },
+    {
+      "query_num": 7,
+      "query": "What was the final cost billed by Gulfstream for the inspection?",
+      "status": "completed",
+      "elapsed_seconds": 94.3,
+      "output": "I can review the case, but I don’t see the underlying case documents in this project. The scripts point to `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents`, which isn’t in the current workspace. Please point me to the relevant files within this repo or copy them in.\n\nWhat deliverable do you want?\n1. Executive case synopsis + timeline\n2. Issues/claims/defenses analysis\n3. Evidence map with citations\n4. Damages analysis\n5. Deposition/exam prep\n6. Answer a specific question\n\nIf you want me to proceed using only the synthetic summary in `run_codex_test.py` or prior model outputs like `test_results\\full_results.json`, confirm the scope and I’ll use those.",
+      "error": null
+    },
+    {
+      "query_num": 8,
+      "query": "Who is Danny Farnham and what was his expert opinion?",
+      "status": "completed",
+      "elapsed_seconds": 4.0,
+      "output": "I can review it as a senior legal analyst, but I’ll need the case materials (briefs, opinion, docket excerpts, or a summary of facts and procedural posture). What documents should I use, and what focus do you want (e.g., liability, jurisdiction, damages, procedural issues, or appeal strategy)?",
+      "error": null
+    },
+    {
+      "query_num": 9,
+      "query": "What specific workscope items were included in the 192-month inspection?",
+      "status": "completed",
+      "elapsed_seconds": 61.2,
+      "output": "Got it. What specific issue or deliverable do you want—case overview, analysis of a claim/defense, timeline, or evidence synthesis? If you want me to ground it in the document set, confirm I should use `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents` (or point me to a subset).",
+      "error": null
+    },
+    {
+      "query_num": 10,
+      "query": "What was the estimated downtime in the original proposal Q-11876?",
+      "status": "completed",
+      "elapsed_seconds": 103.9,
+      "output": "I can give a preliminary review based on the limited fact summary in `run_codex_test.py`, but I don’t see the underlying case documents in this workspace. The scripts point to `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents`.\n\n**Preliminary Review**\n- **Known facts:** CITIOM’s G550 (SN 5174) underwent a 192‑month inspection starting 1/29/2024; estimate was $835,931 / 2,800 manhours / 35–45 business days; actual work ran 26,000+ manhours and completed 11/29/2024.\n- **Likely claims:** Negligent/fraudulent misrepresentation (estimate lacked reasonable basis), breach of contract (if estimate/time formed part of the bargain), and breach of good faith (if Gulfstream knew the estimate was unreliable).\n- **Core defenses:** Estimate treated as non‑binding forecast; scope expansion and unforeseen defects; CITIOM approvals or delays; contractual limitations on liability and consequential damages; lack of justifiable reliance on future cost/time.\n- **Evidence focus:** Customer Support Proposal Q‑11876 (6/2/2023), estimating worksheets/assumptions, internal communications and forecasting analytics, change orders, work logs, and the expert reports (Danny Farnham, Leonard B.).\n- **Damages considerations:** Reliance and downtime costs (replacement aircraft/lost use) vs. expectancy/overcharge theories; recovery will hinge on contract terms and causation tied to misrepresentation vs. legitimate scope discoveries.\n- **Key gaps:** Contract language on estimates, change‑order process, and limitation clauses; objective benchmarks for typical 192‑month inspection cost/time; timeline of when overrun became apparent and how it was communicated.\n\nIf you want a deeper review, I’ll need the case materials (proposal, communications, change orders, expert reports, pleadings). What deliverable do you want?\n\n1. Document‑cited case memo (issues/claims/defenses + liability assessment)  \n2. Evidence map with citation targets and gaps  \n3. Damages theory analysis (reliance vs. expectancy + limitation clauses)",
+      "error": null
+    },
+    {
+      "query_num": 11,
+      "query": "What historical average downtime did Gulfstream's St. Louis facility have for similar inspections?",
+      "status": "completed",
+      "elapsed_seconds": 117.7,
+      "output": "Here is a preliminary review based only on the limited fact summary in `run_codex_test.py`; I do not see the underlying case document set in this workspace (scripts reference `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents`), so the analysis is provisional.\n\n**Case Snapshot**\n- CITIOM owns a Gulfstream G550 (SN 5174).\n- Gulfstream performed a 192-month inspection starting 01/29/2024.\n- Proposal Q-11876 (06/02/2023) estimated $835,931, 2,800 manhours, 35-45 business days.\n- Actual work reached 26,000+ manhours and completed 11/29/2024.\n- CITIOM claims the estimate was unreasonably low and misrepresented.\n\n**Liability Analysis**\n- Negligent misrepresentation is the cleanest fit if the estimate was provided as professional information without a reasonable basis; the gap between 2,800 and 26,000 manhours is a red flag but still requires proof of unreasonable methodology or ignored data.\n- Fraudulent misrepresentation is possible only if evidence shows Gulfstream knew the estimate was unreliable or intentionally low and intended CITIOM to rely on it.\n- Breach of contract or implied covenant depends on whether the estimate or schedule was incorporated into the agreement or if Gulfstream failed to follow agreed change-order/notice procedures.\n- Reliance and causation will hinge on whether CITIOM made specific decisions based on the estimate and whether those decisions would have been different with an accurate estimate.\n- Damages theory must link the overrun to misrepresentation rather than legitimate scope expansion or discovered defects.\n\n**Defenses and Risks**\n- Estimate may be framed as non-binding or subject to change, which weakens misrepresentation and contract theories.\n- Scope expansion, unforeseen defects, and parts availability can justify higher cost and time if well documented.\n- Change orders or approvals by CITIOM can shift causation and reduce recoverable damages.\n- Contractual limitation of liability or exclusion of consequential damages could cap downtime or loss-of-use claims.\n- Reasonableness of reliance is a key risk if disclaimers or industry practice signal that estimates are preliminary.\n\n**Evidence Priorities**\n- Proposal Q-11876 for assumptions, disclaimers, and how the estimate was presented.\n- Contract terms on estimates, change orders, notice obligations, and limitation of liability.\n- Internal estimating worksheets, historical benchmarks for 192-month inspections, and forecasting analytics.\n- Communications showing when Gulfstream knew the estimate would be exceeded and how that was conveyed.\n- Work logs, change orders, and invoices tying the overrun to specific scope or defect discoveries.\n- Expert reports (Danny Farnham, Leonard B) on estimating methodology and industry standards.\n\nIf you want a full memo grounded in the record, please point me to the case documents or confirm you want me to proceed using only this limited summary. If you want a specific deliverable, pick one:\n1. Issues/claims/defenses memo with liability assessment\n2. Evidence map keyed to the documents\n3. Damages theory analysis (reliance vs. expectancy, limits, causation)",
+      "error": null
+    },
+    {
+      "query_num": 12,
+      "query": "When was Customer Support Proposal Q-11876 issued?",
+      "status": "completed",
+      "elapsed_seconds": 73.3,
+      "output": "**Preliminary Review**\n- Working from the limited fact summary in `run_codex_test.py`; I do not have the underlying case record in this workspace (the scripts point to `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents`).\n- Known facts: CITIOM’s G550 (SN 5174) underwent a 192‑month inspection starting 01/29/2024; Proposal Q‑11876 (06/02/2023) estimated $835,931 / 2,800 manhours / 35–45 business days; actual work ran 26,000+ manhours and finished 11/29/2024.\n- Core allegation: CITIOM contends the initial estimate was unreasonably low and misrepresented.\n\n**Liability Analysis (Provisional)**\n- Negligent misrepresentation: strongest fit if Gulfstream provided professional estimates without a reasonable basis; the 2,800 vs. 26,000+ manhour gap is a red flag, but liability turns on estimating methodology and known aircraft history.\n- Fraudulent misrepresentation: requires proof Gulfstream knew the estimate was unreliable and intended reliance; hinges on internal communications, forecasting analytics, and any “lowball” directives.\n- Breach of contract / implied covenant: depends on whether the estimate and schedule were incorporated into the agreement and whether change‑order/notice obligations were followed.\n- Reliance and causation: CITIOM must show it made specific decisions based on the estimate and that damages flowed from the misrepresentation rather than legitimate scope discoveries.\n\n**Defense Themes**\n- Estimate characterized as non‑binding and subject to change; reliance may be unreasonable if disclaimers are prominent.\n- Unforeseen defects and scope expansion justify cost/time increases if documented and disclosed promptly.\n- Contractual limitations on liability, sole‑remedy clauses, or consequential‑damages waivers could cap loss‑of‑use recovery.\n- CITIOM’s approvals or delayed responses may break causation or reduce damages.\n\n**Evidence Priorities**\n- Proposal Q‑11876 for assumptions, disclaimers, and scope boundaries.\n- Internal estimating worksheets, historical benchmarks for 192‑month inspections, and any 2023 forecasting analytics.\n- Communications showing when Gulfstream knew the estimate would be exceeded and how/when it informed CITIOM.\n- Change orders, work logs, and invoices tying the overrun to specific discrepancies.\n\n**Gaps to Close**\n- Governing law and contract terms (estimate status, change‑order process, limitation clauses).\n- Content of expert reports (Danny Farnham, Leonard B) on estimating methodology and industry norms.\n- Specific damages theory (overcharge vs. loss‑of‑use) and supporting calculations.\n- Timeline of revised estimates and CITIOM’s decision points.\n\nIf you want a full, document‑cited analysis, please choose one option:\n1. Share the case materials in this workspace (or point me to a subset) and I’ll produce a formal memo.  \n2. Confirm you want me to proceed using only the limited summary in `run_codex_test.py`.  \n3. Specify the exact deliverable and jurisdiction (e.g., liability memo, evidence map, damages analysis).",
+      "error": null
+    },
+    {
+      "query_num": 13,
+      "query": "What model aircraft is at issue in this case?",
+      "status": "timeout",
+      "elapsed_seconds": 313.4,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 14,
+      "query": "Who is Charles Philipp and what was his role at Gulfstream?",
+      "status": "completed",
+      "elapsed_seconds": 126.2,
+      "output": "I can give a preliminary review based only on the key facts embedded in `run_codex_test.py`; I do not see the underlying case documents in this workspace, so anything deeper needs those materials.\n\n**Preliminary Review (limited record)**\n- **Core facts:** CITIOM owns a Gulfstream G550 (SN 5174); a 192-month inspection began 2024-01-29; estimate was $835,931 / 2,800 manhours / 35-45 business days; actual work grew to 26,000+ manhours and finished 2024-11-29; CITIOM says the estimate was unreasonably low and misrepresented; key documents flagged are Customer Support Proposal Q-11876 (2023-06-02) and expert reports from Danny Farnham and Leonard B. (`run_codex_test.py`)\n- **Primary liability questions:** Was the estimate a contractual commitment or a non-binding forecast? Did Gulfstream owe a duty to provide a reasonable estimate and update it as scope risks became known? Did Gulfstream have information (prior inspections, internal data) that made the estimate unreliable when given?\n- **Likely CITIOM theories:** Negligent or fraudulent misrepresentation (estimate lacked reasonable basis), breach of contract if the estimate or timeline was part of the bargain, and breach of the implied covenant of good faith if delays or deprioritization were not disclosed.\n- **Likely Gulfstream defenses:** Estimate disclaimers and scope exclusions in the proposal; inspection findings required additional work; delays tied to customer approvals or change orders; limitation of liability and consequential-damages waivers.\n- **Damages framing:** Overrun vs. estimate (if reliance-based), loss of use/downtime costs, and any consequential losses that are foreseeable and not contractually barred; causation and mitigation will be central.\n\n**Key Gaps To Close**\n- The actual proposal and contract language (especially estimate disclaimers, scope exclusions, change-order process, and limitation clauses).\n- Communications that show when Gulfstream knew the estimate was likely to be exceeded and what it told CITIOM.\n- Work logs, change orders, and internal forecasting data supporting or undermining reasonableness of the original estimate.\n- The expert reports themselves (methodologies, assumptions, and any rebuttals).\n\nIf you want a full, document-grounded review, point me to the case materials in this repo or a specific folder. What deliverable do you want next?\n1. Executive case synopsis + timeline\n2. Issues/claims/defenses analysis\n3. Evidence map with gaps and priority cites\n4. Damages theory analysis\n5. Deposition or cross-exam prep",
+      "error": null
+    },
+    {
+      "query_num": 15,
+      "query": "What was the total variance between estimated and actual costs?",
+      "status": "completed",
+      "elapsed_seconds": 67.9,
+      "output": "I looked for case materials in the workspace and only found a brief fact summary embedded in `run_codex_test.py`; there are no pleadings, contracts, exhibits, or expert reports here. The scripts reference an external folder (`C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents`), but it’s not in this repo. I can give a preliminary assessment from the limited facts, or a full document‑grounded review once you point me to the record.\n\nPreliminary assessment (limited record from `run_codex_test.py`)\n- Likely claims: negligent/fraudulent misrepresentation (estimate lacked reasonable basis), breach of contract (if estimate/timeline was part of the bargain), breach of implied covenant (if Gulfstream knew the estimate was unreliable and failed to disclose).\n- Core liability questions: whether the estimate was contractually binding or expressly disclaimed; what Gulfstream knew about scope/risks when it issued the estimate; whether it updated CITIOM as overruns became apparent; and whether CITIOM’s reliance was reasonable.\n- Likely defenses: estimate as non‑binding forecast; scope expansion and unforeseen defects; customer approvals or delays; limitation of liability and waiver of consequential damages; mitigation failures.\n- Damages framing: reliance (overrun vs. estimate), loss‑of‑use/downtime costs, and any consequential losses—subject to contractual caps/waivers and causation.\n\nTo proceed, tell me which deliverable you want and where the case documents live. I can do:\n1. Executive case synopsis + timeline\n2. Claims/defenses analysis with element‑by‑element support\n3. Evidence map with citation targets and gaps\n4. Damages theory analysis (reliance vs. expectancy, limitation clauses)\n5. Deposition/cross‑exam prep outlines\n\nIf you want a full review, please copy the documents into this workspace or point me to the specific folder/files to use.",
+      "error": null
+    },
+    {
+      "query_num": 16,
+      "query": "What percentage did actual costs exceed the original estimate?",
+      "status": "timeout",
+      "elapsed_seconds": 488.9,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 17,
+      "query": "When did Gulfstream implement new forecasting analytics?",
+      "status": "completed",
+      "elapsed_seconds": 102.4,
+      "output": "**Findings**\n- Critical: I only see a brief fact summary in `run_codex_test.py` and no pleadings, contracts, proposal, communications, or expert reports in this workspace, so this is not a document-cited review.\n- High: Liability analysis turns on the estimate’s contractual status, disclaimers, scope exclusions, change-order process, and limitation-of-liability clauses, which are not available.\n- High: Any misrepresentation theory depends on what Gulfstream knew at the time of the estimate (prior inspection data, internal analytics, scope assumptions) and whether it was disclosed; those materials are missing.\n- Medium: Damages cannot be assessed without invoices, manhour logs, downtime records, and mitigation evidence to separate reliance loss from potentially barred consequential losses.\n- Medium: Causation and allocation of delay require a communications/change-order timeline that is not in the record here.\n\n**Open Questions**\n- Was Customer Support Proposal Q-11876 incorporated into a binding agreement or labeled as a non-binding estimate?\n- What contemporaneous data did Gulfstream have about scope risks when it issued the June 2, 2023 estimate?\n- When were overruns first communicated and what approvals did CITIOM give?\n- What contractual limits apply to loss-of-use or consequential damages?\n\n**Preliminary Assessment (based on the limited facts)**\n- Facts available in `run_codex_test.py`: CITIOM’s G550 (SN 5174) entered a 192-month inspection on 2024-01-29; estimate was $835,931 / 2,800 manhours / 35-45 business days; actual work exceeded 26,000 manhours and completed 2024-11-29; CITIOM alleges the estimate was unreasonably low and misrepresented.\n- Potential claims: negligent/fraudulent misrepresentation if the estimate lacked a reasonable basis and reliance was justified; breach of contract or implied covenant if the estimate/timeline formed part of the bargain.\n- Likely defenses: estimate treated as a forecast with disclaimers; scope expansion/unforeseen conditions; customer approvals or delays; contractual caps/waivers on damages.\n- Damages framing: reliance (overrun vs estimate) and downtime/loss-of-use costs, subject to contractual limitations and causation proof.\n\nIf you want a document-grounded review, please point me to the case record within this workspace. I can then deliver:\n1) Document-cited case memo (issues, claims/defenses, liability assessment)  \n2) Evidence map with citations and gaps  \n3) Damages theory analysis (reliance vs expectancy, limitations)",
+      "error": null
+    },
+    {
+      "query_num": 18,
+      "query": "What was Joe Rivera's position at Gulfstream?",
+      "status": "completed",
+      "elapsed_seconds": 21.0,
+      "output": "I can review CITIOM v. Gulfstream, but I need the case materials. Please share any of the following (whatever you have), and I’ll produce a senior‑level analysis:\n\n- Court and jurisdiction, docket number, and procedural posture\n- The complaint/answer, key motions, and any opinions/orders\n- The specific legal issues you want assessed (e.g., contract interpretation, trade secrets, jurisdiction)\n- Any excerpts or summaries you already have\n\nIf you don’t have the full record, tell me what you do have and I’ll work from that.",
+      "error": null
+    },
+    {
+      "query_num": 19,
+      "query": "How many man-hours were originally estimated for the inspection?",
+      "status": "timeout",
+      "elapsed_seconds": 444.6,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 20,
+      "query": "What date did CITIOM file its Statement of Claim?",
+      "status": "completed",
+      "elapsed_seconds": 66.8,
+      "output": "I can start a preliminary review from the short fact summary in `run_codex_test.py`, but the actual case record isn’t in this workspace; the scripts point to `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents`, which I can’t access here. If you want a document‑grounded review, please copy the relevant files into this project or point me to files within this workspace.\n\n**Preliminary review (summary‑only, from `run_codex_test.py`)**\n- Core dispute: CITIOM’s G550 (SN 5174) underwent a 192‑month inspection starting 01/29/2024; Gulfstream’s initial estimate was ~$835,931 / 2,800 manhours / 35–45 business days; actual work reportedly expanded to 26,000+ manhours and completed 11/29/2024.\n- Key liability theories likely in play: negligent misrepresentation (estimate lacked a reasonable basis), fraudulent misrepresentation (knowledge of unreliability + intent to induce reliance), breach of contract / implied covenant (if estimate or schedule was incorporated or relied on contractually), and possibly promissory estoppel if contract terms are unfavorable.\n- Critical fault lines: whether the estimate was expressly non‑binding and subject to change; whether Gulfstream had sufficient historical data or internal analytics to know the estimate was unreliable; when Gulfstream knew the estimate would be exceeded; and whether CITIOM’s reliance was reasonable given any disclaimers.\n- Damages issues to scrutinize: direct overrun vs. consequential loss‑of‑use; foreseeability and causation; mitigation; and any contractual caps/waivers.\n- Defense themes to expect: unforeseen defects/corrosion and scope expansion; estimate disclaimers; change‑order approvals; customer delays or lack of timely responses; and contractual limitation‑of‑liability provisions.\n\n**Evidence priorities (once docs are available)**\n- Proposal Q‑11876 (assumptions, scope limits, disclaimers, incorporation into contract).\n- Contract terms (estimate status, change‑order process, liability caps, damages waivers).\n- Internal estimating files and any 2023 forecasting analytics.\n- Communications timeline showing when Gulfstream first signaled overruns.\n- Work orders, discrepancy lists, labor logs, invoices tying overruns to specific discoveries.\n- Prior inspection history and corrosion condition at intake.\n\nIf you want a full review, tell me which materials to use or move them into the repo. I can also proceed using only existing `test_results/*.json` outputs (with clear caveats about unverified excerpts), but it’s weaker.\n\nPick one:\n1. Share or copy in the case documents you want reviewed.\n2. Confirm you want me to proceed using only `run_codex_test.py` (summary‑only memo).\n3. Confirm you want me to use the generated excerpts in `test_results/` (with caveats).\n4. Specify a focused deliverable (e.g., claims/defenses memo, evidence map, damages analysis, or timeline).",
+      "error": null
+    },
+    {
+      "query_num": 21,
+      "query": "What evidence across multiple documents supports that Gulfstream knew its estimates were unreliable?",
+      "status": "completed",
+      "elapsed_seconds": 3.9,
+      "output": "Happy to help. To review CITIOM v. Gulfstream, I need the case materials (complaint, motions, orders, briefs, key exhibits). Please share the documents or point me to the files in the project so I can analyze them.",
+      "error": null
+    },
+    {
+      "query_num": 22,
+      "query": "How do the expert reports from both sides differ in their assessment of damages?",
+      "status": "completed",
+      "elapsed_seconds": 3.7,
+      "output": "What exactly do you need from the CITIOM v. Gulfstream review (e.g., case summary, issue-spotting, procedural posture, key holdings, risk analysis, or a draft memo)? Also, are the case materials in this repo that you want me to read?",
+      "error": null
+    },
+    {
+      "query_num": 23,
+      "query": "Synthesize all communications regarding scope changes during the inspection.",
+      "status": "completed",
+      "elapsed_seconds": 3.2,
+      "output": "What do you need from me on CITIOM v. Gulfstream—case summary, issue/holding analysis, procedural posture, evidentiary review, or risk assessment? If you have specific filings or a record to review, point me to the files and the sections you want covered.",
+      "error": null
+    },
+    {
+      "query_num": 24,
+      "query": "What documents corroborate CITIOM's claim of misrepresentation?",
+      "status": "completed",
+      "elapsed_seconds": 4.4,
+      "output": "I can help with a legal analysis, but I need the materials and scope since I can’t access the web here. What should I review (briefing, opinion, docket entries), and what output do you want (issue-spotting memo, case summary, risk assessment, or argument analysis)? If you have files in this repo, point me to them.",
+      "error": null
+    },
+    {
+      "query_num": 25,
+      "query": "Compare the testimony in witness statements with documentary evidence about downtime estimates.",
+      "status": "timeout",
+      "elapsed_seconds": 439.5,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 26,
+      "query": "What pattern emerges from examining all invoices and change orders?",
+      "status": "completed",
+      "elapsed_seconds": 3.0,
+      "output": "Got it. What specific deliverable do you want for CITIOM v. Gulfstream—case summary, issue-spotting memo, argument analysis, or something else? Also confirm any source materials in the repo you want me to use.",
+      "error": null
+    },
+    {
+      "query_num": 27,
+      "query": "How do the cross-examination outlines suggest contradictions in Gulfstream's position?",
+      "status": "completed",
+      "elapsed_seconds": 3.1,
+      "output": "What would you like from the review—case summary, issues/holdings analysis, timeline, or drafting a memo/brief? If you have specific documents or citations in the project, point me to the relevant files and I’ll use those.",
+      "error": null
+    },
+    {
+      "query_num": 28,
+      "query": "What do the direct examination outlines reveal about CITIOM's key arguments?",
+      "status": "timeout",
+      "elapsed_seconds": 503.5,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 29,
+      "query": "Synthesize all references to the 'analytics' Gulfstream developed in 2023.",
+      "status": "completed",
+      "elapsed_seconds": 3.8,
+      "output": "I’m ready to help, but I need the case materials and the specific task. Please share the relevant documents (complaint, briefs, opinion, or record excerpts) and tell me what you want: e.g., case summary, issue spotting, procedural history, holding/rationale, or argument analysis.",
+      "error": null
+    },
+    {
+      "query_num": 30,
+      "query": "What evidence links the painting costs to the overall dispute?",
+      "status": "completed",
+      "elapsed_seconds": 125.3,
+      "output": "**Scope**\n- I can only see the limited fact summary in `run_codex_test.py`; I do not have the underlying case record in this workspace (the scripts point to `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents`).\n- The analysis below is therefore provisional and based solely on those stated facts.\n\n**Case Snapshot**\n- CITIOM owns a Gulfstream G550 aircraft (SN 5174).\n- Gulfstream performed a 192-month inspection starting January 29, 2024.\n- Initial estimate: $835,931, 2,800 manhours, 35-45 business days (Proposal Q-11876, June 2, 2023).\n- Actual performance: 26,000+ manhours, completed November 29, 2024.\n- CITIOM alleges the estimate was unreasonably low and misrepresented; key documents include Proposal Q-11876 and expert reports (Danny Farnham, Leonard B).\n\n**Liability Analysis (Provisional)**\n- Negligent misrepresentation is the most straightforward fit if Gulfstream supplied professional estimates without a reasonable basis; the magnitude of the variance supports an inference of flawed methodology but does not, alone, prove liability.\n- Fraudulent misrepresentation requires proof of knowledge or recklessness and intent to induce reliance; that turns on internal estimating data, communications, and whether any forecasting tools or historical benchmarks were ignored.\n- Breach of contract or implied covenant depends on whether the estimate/schedule were incorporated into the agreement and whether Gulfstream complied with change-order and notice obligations.\n- Reliance and causation are critical: CITIOM must show it made decisions based on the estimate and that losses flowed from the misrepresentation rather than legitimate scope discoveries.\n- Damages must be tied to the misrepresentation (overcharges, loss of use, or consequential losses) and supported by a defensible methodology.\n\n**Defense Themes**\n- The proposal may be characterized as a non-binding estimate with disclaimers; this weakens reasonable reliance and misrepresentation claims.\n- Unforeseen discrepancies or scope expansion can justify cost and schedule increases if adequately documented and communicated.\n- CITIOM approvals, delayed decisions, or payment timing may be raised to challenge causation or mitigate damages.\n- Contractual limitations (limitation of liability, waiver of consequential damages) could cap recoverable losses.\n- Comparative fault or failure to mitigate may reduce recovery if CITIOM declined alternatives or delayed responses.\n\n**Evidence Priorities**\n- Proposal Q-11876 in full, including scope boundaries, exclusions, and disclaimers.\n- Communications showing when Gulfstream knew the estimate would be exceeded and how/when it warned CITIOM.\n- Change orders, work logs, and discrepancy reports tying overruns to specific findings.\n- Historical benchmarks for similar inspections and any internal forecasting analytics.\n- Expert reports (Farnham and Leonard B) on estimating methodology, industry norms, and damages modeling.\n\nIf you want a document-cited memo, I need the case record in this workspace. Suggestions:\n1. Copy the case documents into the workspace (or point me to a specific subset here), and I will produce a full, cited analysis.\n2. Tell me the exact deliverable you want (liability memo, defenses assessment, evidence map, damages analysis).\n3. Provide governing law and the key contract terms if you want jurisdiction-specific conclusions.",
+      "error": null
+    },
+    {
+      "query_num": 31,
+      "query": "Compare the Pre-Hearing Briefs from both parties on the estimate issue.",
+      "status": "timeout",
+      "elapsed_seconds": 364.6,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 32,
+      "query": "What do all witness statements say about communication between parties?",
+      "status": "timeout",
+      "elapsed_seconds": 690.9,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 33,
+      "query": "Synthesize the timeline of estimate revisions across all documents.",
+      "status": "completed",
+      "elapsed_seconds": 4.0,
+      "output": "What would you like me to produce for the CITIOM v. Gulfstream review (e.g., case brief, issue-spotting memo, litigation risk assessment, or summary of holdings)? If you have a record or specific filings to review, point me to them and I’ll analyze those.",
+      "error": null
+    },
+    {
+      "query_num": 34,
+      "query": "What documents discuss the quality of work performed?",
+      "status": "completed",
+      "elapsed_seconds": 74.1,
+      "output": "I can start a review, but this workspace only has a short fact summary in `run_codex_test.py`; the actual case record is referenced outside the repo at `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents`, so I can’t cite documents yet.\n\n**Preliminary Review (limited to `run_codex_test.py`)**\n- Facts: CITIOM’s G550 (SN 5174) entered a 192‑month inspection on 2024‑01‑29; estimate was $835,931 / 2,800 manhours / 35–45 business days; actual work exceeded 26,000 manhours and completed 2024‑11‑29.\n- Core liability questions: was the estimate contractually binding or a non‑binding forecast; what Gulfstream knew about scope/risks at issuance; when overruns became known and disclosed; whether CITIOM’s reliance was reasonable.\n- Likely claims: negligent or fraudulent misrepresentation; breach of contract/implied covenant (if estimate/timeline formed part of the bargain).\n- Likely defenses: estimate disclaimers; unforeseen discrepancies/scope expansion; customer approvals or delays; limitation‑of‑liability / waiver of consequential damages; mitigation failures.\n- Damages focus: reliance loss vs. consequential loss‑of‑use, tied to causation and contractual limits.\n\n**What I need for a full, cited legal review**\n- Proposal Q‑11876 and the governing contract/terms (including disclaimers and limitations).\n- Communications timeline showing estimate changes and notice of overruns.\n- Change orders, discrepancy reports, work logs, invoices, and manhour records.\n- Internal estimating data/forecasting analytics (2023) and historical benchmarks.\n- Expert reports (Farnham, Leonard B) and any briefing/pleadings.\n\nIf you want me to proceed now, pick one:\n1) Provide or copy the key documents into this workspace for a full, cited memo.\n2) Tell me the exact deliverable you want (case brief, claims/defenses memo, evidence map, damages analysis, or timeline) and I’ll scope it.\n3) Confirm you want a high‑level assessment only from the limited facts (no citations).",
+      "error": null
+    },
+    {
+      "query_num": 35,
+      "query": "Compare expert assessments of Gulfstream's estimating methodology.",
+      "status": "completed",
+      "elapsed_seconds": 55.2,
+      "output": "Happy to review. The workspace doesn’t include the case record; the scripts reference `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents`, which isn’t available here. If you want a document-cited analysis, please point me to the filings/exhibits in the workspace or copy them in. Also tell me the deliverable and governing law you want applied.\n\nPick one:\n1. Move or point me to the case documents in this workspace.\n2. Confirm you want me to proceed using `test_results/` (provisional, excerpt-only).\n3. Specify a focused deliverable (case brief, claims/defenses memo, evidence map, timeline, damages analysis).",
+      "error": null
+    },
+    {
+      "query_num": 36,
+      "query": "What evidence from multiple sources addresses industry standards?",
+      "status": "completed",
+      "elapsed_seconds": 3.2,
+      "output": "I can help, but I’ll need the case materials and scope. Please share the opinion/briefs or point me to the relevant files in `C:\\Users\\devan\\OneDrive\\Desktop\\Projects\\RLMs`, and tell me what you want reviewed (e.g., facts, procedural posture, holdings, legal issues, strengths/weaknesses, appeal posture).",
+      "error": null
+    },
+    {
+      "query_num": 37,
+      "query": "Synthesize all references to change orders and their justifications.",
+      "status": "completed",
+      "elapsed_seconds": 3.4,
+      "output": "I can help, but I need the case materials to review. Please point me to the relevant files in this workspace (briefs, orders, opinions, docket entries, key exhibits) and any specific issues or questions you want addressed. If you don’t have files here, paste the key excerpts you want analyzed.",
+      "error": null
+    },
+    {
+      "query_num": 38,
+      "query": "What patterns emerge in how Gulfstream communicated estimate changes?",
+      "status": "completed",
+      "elapsed_seconds": 42.3,
+      "output": "Ready to review as senior legal analyst. I don’t see the actual case record in this workspace; the scripts point to `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents`, which isn’t available here. Please point me to the case files inside `C:\\Users\\devan\\OneDrive\\Desktop\\Projects\\RLMs` (or copy them in), and tell me the deliverable you want.\n\nPick one (or combine):\n1) Document‑cited case memo (facts, issues, claims/defenses, liability assessment)  \n2) Evidence map with pinpoint citations + gaps  \n3) Damages analysis (reliance vs. expectancy; limitation‑of‑liability impact)  \n4) Timeline + key communications/estimate changes  \n5) Answer a specific question\n\nIf you want a preliminary review based only on the limited summary info already in the repo, say so and I’ll proceed with clear caveats.",
+      "error": null
+    },
+    {
+      "query_num": 39,
+      "query": "Compare documentation of promised vs actual delivery dates across sources.",
+      "status": "timeout",
+      "elapsed_seconds": 425.4,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 40,
+      "query": "What do multiple documents reveal about Gulfstream's internal processes?",
+      "status": "completed",
+      "elapsed_seconds": 3.8,
+      "output": "Happy to help. What kind of review do you want for CITIOM v. Gulfstream (e.g., case summary, issue spotting, procedural posture, key holdings, risks, or litigation strategy), and are there local files in `C:\\Users\\devan\\OneDrive\\Desktop\\Projects\\RLMs` you want me to use?",
+      "error": null
+    },
+    {
+      "query_num": 41,
+      "query": "Construct a complete timeline of the 192-month inspection from proposal to final invoice.",
+      "status": "completed",
+      "elapsed_seconds": 132.0,
+      "output": "Based on the limited facts available in this workspace (a short case summary, not the underlying exhibits), here is a preliminary review and what I need to proceed with a full analysis.\n\n**Preliminary Review**\n- Known facts: CITIOM owns a Gulfstream G550 (SN 5174); Gulfstream began a 192‑month inspection on 2024‑01‑29; Proposal Q‑11876 (2023‑06‑02) estimated $835,931, 2,800 manhours, and 35–45 business days; actual work reportedly exceeded 26,000 manhours and completed 2024‑11‑29; CITIOM alleges the estimate was unreasonably low/misleading.\n- Liability themes: whether the estimate was a reasonable forecast vs. a non‑binding estimate; what Gulfstream knew (or should have known) about historical downtime/defect scope; reliance and causation.\n- Contract defenses: estimate/disclaimer language, change‑order process, and whether unforeseen discrepancies reasonably explain scope growth.\n- Damages: cost overrun, extended downtime, and any consequential loss‑of‑use theory; mitigation and proximate cause will be central.\n- Evidence priorities: Proposal Q‑11876, work authorizations, change orders, internal estimating data/analytics, communications on scope/delay, and expert reports (Farnham, Beauchemin).\n\n**What I Need To Proceed**\n- The underlying case documents are not present in this workspace. Please place them in the project folder or point me to their paths under `C:\\Users\\devan\\OneDrive\\Desktop\\Projects\\RLMs\\`.\n- Choose the deliverable you want first:\n  1) full liability/defenses memo\n  2) detailed timeline with estimate revisions\n  3) damages and causation analysis\n\nWhich option should I start with, and can you share the Proposal and pleadings/expert reports?",
+      "error": null
+    },
+    {
+      "query_num": 42,
+      "query": "What is the chronology of all estimate revisions?",
+      "status": "completed",
+      "elapsed_seconds": 5.0,
+      "output": "I don’t have the case materials yet. Please share the record you want analyzed (opinion, docket entries, briefs, or a citation), and tell me the scope (e.g., summary of facts/procedure, holding, key legal issues, risks, or implications). Once I have that, I’ll provide a senior‑level legal analysis.",
+      "error": null
+    },
+    {
+      "query_num": 43,
+      "query": "Map the sequence of events from aircraft delivery to arbitration filing.",
+      "status": "completed",
+      "elapsed_seconds": 4.1,
+      "output": "I don’t have the case materials yet. Please point me to the relevant files in this workspace (briefs, opinions, exhibits, or a case summary), or paste the key documents you want analyzed. If there’s a specific question or focus (e.g., liability, damages, procedural posture), tell me and I’ll tailor the review.",
+      "error": null
+    },
+    {
+      "query_num": 44,
+      "query": "When were each of the major scope changes identified and communicated?",
+      "status": "completed",
+      "elapsed_seconds": 3.4,
+      "output": "I’m ready to review, but I need the record. Please provide the case materials (opinion/briefs/orders/filings) or tell me where they are in `C:\\Users\\devan\\OneDrive\\Desktop\\Projects\\RLMs`, and any specific issues you want analyzed.",
+      "error": null
+    },
+    {
+      "query_num": 45,
+      "query": "What is the timeline of expert report submissions?",
+      "status": "timeout",
+      "elapsed_seconds": 509.0,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 46,
+      "query": "Chronologically trace all communications about delays.",
+      "status": "completed",
+      "elapsed_seconds": 167.9,
+      "output": "**Preliminary Assessment**\n- Based on the fact summary embedded in `run_codex_test.py`; I do not see the primary case record in this workspace, so this is a provisional review.\n- CITIOM owns a Gulfstream G550 (SN 5174).\n- Gulfstream performed a 192-month inspection starting 2024-01-29.\n- Original estimate: $835,931, 2,800 manhours, 35–45 business days.\n- Actual: 26,000+ manhours, completed 2024-11-29; CITIOM alleges the estimate was unreasonably low and misrepresented.\n\n**Key Legal Questions**\n- Whether the estimate/timeline in Proposal Q-11876 was a binding contractual commitment or a non-binding forecast with disclaimers.\n- Whether Gulfstream owed a duty to provide a reasonable estimate and update it as scope risks became known (negligent vs fraudulent misrepresentation).\n- Whether CITIOM reasonably relied on the estimate in making decisions and can prove causation of specific losses.\n- Whether scope expansion/unforeseen defects, change-order approvals, or customer-side delays break causation or mitigate liability.\n- Damages theory: overcharge vs loss-of-use, and any contractual limitation or exclusion of consequential damages.\n\n**Initial Exposure Assessment**\n- CITIOM’s strongest angle is the magnitude of the variance between estimate and actual time/cost, which supports an inference of an unreasonable estimate if internal benchmarks existed.\n- CITIOM’s risk is proof of scienter or lack of reasonable basis, plus any prominent estimate disclaimers that undermine reliance.\n- Gulfstream’s strongest angle is that estimates are inherently contingent and the overrun resulted from discovery of additional work and approved changes.\n- Gulfstream’s risk is evidence that internal data/analytics or prior history showed the estimate was unreliable, combined with delayed or inadequate communications.\n\n**Evidence Priorities / Gaps**\n- Customer Support Proposal Q-11876 (06/02/2023) for assumptions, exclusions, disclaimers, and change-order terms.\n- Contract documents for governing law, limitation-of-liability, and consequential-damages clauses.\n- Internal estimating worksheets, historical 192-month inspection data, and any forecasting analytics referenced in 2023.\n- Communications showing when Gulfstream recognized the overrun and how that was conveyed.\n- Expert reports from Danny Farnham and Leonard B for methodology, industry standards, and damages model.\n\n**Next Steps**\n1. Point me to the case materials in this workspace (or copy them in) and I’ll produce a document-cited memo.\n2. Tell me to proceed using only the fact summary in `run_codex_test.py` for a more detailed but clearly scoped analysis.\n3. Specify the deliverable you want (issue-spotting memo, evidence map, damages analysis, or timeline).",
+      "error": null
+    },
+    {
+      "query_num": 47,
+      "query": "When did Gulfstream first acknowledge the estimate would be exceeded?",
+      "status": "timeout",
+      "elapsed_seconds": 575.2,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 48,
+      "query": "What dates are critical to establishing the misrepresentation claim?",
+      "status": "completed",
+      "elapsed_seconds": 67.6,
+      "output": "Based on the limited fact summary in `run_codex_test.py`, here is a preliminary review; I do not see the underlying case record in this workspace.\n\n**Preliminary Assessment**\n- Core facts: CITIOM’s G550 (SN 5174) entered a 192-month inspection on 2024-01-29; Proposal Q-11876 (2023-06-02) estimated $835,931, 2,800 manhours, 35–45 business days; actual work exceeded 26,000 manhours and completed 2024-11-29; CITIOM alleges the estimate was unreasonably low and misrepresented.\n- Likely theories: negligent/fraudulent misrepresentation based on the estimate; breach of contract or implied covenant depending on whether the estimate/timeline was contractually binding; potential unjust enrichment if charges materially exceeded reasonable expectations without valid scope change.\n- Liability hinge points: whether the estimate was a forecast with clear disclaimers vs a commitment; what Gulfstream knew or should have known about scope/risks at issuance; if/when Gulfstream updated the estimate as risks materialized; and whether CITIOM’s reliance was reasonable.\n- Defenses and risk factors: estimate disclaimers and change-order terms; unforeseen discrepancies and scope expansion; CITIOM’s approvals or delays; mitigation; and any limitation-of-liability or waiver of consequential damages clauses.\n- Damages focus: overcharge vs reliance losses (cost overrun) and loss-of-use from extended downtime; the contract’s damages limitations will drive recoverability.\n\n**Evidence Priorities**\n- Proposal Q-11876 and governing contract terms (assumptions, exclusions, disclaimers, change-order mechanics, limitation-of-liability).\n- Communications timeline showing estimate changes and notice of overruns.\n- Discrepancy reports, work authorizations, change orders, work logs, and invoices.\n- Internal estimating worksheets, historical benchmarks, and any 2023 forecasting analytics.\n- Expert reports (Danny Farnham; Leonard B) and pleadings.\n\nIf you want a full, document-cited review, please point me to the case materials in this workspace and confirm the deliverable. Options:\n1) Case brief or liability/defenses memo  \n2) Evidence map with pinpoint citations + gaps  \n3) Timeline with estimate changes  \n4) Damages and causation analysis  \n\nAlso share governing law and procedural posture if you want jurisdiction-specific analysis.",
+      "error": null
+    },
+    {
+      "query_num": 49,
+      "query": "Build a timeline of all contract modifications and amendments.",
+      "status": "completed",
+      "elapsed_seconds": 4.6,
+      "output": "To review the CITIOM v. Gulfstream case effectively, I need the case materials and scope you want covered. Please provide:\n- The pleadings, key briefs, and any orders/opinions (or citations/docket entries).\n- The jurisdiction and procedural posture (trial, appeal, motion stage).\n- The issues you want prioritized (e.g., contract interpretation, tort claims, damages, injunction).\n\nOnce I have those, I’ll deliver a structured legal analysis with risks, arguments, and likely outcomes.",
+      "error": null
+    },
+    {
+      "query_num": 50,
+      "query": "When were key personnel changes made during the inspection?",
+      "status": "completed",
+      "elapsed_seconds": 3.3,
+      "output": "I can help. What materials do you want me to review (brief, filings, opinion), and what kind of output do you need (issue summary, procedural history, risk assessment, holding/analysis, or argument critique)?",
+      "error": null
+    },
+    {
+      "query_num": 51,
+      "query": "What is the sequence of discovery requests and responses?",
+      "status": "completed",
+      "elapsed_seconds": 2.5,
+      "output": "What specifically do you want reviewed in CITIOM v. Gulfstream (issues, holdings, procedural posture, or a case summary), and do you want a neutral analysis or an advocacy-style memo?",
+      "error": null
+    },
+    {
+      "query_num": 52,
+      "query": "Map the timeline of all work stoppages or delays.",
+      "status": "completed",
+      "elapsed_seconds": 246.0,
+      "output": "**Sources And Limits**\n- I only have extracted summaries in `test_results/query_001.json`, `test_results/query_020.json`, `test_results/query_024.json`, `test_results/query_043.json`; many citations in those summaries are marked unverified.\n- Scripts in this repo point to the primary document set at `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents`, which is outside the current workspace.\n- This is a preliminary review based on those summaries, not a verification of the underlying documents.\n- If you want a citation-grade analysis, I need the actual PDFs/Word files in the workspace.\n\n**Preliminary Case Synopsis (From Available Summaries)**\n- Parties/arbitration: Channel IT Isle of Man Ltd (CITIOM) vs Gulfstream Aerospace Corporation; CPR case G-24-115-AA; aircraft G550 SN 5174.\n- June 2, 2023 proposal Q-11876 Rev 0: approx $835,931, 2,800 man-hours, 35-45 business days; expected RTS April 1, 2024 if input Jan 29, 2024.\n- Inspection began late Jan 2024 at St. Louis; repeated RTS revisions (June 21, 2024 and later) with out-of-service into late 2024.\n- Procedural milestones: Notice of Arbitration May 31, 2024; Gulfstream response Aug 7, 2024; Amended Statement of Claim Sept 9, 2024.\n\n**Key Liability Themes And Defenses (As Reflected In Summaries)**\n- Misrepresentation theory: proposal allegedly omitted discrepancy-related costs/downtime and did not incorporate Gulfstream historical data or July 2023 analytics before approval; CITIOM claims reliance.\n- Contract/warranty theory: delays, prior corrosion handling, staffing or planning issues; damages framed around lost use and cost overruns.\n- Defense posture: proposal language that downtime estimates are not contractual commitments; Work Authorization T&C disclaim consequential damages; overruns attributed to unforeseeable discrepancies/corrosion.\n- Evidence pivot points: internal analytics data, historical inspection durations at St. Louis, and whether delays stemmed from customer approvals vs internal bottlenecks.\n\n**Evidence Gaps To Close**\n- Missing primary documents: full June 2, 2023 proposal Q-11876, work orders and discrepancy reports, final invoice, and internal communications.\n- Most supporting documents cited in the summaries are marked unverified; authentication is needed before relying on them.\n- Full expert reports and exhibits (Farnham, Beauchemin, FAZ) are central but not available here.\n- Conflicting or imprecise input/RTS dates in the summaries mean a master chronology is still needed.\n\n**Next Steps**\n- Please share the underlying case documents in the workspace or point me to an accessible path so I can verify citations.\n- Confirm whether you want me to proceed now using only the summary outputs.\n- If you want a specific deliverable, pick: 1) liability memo, 2) damages critique, 3) chronology with citations, 4) witness/expert assessment.\n- If there is a priority issue (e.g., misrepresentation elements, damages, or procedural posture), tell me and I will start there.",
+      "error": null
+    },
+    {
+      "query_num": 53,
+      "query": "When did each party become aware of the cost overrun issue?",
+      "status": "completed",
+      "elapsed_seconds": 265.3,
+      "output": "**Case Snapshot**\n- The dispute is in CPR arbitration under Georgia law/FAA, involving CITIOM’s Gulfstream G550 (SN 5174) and a 192‑month inspection proposal dated June 2, 2023. Source: `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\CITIOM Statement of Claim.pdf`\n- CITIOM alleges a $835,931 quoted workscope, 2,800 manhours, and 35–45 working‑day downtime (April 1, 2024 target) were materially misleading, and that Gulfstream failed to update the estimate despite new analytics available in July 2023. Source: `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\CITIOM Statement of Claim.pdf`\n- CITIOM claims repeated schedule slippage (June 21 → Aug/Sept → mid‑Nov 2024) and project scope growth, tying the delay to staffing, facility choice, and prior maintenance/corrosion issues. Source: `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\CITIOM Statement of Claim.pdf`\n\n**CITIOM’s Core Theories**\n- Causes of action include breach of warranty, willful/gross negligence in repairs, unconscionability, Georgia FBPA, negligent misrepresentation, fraudulent/reckless misrepresentation, and fraud in the inducement. Source: `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\CITIOM Statement of Claim.pdf`\n- The pre‑hearing brief emphasizes misleading/outdated estimates, failure to use newer forecasting tools, understaffing at St. Louis, and extended downtime causing loss of use and consequential damages (claimed at ≥ $4.8M; damages analysis also cites €2.5M 2024 loss). Source: `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\Pre Hearing Brief\\Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf`\n\n**Gulfstream’s Core Defenses**\n- The proposal allegedly made clear that cost and downtime estimates covered inspection tasks only, excluding discrepancy correction; Gulfstream claims this was its standard process at the time and was stated repeatedly. Source: `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\Gulfstream - Prehearing Brief .pdf`\n- Gulfstream attributes the overrun to extraordinary corrosion and scope growth (≈27,000 hours vs ~5,400 fleet average), and notes significant warranty coverage (≈16,270 hours billed to warranty), denying fraud or breach. Source: `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\Gulfstream - Prehearing Brief .pdf`\n- The proposal/terms also include downtime being an estimate and disclaimers for delays and consequential damages, which Gulfstream argues limit liability. Source: `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\Pre Hearing Brief\\Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf`\n\n**Analyst Take (Strengths/Risks)**\n- CITIOM’s strongest points appear to be the specific quoted manhours/downtime and the documented pattern of revised RTS dates, plus the allegation that Gulfstream had access to better forecasting tools pre‑input but did not update the proposal. Sources: `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\CITIOM Statement of Claim.pdf`, `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\Pre Hearing Brief\\Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf`\n- Gulfstream’s strongest points are the explicit proposal language excluding discrepancy correction, the express “estimate‑only” downtime language, and evidence that the aircraft’s condition was unusually severe, undermining a “typical discrepancy” estimate. Source: `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\Gulfstream - Prehearing Brief .pdf`\n- Key exposure hinges on whether CITIOM can show Gulfstream knowingly or recklessly misstated the estimate (beyond contractual disclaimers), and whether fraud/unconscionability defeats limitation‑of‑liability clauses. Sources: `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\CITIOM Statement of Claim.pdf`, `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\Pre Hearing Brief\\Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf`\n\n**Open Issues to Pin Down**\n- Evidence of Gulfstream’s internal knowledge (analytics tool rollout, internal forecasts, staffing constraints) at the time the proposal was issued. Source: `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\Pre Hearing Brief\\Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf`\n- Final invoiced cost, detailed scope growth breakdown, and return‑to‑service documentation to quantify causation and damages. Source: `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\CITIOM Statement of Claim.pdf`\n- Whether the limitation‑of‑liability and delay disclaimers are enforceable in light of the fraud and unconscionability theories. Source: `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\CITIOM Statement of Claim.pdf`\n\nIf you want, I can turn this into a formal memo or build a claim‑by‑claim evidence matrix.",
+      "error": null
+    },
+    {
+      "query_num": 54,
+      "query": "Trace the chronological development of the damages calculation.",
+      "status": "completed",
+      "elapsed_seconds": 113.3,
+      "output": "I can give a preliminary legal review based only on the short fact summary embedded in `run_codex_test.py`. The underlying case record does not appear in this workspace, and the scripts point to an external path (`C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents`) that I cannot access here.\n\n**Preliminary review (limited record)**  \n- **Known facts:** CITIOM owns a Gulfstream G550 (SN 5174); Gulfstream performed a 192‑month inspection starting 2024‑01‑29; original estimate was $835,931 / 2,800 manhours / 35–45 business days; actual work exceeded 26,000 manhours and completed 2024‑11‑29; CITIOM claims the estimate was unreasonably low and misleading; key documents include Proposal Q‑11876 (2023‑06‑02) and expert reports from Danny Farnham and Leonard B.  \n- **Core liability questions:** Was the estimate a non‑binding forecast with enforceable disclaimers, or a commitment that had to be reasonably grounded? Did Gulfstream have contrary internal data at issuance and fail to update? Was CITIOM’s reliance reasonable and causally linked to specific losses?  \n- **Misrepresentation risk:** A large estimate‑to‑actual delta can support an inference of an unreasonable estimate, but liability hinges on proof of knowledge (or negligent lack of a reasonable basis) and whether updates were required once risks materialized.  \n- **Contract defenses:** Expect reliance on estimate/disclaimer language, change‑order and discrepancy terms, and arguments that scope expansion or aircraft condition caused the overrun.  \n- **Damages exposure:** Overrun costs and loss‑of‑use appear central; enforceability of limitation‑of‑liability and consequential‑damages exclusions will be pivotal.\n\n**Evidence priorities / gaps**  \n- The full text of Proposal Q‑11876 (assumptions, exclusions, disclaimer language).  \n- Governing contract terms (limitation‑of‑liability, consequential‑damages waiver, change‑order mechanics, governing law).  \n- Communications timeline on estimate revisions and return‑to‑service updates.  \n- Discrepancy logs, scope growth records, invoices, and manhour substantiation.  \n- Internal estimating data/analytics and staffing constraints in 2023–2024.  \n- Full expert reports and any depositions or cross‑exam outlines.\n\nIf you want a full, document‑cited memo, please point me to the case materials inside the workspace and the scope you want. Options:  \n1) Case brief + claims/defenses assessment  \n2) Evidence map with pinpoint cites and gaps  \n3) Damages and causation analysis  \n4) Timeline of estimate changes and communications",
+      "error": null
+    },
+    {
+      "query_num": 55,
+      "query": "What is the timeline of all formal notices between parties?",
+      "status": "completed",
+      "elapsed_seconds": 168.9,
+      "output": "Here is a preliminary senior-analyst review based only on the summary outputs available in this workspace. The underlying case record is not present here, and many citations in those summaries are marked UNVERIFIED, so conclusions are provisional.\n\n**Scope And Limits**\n- Source summaries reviewed: `test_results/query_001.json`, `test_results/query_020.json`, `test_results/query_024.json`, `test_results/query_043.json`, and context in `run_codex_test.py`.\n- These are derivative summaries, not the primary pleadings, proposals, or exhibits; verification is needed before relying on them in any filing or argument.\n\n**Case Snapshot (Provisional)**\n- Proposal: June 2, 2023 Customer Support Proposal Q-11876 Rev 0 with $835,931 / 2,800 manhours / 35-45 business days and an April 1, 2024 return-to-service target if inducted late Jan 2024.\n- Inspection: inducted late Jan 2024 (Jan 29 is the most consistent date); Gulfstream advised by April 2024 the estimate would be exceeded; repeated RTS slips through summer/fall 2024; return to service reported around late Nov 2024.\n- Magnitude: summaries cite a dramatic variance in labor hours (at least >16,000 and up to >26,000); verify the final manhour total.\n- Procedure: Notice of Arbitration May 31, 2024; Gulfstream notice of defense Aug 7, 2024; Amended Statement of Claim Sept 9, 2024.\n- Claims posture: CITIOM alleges misrepresentation and breach of contract/warranty tied to corrosion history, estimating methodology, and delay.\n\n**Core Liability Issues**\n- Misrepresentation: whether the proposal omitted material estimates for discrepancy work and whether Gulfstream failed to update estimates after July 2023 analytics were available.\n- Contract/warranty: whether prior corrosion and maintenance history (2020 and mid-2023) imposed a duty to adjust scope or repair under warranty.\n- Reliance/causation: whether CITIOM reasonably relied on the estimate and whether losses flowed from misrepresentation rather than legitimate scope expansion.\n- Disclaimers: proposal language reportedly states downtime estimates are not contractual commitments; effect on reliance and damages is a key hinge.\n\n**CITIOM Strengths (From Summaries)**\n- Large estimate-to-actual delta supports inference of an unreasonable estimate or poor diligence.\n- Alleged internal analytics and historical benchmarks (July 2023) may show Gulfstream had better data before final approval.\n- Repeated RTS extensions and admissions that the estimate was inadequate can support breach/notice arguments.\n- Prior corrosion history may undercut defenses based on unforeseeable discrepancies.\n\n**Gulfstream Strengths (From Summaries)**\n- Estimate-only and downtime-disclaimer language weakens contractual commitment and reliance.\n- Discrepancy work and corrosion can be characterized as unpredictable scope growth outside the proposal.\n- Warranty terms and limitation-of-liability clauses reportedly exclude consequential damages; enforcement could cap exposure.\n- Arguments that CITIOM’s operations/maintenance history contributed to discrepancies.\n\n**Damages Posture (Provisional)**\n- Summaries cite economic damages around EUR 2.4M (lost charter profits plus out-of-pocket costs) and references to a lost sale; other figures appear elsewhere, so reconcile in the primary record.\n- The consequential damages waiver and governing-law limits (summaries mention Georgia law) will be pivotal.\n- Causation and mitigation will be scrutinized given the long out-of-service period.\n\n**Priority Evidence Gaps**\n- Full text of Proposal Q-11876 Rev 0, including exclusions, disclaimers, and scope definitions.\n- Work Authorization T&Cs and any limitation-of-liability or consequential-damages waiver language.\n- Change orders, discrepancy logs, work orders, and final invoices/manhour logs.\n- Internal Gulfstream estimating data, July 2023 analytics outputs, and historical benchmarks.\n- Communications timeline on estimate changes and RTS updates.\n- 2020/2023 maintenance records and warranty determinations for corrosion repairs.\n- Full expert reports (Farnham and financial/damages experts) and Gulfstream’s rebuttal reports.\n\nIf you want a full, document-cited analysis, I need the case materials in this workspace and a defined deliverable. Suggested next steps:\n1) Point me to the actual pleadings, proposal, T&Cs, and expert reports in the workspace (or copy them here).\n2) Tell me the deliverable you want: neutral case memo, claims/defenses assessment, evidence map, damages critique, or chronology.\n3) Confirm governing law and any key contract terms you want prioritized (limitation of liability, warranty scope, estimate disclaimers).",
+      "error": null
+    },
+    {
+      "query_num": 56,
+      "query": "Are there contradictions between Gulfstream's proposal and actual work performed?",
+      "status": "timeout",
+      "elapsed_seconds": 777.9,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 57,
+      "query": "Do witness statements contradict documentary evidence?",
+      "status": "completed",
+      "elapsed_seconds": 111.7,
+      "output": "Based on the materials in this workspace (mostly prior summary outputs in `test_results/codex/query_055.json`, `test_results/query_001.json`, plus context in `run_codex_test.py`), here is a preliminary review. The primary case record does not appear here, so everything below is provisional and should be validated against the actual pleadings, proposal, and expert reports.\n\n**Case Snapshot**\n- Summaries indicate CITIOM (Channel IT Isle of Man Ltd.) owns a Gulfstream G550 (SN 5174) and contracted for a 192‑month inspection with Gulfstream.\n- The reported proposal (Customer Support Proposal Q‑11876, June 2, 2023) estimated $835,931, 2,800 manhours, and 35‑45 business days, with an April 1, 2024 return‑to‑service target if inducted Jan 29, 2024.\n- The inspection reportedly started Jan 29, 2024, and ultimately ran to late Nov 2024 with total labor exceeding 26,000 hours.\n- Proceedings timeline in summaries: Notice of Arbitration May 31, 2024; Gulfstream notice of defense Aug 7, 2024; Amended Statement of Claim Sept 9, 2024.\n- Claimed theories include misrepresentation and breach of contract/warranty tied to corrosion history, estimating methodology, and delay.\n\n**Key Liability Issues**\n- Whether the estimate was an actionable misrepresentation (or negligent misstatement) versus a non‑binding estimate, including scope exclusions for discrepancy work.\n- Whether Gulfstream had, or should have had, better forecasting data (including alleged analytics in mid‑2023) and failed to update the estimate.\n- Reliance and causation: did CITIOM reasonably rely on the estimate/downtime, and are claimed losses attributable to misrepresentation rather than legitimate scope expansion.\n- Contractual limits: effect of estimate‑only and downtime‑disclaimer language; enforceability of limitation‑of‑liability and consequential damages waivers.\n- Damages and mitigation: quantifying delay‑driven losses vs. out‑of‑pocket costs; mitigation expectations given extended downtime.\n\n**Strengths / Risks (Provisional)**\n- CITIOM: large estimate‑to‑actual delta; alleged internal analytics/historical benchmarks; repeated RTS slips and admissions of underestimation; prior corrosion history potentially undermining unforeseeability defenses.\n- Gulfstream: estimate‑only and downtime‑disclaimer language; characterization of discrepancy work/corrosion as unpredictable; warranty scope limits and consequential‑damage waivers; arguments about CITIOM maintenance history contributing to discrepancies.\n\n**Evidence Gaps To Close**\n- Full Proposal Q‑11876 text (scope, exclusions, disclaimers).\n- Work Authorization terms and limitation‑of‑liability language.\n- Change orders, discrepancy logs, final invoices/manhour logs.\n- Internal estimating data and 2023 analytics outputs.\n- Communications timeline on estimate changes and RTS slips.\n- Maintenance records and warranty determinations for corrosion repairs.\n- Full expert reports (Farnham, damages) and Gulfstream rebuttals.\n\nIf you want a formal, document‑cited review, I need the primary case materials in this workspace or a path I can access. Natural next steps:\n1) Point me to the pleadings, proposal/T&Cs, and expert reports.\n2) Tell me the deliverable format (neutral memo, claims/defenses assessment, evidence map, damages critique, or chronology).\n3) Confirm governing law and any contract clauses you want prioritized.",
+      "error": null
+    },
+    {
+      "query_num": 58,
+      "query": "What inconsistencies exist between Gulfstream's position and its internal documents?",
+      "status": "completed",
+      "elapsed_seconds": 173.4,
+      "output": "**Findings**\n- Primary-record gap: The workspace does not contain the actual proposal Q-11876, Work Authorization T&Cs, pleadings, or expert reports; the available materials are summary outputs flagged unverified, so conclusions are provisional. `test_results/codex/query_055.json`, `test_results/query_001.json`, `test_results/query_043.json`.\n- Contractual limitation risk: Summaries report that downtime estimates are non-binding and that Section 8 of the T&Cs excludes consequential damages; if accurate, these clauses materially weaken reliance and loss-of-use recovery. `test_results/query_001.json`, `test_results/query_020.json`.\n- Causation/mitigation risk: Summaries note work stoppage tied to an unpaid interim invoice and possible approval delays, which may reduce or break causation. `test_results/query_043.json`.\n- Foreseeability proof gap: The misrepresentation theory relies on July 2023 analytics and historical St. Louis inspection data, but those records are not present. `test_results/query_001.json`, `test_results/query_043.json`.\n- Procedural timeline not fully verified: Key filing dates are consistent across summaries but are mostly secondary references. `test_results/query_020.json`.\n\n**Open Questions**\n- What governing law applies (summaries mention Georgia law), and do you have the choice-of-law and limitation clauses? `test_results/query_020.json`.\n- Can you provide the full Proposal Q-11876 and Work Authorization T&Cs, including addenda and warranty language? `test_results/query_001.json`.\n- Do we have primary records for July 2023 analytics or historical inspection durations at St. Louis? `test_results/query_001.json`.\n\n**Case Snapshot (Provisional)**\n- Parties/forum: CITIOM vs Gulfstream Aerospace Corporation, CPR arbitration G-24-115-AA. `test_results/query_043.json`.\n- Aircraft and timing: G550 SN 5174; 192-month inspection at St. Louis; input Jan 29 2024; return around Nov 29 2024. `run_codex_test.py`, `test_results/query_043.json`.\n- Estimate vs actual: proposal Q-11876 dated June 2 2023; USD 835,931, 2,800 manhours, 35-45 business days, RTS April 1 2024; actual labor reported 26,000+ hours and repeated RTS slips. `run_codex_test.py`, `test_results/query_001.json`, `test_results/query_043.json`.\n- Procedure/damages: Notice of Arbitration May 31 2024; Gulfstream defense Aug 7 2024; ASOC Sept 9 2024; damages summaries cite roughly EUR 2.4M lost charter and replacement travel plus additional claimed categories. `test_results/query_020.json`, `test_results/query_001.json`.\n\n**Provisional Analysis**\n- Misrepresentation/negligent misstatement: The gap between estimate and actual supports materiality, but liability depends on proof that Gulfstream knew or should have known the estimate was unreliable and that reliance was reasonable in light of any estimate-only disclaimers. `test_results/query_001.json`, `test_results/query_043.json`.\n- Breach of contract/warranty: The corrosion history and prior maintenance events are central to a duty-to-disclose and warranty-breach theory; proof requires the 2020/2023 work records and warranty scope. `test_results/query_020.json`, `test_results/query_043.json`.\n- Damages/causation: Loss-of-use hinges on attributing delays to Gulfstream rather than discrepancy work, approvals, or payment issues; limitation-of-liability clauses could cap or bar consequential damages. `test_results/query_020.json`, `test_results/query_043.json`.\n\n**Priority Evidence**\n- Full Proposal Q-11876, Work Authorization T&Cs, and warranty addenda. `test_results/query_001.json`.\n- Change orders, discrepancy logs, manhour reports, and final invoices. `test_results/codex/query_055.json`.\n- July 2023 analytics outputs and historical St. Louis inspection benchmarks. `test_results/query_001.json`.\n- 2020/2023 maintenance records and corrosion findings. `test_results/query_043.json`.\n- Gulfstream defense/counterclaim and expert rebuttal reports. `test_results/codex/query_055.json`.\n\nIf you want me to proceed, tell me:\n1) Where the primary documents are (proposal, T&Cs, pleadings, expert reports).\n2) The deliverable format you want (liability memo, damages critique, evidence map, or chronology).\n3) The governing law and any clauses you want prioritized (limitations, warranty, estimate disclaimers).",
+      "error": null
+    },
+    {
+      "query_num": 59,
+      "query": "Are there contradictions in how different Gulfstream employees described the estimate?",
+      "status": "timeout",
+      "elapsed_seconds": 524.5,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 60,
+      "query": "Do the expert reports identify contradictions in Gulfstream's methodology?",
+      "status": "timeout",
+      "elapsed_seconds": 326.5,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 61,
+      "query": "What conflicts exist between promised and actual work completion dates?",
+      "status": "completed",
+      "elapsed_seconds": 86.9,
+      "output": "I didn’t find `AGENTS.md` under `C:\\Users\\devan\\OneDrive\\Desktop\\Projects\\RLMs`. If it exists elsewhere, point me to the path.\n\nI also don’t see the primary case record in this workspace (pleadings, Proposal Q‑11876, T&Cs, expert reports). The only case content here is a short fact summary in `run_codex_test.py` and secondary model outputs in `test_results`. For a proper senior‑analyst review, please add the primary documents to the workspace or tell me where they are.\n\nWhat deliverable do you want?\n1) Neutral case memo (claims/defenses + key issues)\n2) Evidence map with gaps and priority documents\n3) Timeline of estimate changes and communications\n4) Damages/causation critique",
+      "error": null
+    },
+    {
+      "query_num": 62,
+      "query": "Are there inconsistencies in how Gulfstream justified cost increases?",
+      "status": "completed",
+      "elapsed_seconds": 2.8,
+      "output": "I can help, but I need the case materials in this workspace to review. What specific documents should I analyze (e.g., complaint, briefs, orders, opinion, trial transcripts), and what scope do you want: procedural history, key holdings, issue spotting, or an argument-focused analysis?",
+      "error": null
+    },
+    {
+      "query_num": 63,
+      "query": "Do cross-examination materials reveal contradictions in testimony?",
+      "status": "timeout",
+      "elapsed_seconds": 560.8,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 64,
+      "query": "What discrepancies exist between verbal representations and written proposals?",
+      "status": "completed",
+      "elapsed_seconds": 4.9,
+      "output": "I can help, but I need the case materials. Please share the complaint, key motions, opinions/orders, or a citation/docket number so I can review the CITIOM v. Gulfstream matter accurately. If you want a specific focus (e.g., jurisdiction, contract interpretation, damages), tell me.",
+      "error": null
+    },
+    {
+      "query_num": 65,
+      "query": "Are there contradictions between the original scope and final workscope?",
+      "status": "completed",
+      "elapsed_seconds": 51.4,
+      "output": "I’m ready to review, but this workspace doesn’t contain the actual case record. I only see a short fact summary in `run_codex_test.py` and generated outputs in `test_results/`. The scripts point to `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents`, which isn’t accessible here. Please copy the case documents into this project or point me to files within this workspace.\n\nTo get started, tell me:\n- Which deliverable you want: neutral case memo, claims/defenses analysis, evidence map, chronology, damages analysis, or depo/cross outline.\n- The governing law/tribunal and any priority issues (misrepresentation, warranty scope, limitation of liability, estimate disclaimers).\n- Whether you want a preliminary review based only on the limited summary in `run_codex_test.py` (with clear caveats) while you move the full record.\n\nIf you want, I can proceed now with a constrained preliminary memo from the summary, or wait for the full record.",
+      "error": null
+    },
+    {
+      "query_num": 66,
+      "query": "What inconsistencies exist in Gulfstream's explanation of delays?",
+      "status": "completed",
+      "elapsed_seconds": 3.6,
+      "output": "I can help with a legal analysis of CITIOM v. Gulfstream, but I need the case materials to review. Please share the complaint, key motions/orders, trial/transcript excerpts, or a link/paths to the relevant files in this workspace. If you want a specific focus (e.g., jurisdiction, contract interpretation, damages, or procedural posture), tell me and I’ll tailor the review.",
+      "error": null
+    },
+    {
+      "query_num": 67,
+      "query": "Do different documents give conflicting information about the same events?",
+      "status": "completed",
+      "elapsed_seconds": 3.0,
+      "output": "I can help, but I need the case materials or specific questions. Please share the relevant filings/opinions (or a summary), and what you want analyzed—e.g., key holdings, procedural posture, issues, damages, or risks.",
+      "error": null
+    },
+    {
+      "query_num": 68,
+      "query": "Are there contradictions in how damages were calculated by different experts?",
+      "status": "completed",
+      "elapsed_seconds": 3.2,
+      "output": "What specific deliverable do you want for CITIOM v. Gulfstream—case summary, issue/holding analysis, procedural posture, risk memo, or something else? If you have any documents or citations to review, point me to the files in this workspace.",
+      "error": null
+    },
+    {
+      "query_num": 69,
+      "query": "What conflicts exist between contract terms and actual performance?",
+      "status": "timeout",
+      "elapsed_seconds": 478.7,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 70,
+      "query": "Do internal Gulfstream documents contradict public communications?",
+      "status": "completed",
+      "elapsed_seconds": 136.8,
+      "output": "I couldn’t locate an `AGENTS.md` in this repo; if there are project‑specific instructions, point me to the file and I’ll follow them.\n\nBased on the limited case facts available here, here’s a senior‑analyst review focused on likely liability theories, defenses, and evidentiary needs.\n\n**Case Snapshot**\n- CITIOM owns a Gulfstream G550 (SN 5174) and sent it for a 192‑month inspection starting Jan 29, 2024.\n- Gulfstream’s June 2, 2023 Customer Support Proposal Q‑11876 estimated $835,931, 2,800 manhours, and 35–45 business days.\n- Actual manhours reportedly exceeded 26,000, with completion on Nov 29, 2024.\n- CITIOM alleges the estimate was unreasonably low and a misrepresentation.\n- Key evidence includes the proposal itself and expert reports (Danny Farnham; Leonard B).\n\n**Liability & Defense Themes**\n- Negligent misrepresentation hinges on whether the estimate was presented as reliable and whether Gulfstream had (or should have had) data showing it was materially low; disclaimers cut against justifiable reliance but do not always bar liability if knowledge or recklessness is shown.\n- Breach of contract/warranty turns on what the proposal and service terms actually promised (scope, time, price, and exclusions for discrepancies) and whether Gulfstream’s performance departed from industry standards or contractual duties.\n- Implied good faith/fair dealing may be implicated if estimating or staffing practices defeated CITIOM’s reasonable contractual expectations.\n- Causation and damages require a clean linkage between Gulfstream’s conduct and overrun impacts (downtime, costs, replacement travel, lost charter revenue), plus proof of mitigation.\n- Gulfstream’s likely defenses: estimate was non‑binding; scope expansion and unforeseen condition (e.g., corrosion) drove overruns; customer approvals/payments or operational decisions contributed; limitation of liability provisions.\n\n**Evidence Priorities**\n- The exact language in Customer Support Proposal Q‑11876, especially disclaimers and scope exclusions.\n- Internal estimating methodology and any historical data or analytics used (or ignored) before June 2023.\n- Change orders, work orders, and manhour logs to separate planned work from discrepancies or added scope.\n- Communications about estimate changes or warnings to CITIOM during the project timeline.\n- Expert reports establishing industry norms for MRO estimating and project management.\n\n**Open Questions**\n- Governing law/jurisdiction and whether it treats estimates as actionable statements of fact or non‑actionable opinions.\n- The full set of contractual documents beyond the proposal (terms & conditions, limitation clauses).\n- Evidence of CITIOM’s reliance and alternatives it considered at the time of contracting.\n- The damages model and mitigation steps taken during the extended downtime.\n\nIf you want, I can turn this into a formal memo or focus on a specific slice. Suggested next steps:\n1) Draft a liability memo (elements, proof map, and defenses).  \n2) Build an evidence matrix keyed to each claim element.  \n3) Do a damages/mitigation analysis outline based on expected proof.",
+      "error": null
+    },
+    {
+      "query_num": 71,
+      "query": "What legal elements must CITIOM prove to establish misrepresentation?",
+      "status": "completed",
+      "elapsed_seconds": 4.2,
+      "output": "I don’t have the case record or briefs yet. Please point me to the relevant files in `C:\\Users\\devan\\OneDrive\\Desktop\\Projects\\RLMs` (complaint, motions, orders, opinions, or a case summary), and tell me the specific issues you want analyzed (e.g., jurisdiction, contract interpretation, damages, procedural posture).",
+      "error": null
+    },
+    {
+      "query_num": 72,
+      "query": "What defenses does Gulfstream assert and what evidence supports them?",
+      "status": "completed",
+      "elapsed_seconds": 252.1,
+      "output": "Reviewed the core pleadings and both pre‑hearing briefs and pulled the main disputes and pressure points.\n\n**Case Snapshot**\n- Forum: CPR arbitration under the FAA; Georgia law governs per the Work Authorization terms.\n- Parties/asset: CITIOM (Channel IT Isle of Man) vs Gulfstream; G550 SN 5174; St. Louis service center.\n- Proposal (June 2, 2023): $835,931, 2,800 manhours, 35–45 business days; dispute over whether estimates covered only inspection tasks vs full discrepancies.\n- Timeline: aircraft input Jan 29, 2024; CITIOM says return in Nov 2024 vs Apr 1, 2024 target; Gulfstream attributes delay to severe corrosion and 27,000+ hours with 16,270 hours billed to warranty.\n- Claims/counterclaims: seven counts (warranty, gross negligence, unconscionability, FBPA, negligent/fraud misrep, fraud in inducement); damages claimed ≥ $4.8M; Gulfstream counterclaims for abusive litigation and fees.\n\n**Claimant Themes (CITIOM)**\n- Gulfstream allegedly knew estimates were outdated given prior maintenance history and July 2023 analytics but did not update.\n- Alleged continuing misstatements in March–April 2024 as completion dates slipped.\n- Poor execution at St. Louis (staffing/training/quality) plus corrosion that should have been addressed in 2020/2023; warranty repairs delayed or mishandled.\n- Damages include warranty overcharges, downtime/loss of use, replacement travel/charter, and failed resale; FAZ estimates ~2.5M economic loss plus other items to reach ≥ $4.8M.\n- Seeks damages, fees/costs, and interest.\n\n**Respondent Themes (Gulfstream)**\n- Proposal expressly limits quoted cost/downtime to inspection tasks; discrepancy repairs excluded and estimates non‑binding.\n- CITIOM had experienced aviation agents (Avcon Jet, Farnham), weakening justifiable reliance.\n- Unprecedented corrosion drove scope; fleet average ~5,400 hours vs 27,000+ here; majority of work billed to warranty at Gulfstream cost.\n- Contract bars delay and consequential damages; limitations enforceable under Georgia law; unconscionability claim fails.\n- Counterclaim for abusive litigation and request for fees/costs.\n\n**Key Legal/Evidentiary Issues**\n- Actionability of estimates vs non‑binding opinions; effect of disclaimer language on reliance and scienter.\n- Duty to update after July 2023 analytics; evidence of knowledge that estimates were materially low.\n- Warranty breach vs scope growth: causation and whether prior repairs were deficient.\n- Causation/damages: link to misrepresentation vs aircraft condition; enforceability of damages waivers.\n- FBPA applicability in this B2B context and the bar for willful/gross negligence.\n\n**Evidence Priorities**\n- Proposal + Work Authorization terms (disclaimers, warranty scope, limitation‑of‑liability, delay exclusions).\n- Internal estimating analytics and methodology in 2023; proof of any decision not to update.\n- Communications on revised estimates and staffing between Jan–Jun 2024.\n- Maintenance records for 144‑month and July 2023 work; discrepancy logs/corrosion findings.\n- Manhour logs, warranty billing split, and change orders to separate inspection vs discrepancy repairs.\n- Damages proof for lost use, charter/replacement travel, sale collapse, and mitigation.\n\n**Sources Reviewed**\n- `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\CITIOM Amended Statement of Claim.pdf`\n- `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\Pre Hearing Brief\\Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf` (marked Highly Confidential)\n- `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents\\Gulfstream - Prehearing Brief .pdf`\n\nIf you want a deeper dive, I can:\n1) Build a dated timeline with exhibit citations.  \n2) Draft an element‑by‑element proof matrix for each claim/defense.  \n3) Summarize and stress‑test the expert reports (Farnham/FAZ/GS expert).",
+      "error": null
+    },
+    {
+      "query_num": 73,
+      "query": "How does the evidence support or undermine CITIOM's damages claim?",
+      "status": "completed",
+      "elapsed_seconds": 107.8,
+      "output": "Understood. Based on the case summary in `run_codex_test.py`, the baseline facts I have are:\n- CITIOM owns a Gulfstream G550 (SN 5174).\n- 192-month inspection began on 2024-01-29.\n- Original estimate: $835,931; 2,800 manhours; 35-45 business days.\n- Actual: 26,000+ manhours; completion on 2024-11-29.\n- CITIOM alleges the estimate was unreasonably low/misrepresented.\n- Key docs listed: Customer Support Proposal Q-11876 (2023-06-02) and expert reports (Danny Farnham; Leonard Beauchemin).\n\nWhat work product do you want next (case overview, issue-spotting memo, timeline, expert comparison, damages analysis, or answers to specific questions)? If you want me to cite primary documents, point me to their paths (the tests reference `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents`, but I have not opened anything outside the repo yet).",
+      "error": null
+    },
+    {
+      "query_num": 74,
+      "query": "What is the legal significance of the proposal being an 'estimate'?",
+      "status": "completed",
+      "elapsed_seconds": 4.6,
+      "output": "I can help, but I need the materials. Which documents in `C:\\Users\\devan\\OneDrive\\Desktop\\Projects\\RLMs` should I review for the CITIOM v. Gulfstream case, and what deliverable do you want (issue memo, case brief, risk analysis, timeline, argument critique)? If you want me to locate them, say so and I’ll scan the workspace.",
+      "error": null
+    },
+    {
+      "query_num": 75,
+      "query": "How might Gulfstream's historical data affect the misrepresentation claim?",
+      "status": "completed",
+      "elapsed_seconds": 272.3,
+      "output": "Based on the high-level case fact summary in `run_codex_test.py` and the internal case-memo outputs in `test_results/query_001.json` and `test_results/query_015.json`, here is a preliminary review. The underlying production documents are not in this workspace, so items flagged as unverified in those summaries should be confirmed against the source record.\n\n**Case Snapshot**\n- CITIOM (Channel IT Isle of Man Ltd.) vs Gulfstream Aerospace appears as a CPR arbitration (case G-24-115-AA) per the internal summaries.\n- Subject asset is a Gulfstream G550, serial number 5174; dispute centers on a 192-month inspection that began Jan 29, 2024.\n- Customer Support Proposal Q-11876 (June 2, 2023) estimated USD 835,931, 2,800 manhours, and 35-45 business days of downtime.\n- Actuals are reported at 26,000+ manhours with return to service around Nov 29, 2024.\n- Core claim is that the estimate was unreasonably low or misleading and induced reliance; Gulfstream attributes overruns to discrepancies and scope limits.\n\n**Liability Theories**\n- Negligent misrepresentation: estimate allegedly lacked a reasonable basis and omitted foreseeable discrepancy work.\n- Breach of contract or implied covenant: failure to deliver within a reasonable time and to manage resources consistently.\n- Professional duty of care: OEM/MRO should set realistic expectations using internal historical data and forecasting tools.\n- Prior knowledge of corrosion risk from earlier maintenance could support foreseeability and duty breach.\n\n**Defense Themes**\n- Contractual disclaimers: downtime estimates not commitments and discrepancy corrections excluded; Work Authorization T&C may bar consequential damages.\n- Unforeseen discrepancies or corrosion: overruns driven by unexpected findings rather than estimate negligence.\n- Reliance and sophistication: CITIOM used an aircraft manager (Avcon) and may have understood proposal limitations.\n- Causation breaks or mitigation: work stoppage for unpaid invoice and warranty-covered hours may reduce damages exposure.\n- Acceptance of scope: proposal acceptance with exclusions could limit misrepresentation claims.\n\n**Damages & Causation**\n- Direct cost variance is still unclear without final invoices and itemized bills.\n- Claimed consequential damages include lost charter profit (~EUR 1.613m) and replacement travel costs (~EUR 0.814m).\n- Summaries also note a failed aircraft sale claim (~EUR 1.0-1.2m), pushing total damages beyond EUR 4.1m.\n- Recovery hinges on tying losses to the initial estimate and overcoming any exclusion-of-damages clause.\n- Proof will depend on charter revenue history, sale documentation, and mitigation steps during downtime.\n\n**Evidence Gaps & Priority Follow-ups**\n- Obtain the full Proposal Q-11876 and all incorporated terms to pin down scope and disclaimer language.\n- Secure final and interim invoices, change orders, and manhour logs to quantify cost variance.\n- Seek Gulfstream's historical inspection data and any July 2023 forecasting tool records to prove knowledge.\n- Authenticate and depose expert witnesses (D. Farnham; damages expert; Gulfstream rebuttal) to test assumptions.\n- Build a definitive timeline of RTS updates, staffing levels, and any payment-related stoppages.\n\nIf you want, I can produce a document-cited memo once the underlying case documents are available.\n\nNext steps:\n1. Point me to the case document folder so I can cite the actual exhibits and filings.\n2. Tell me which claim angle you want emphasized (misrepresentation, contract, or damages) for a deeper dive.\n3. Ask for a draft outline of deposition topics for the key Gulfstream witnesses.",
+      "error": null
+    },
+    {
+      "query_num": 76,
+      "query": "What duty of care, if any, did Gulfstream owe regarding its estimates?",
+      "status": "completed",
+      "elapsed_seconds": 116.4,
+      "output": "Based on the limited fact summary in `run_codex_test.py`, here is a preliminary legal review. I do not have the underlying contract, pleadings, or record in this workspace, so this is non-jurisdiction-specific and provisional.\n\n**Case Snapshot**\n- CITIOM owns a Gulfstream G550 (SN 5174).\n- Gulfstream performed a 192-month inspection starting 2024-01-29.\n- Estimate in Customer Support Proposal Q-11876 (2023-06-02): $835,931, 2,800 manhours, 35-45 business days.\n- Actual performance reported: 26,000+ manhours, completion 2024-11-29.\n- CITIOM alleges the estimate was unreasonably low and misrepresented; expert reports by Danny Farnham and Leonard B. are noted.\n\n**Key Liability Questions**\n- Was the estimate a binding commitment or a non-binding forecast with disclaimers?\n- What did Gulfstream know or reasonably should have known about scope and likely cost at issuance?\n- Were overruns disclosed timely, and did CITIOM reasonably rely on the estimate?\n- Did discrepancy-driven scope expansion or corrosion break causation?\n- What industry standard of care governs MRO estimating and project management?\n\n**Potential Claims**\n- Negligent misrepresentation regarding the reliability of the estimate.\n- Fraudulent misrepresentation if knowledge or reckless disregard can be shown.\n- Breach of contract if estimate/time commitments were incorporated into the agreement.\n- Breach of the implied covenant of good faith and fair dealing.\n\n**Defense Themes**\n- Estimate expressly non-binding with reliance or limitation disclaimers.\n- Overrun driven by newly discovered discrepancies or added scope.\n- CITIOM approvals, decisions, or delays contributed to time and cost.\n- Limitation-of-liability or waiver-of-consequential-damages clauses limit recovery.\n\n**Damages Focus**\n- Reliance damages tied to the difference between the estimate and actual costs.\n- Expectation damages only if a binding price/time term exists.\n- Consequential losses from downtime or loss of use, subject to contractual limits.\n- Mitigation steps and alternative options considered by CITIOM.\n\n**Evidence Priorities**\n- Full Customer Support Proposal Q-11876 and governing terms and conditions.\n- Communications timeline around estimate changes and notice of overruns.\n- Change orders, discrepancy reports, work orders, and manhour logs.\n- Internal estimating data, models, and historical benchmarks.\n- Expert reports (Farnham; Leonard B.) and their methodologies.\n- Invoices and payment history to quantify approvals and damages.\n\nIf you want a full, cited memo, point me to the case record files and the governing law. I can produce:\n1) A neutral case brief and procedural posture memo.\n2) A claims/defenses proof map with an evidence matrix.\n3) A damages and mitigation analysis with a draft chronology.",
+      "error": null
+    },
+    {
+      "query_num": 77,
+      "query": "How do industry standards factor into assessing reasonableness?",
+      "status": "timeout",
+      "elapsed_seconds": 367.2,
+      "output": "",
+      "error": "Timeout after 300s"
+    },
+    {
+      "query_num": 78,
+      "query": "What is the evidentiary strength of the expert opinions?",
+      "status": "completed",
+      "elapsed_seconds": 103.4,
+      "output": "Based on the case facts you provided, here is a preliminary review. It will evolve once we have the contract record and full correspondence.\n\n**Preliminary assessment**\n- The gap between the quoted estimate ($835,931; 2,800 hours; 35-45 business days) and the actual outcome (26,000+ hours; completion Nov 29, 2024) is material and supports a potential misrepresentation or negligent-estimate theory, depending on how the estimate was framed.\n- Liability will likely turn on whether Gulfstream knew or should have known the estimate was unrealistic given historical data, aircraft age/condition, and typical discrepancy rates.\n- If the proposal/contract includes clear disclaimers or limits the estimate to base inspection only, Gulfstream will argue the overrun was driven by unforeseeable discrepancies and scope changes.\n- Causation and damages must tie specific delays/costs to Gulfstream’s conduct rather than parts availability, customer approvals, or external factors.\n\n**Evidence to prioritize**\n- The customer support proposal/estimate and any governing service agreement (scope, disclaimers, change-order process, limitation of liability).\n- Communications around estimate revisions, discrepancy discovery, and approval of added work.\n- Work logs, manhour reports, parts lead times, and staffing records tied to the 192-month inspection.\n- Historical data for comparable 192-month inspections and internal estimating practices.\n- Expert reports (if any) addressing standard of care, forecasting, and causation.\n\n**Clarifications needed**\n- Jurisdiction and claims pled (fraud/negligent misrepresentation, breach of contract, warranty, or consumer statutes).\n- Remedies sought (expectation damages, reliance damages, loss-of-use, consequential damages) and any contractual caps.\n- The document set you want reviewed and where it lives in this workspace.\n\nIf you want a deeper dive, I can produce one of these next:\n1) liability memo with element-by-element analysis,\n2) damages framework and causation map,\n3) chronology + key document digest,\n4) witness/deposition prep outline.",
+      "error": null
+    },
+    {
+      "query_num": 79,
+      "query": "How might the timing of Gulfstream's analytics impact liability?",
+      "status": "completed",
+      "elapsed_seconds": 244.9,
+      "output": "**Case Snapshot**\n- Source note: This review relies on internal summaries/excerpts in `test_results/query_064.json` and `test_results/claude_code/query_069.json`; the underlying case documents are not in this workspace and should be verified.\n- Posture: Arbitration (CPR file noted in summaries) with a protective order and scheduling order; a Georgia law clause appears in a prehearing brief and should be confirmed in the executed agreement.\n- June 2, 2023 proposal for a 192-month inspection of a Gulfstream G550; estimated workscope cost $835,931, 2,800 hours, and 35-45 business days, with an April 1, 2024 return-to-service (RTS) target.\n- Aircraft inducted Jan 29, 2024; Gulfstream later cited discrepancies and moved completion to June 21, 2024; actual RTS appears around Nov 29, 2024 (some notes say Dec 2024).\n- CITIOM claims roughly EUR 2.4 million in damages tied to extended downtime and lost use.\n\n**Claims and Defenses**\n- CITIOM: breach of warranty and failure to perform repairs within a reasonable time; prior 2020 and 2023 maintenance allegedly missed corrosion; warranty repairs allegedly misclassified and billed to CITIOM.\n- CITIOM: misrepresentation or inducement based on \"express representations\" and estimates; failure to update after July 2023 analytics.\n- CITIOM: spoliation or discovery concerns tied to Gulfstream email retention and missing proposal communications.\n- Gulfstream: proposal expressly excludes discrepancy corrections and associated cost/downtime; estimates are not contractual commitments.\n- Gulfstream: delays driven by unexpected discrepancies/corrosion; substantial hours billed to warranty (summaries cite about 16,270 of about 27,000 hours, about $3.5 million).\n\n**Core Disputes and Evidence Posture**\n- What was said in pre-agreement communications and whether reliance on verbal assurances was reasonable; current summaries note limited direct evidence.\n- Foreseeability of discrepancies and whether prior inspections should have detected corrosion; expert reports are referenced but some are flagged as unverified.\n- Allocation of delay: discrepancy-driven vs process inefficiency (engineering dispositions, approvals, staffing).\n- Enforceability of limitation-of-damages terms and impact on consequential damages for downtime/lost profits.\n- Conflicting RTS dates in the summaries (Nov 29 vs Dec 2024) and the exact downtime duration.\n\n**Gaps and Next Steps**\n- Obtain the underlying proposal, work authorization T&Cs, statements of claim, prehearing briefs, and expert reports to verify quotes, dates, and contract terms.\n- Collect pre-agreement communications (emails, meeting notes, call logs) that could prove or disprove \"express representations.\"\n- Build a chronology of estimate revisions, discrepancy findings, and approval cycles to apportion delay.\n- Validate damages model inputs and assumptions, including charter revenue and out-of-pocket costs, under the governing law and contract limits.\n- Decide whether the primary liability theory should be breach of warranty, misrepresentation/inducement, or negligent process management.\n\nIf you want a focused memo (liability, damages, or discovery plan) or can share the underlying documents, tell me which direction to take.",
+      "error": null
+    },
+    {
+      "query_num": 80,
+      "query": "What legal remedies is CITIOM seeking and are they supported?",
+      "status": "completed",
+      "elapsed_seconds": 4.9,
+      "output": "I can review it, but I need the case materials or specific questions. Do you want a general case summary, issue/holding analysis, procedural history, or argument strengths/risks? If the files are in this workspace, tell me the relevant paths and I’ll open them.",
+      "error": null
+    }
+  ],
+  "avg_time_seconds": 68.2
+}

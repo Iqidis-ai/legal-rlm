@@ -106,23 +106,32 @@ Different query types require different investigation depths:
 
 ```
 src/irys/
-├── __init__.py          # Public API exports
-├── api.py               # High-level API (Irys class)
+├── __init__.py           # Public API exports
+├── api.py                # High-level API (Irys class, IrysConfig)
 ├── core/
-│   ├── models.py        # Gemini client, model tiering, rate limiting
-│   ├── repository.py    # Document repository access
-│   ├── reader.py        # PDF/DOCX/TXT text extraction
-│   ├── search.py        # Full-text search with ranking
-│   ├── cache.py         # LRU caching with TTL
-│   └── utils.py         # Retry logic, validation
+│   ├── models.py         # Gemini client, model tiering, rate limiting
+│   ├── repository.py     # Document repository access
+│   ├── reader.py         # PDF/DOCX/TXT/MHT text extraction
+│   ├── search.py         # Full-text search with smart_search OR fallback
+│   ├── cache.py          # LRU caching with TTL, disk cache, response cache
+│   ├── clustering.py     # TF-IDF based document clustering
+│   ├── external_search.py # CourtListener (case law) + Tavily (web search)
+│   └── utils.py          # Retry logic, telemetry, validation, config
 ├── rlm/
-│   ├── engine.py        # Core investigation engine
-│   ├── state.py         # Investigation state tracking
-│   └── templates.py     # Investigation templates
+│   ├── engine.py         # Core investigation engine
+│   ├── decisions.py      # LLM decision functions organized by tier
+│   ├── prompts.py        # Prompt templates organized by tier
+│   ├── state.py          # Investigation state, citations, leads, entities
+│   └── templates.py      # Investigation templates (contract, litigation, etc.)
+├── service/
+│   ├── api.py            # FastAPI REST API for cloud deployment
+│   ├── config.py         # ServiceConfig (env-based configuration)
+│   ├── models.py         # Pydantic request/response schemas
+│   └── s3_repository.py  # S3Repository (download, cleanup)
 ├── ui/
-│   └── app.py           # Gradio web interface
+│   └── app.py            # Gradio web interface with real-time streaming
 └── output/
-    └── formatters.py    # Output formatting (markdown, JSON)
+    └── formatters.py     # Output formatting (markdown, HTML, JSON, plain text)
 ```
 
 ## Installation
@@ -284,7 +293,7 @@ from irys import (
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `max_depth` | 5 | Maximum investigation depth |
+| `max_depth` | 3 | Maximum investigation depth |
 | `max_leads_per_level` | 5 | Leads processed per iteration |
 | `max_documents_per_search` | 10 | Top documents to deep-read |
 | `min_lead_priority` | 0.3 | Skip leads below this priority |
@@ -293,14 +302,61 @@ from irys import (
 | `adaptive_depth` | True | Adjust depth based on complexity |
 | `min_depth` | 2 | Minimum investigation depth |
 | `depth_citation_threshold` | 15 | Reduce depth if citations exceed this |
-| `max_iterations` | 20 | Hard limit on iterations |
+| `max_iterations` | 10 | Hard limit on iterations |
 
 ### Environment Variables
 
 ```bash
 GEMINI_API_KEY=your_gemini_api_key      # Required
-ANTHROPIC_API_KEY=your_anthropic_key    # Optional (for comparison tests)
+
+# Optional: External search integration
+COURTLISTENER_API_TOKEN=xxx             # For legal case law search
+TAVILY_API_KEY=xxx                      # For web search enrichment
+
+# Optional: S3/Cloud deployment
+S3_BUCKET=your-bucket-name
+S3_REGION=us-east-1
 ```
+
+## External Search Integration
+
+Irys can enrich investigations with external sources:
+
+### CourtListener (Case Law)
+- Searches legal case law database
+- Returns relevant court opinions and citations
+- Requires free API token from CourtListener
+
+### Tavily (Web Search)
+- General web search for current information
+- Useful for regulatory updates, recent events
+- Requires API key from Tavily
+
+Enable by setting environment variables. The engine will automatically use available sources.
+
+## REST API (Cloud Deployment)
+
+For production deployment with S3 document storage:
+
+```bash
+# Start API server
+python run_server.py --port 8000
+
+# Or with Docker
+docker-compose up -d
+```
+
+**Endpoints:**
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/investigate` | Start investigation job |
+| `GET` | `/investigate/{job_id}` | Get job status/results |
+| `GET` | `/jobs` | List recent jobs |
+| `POST` | `/search` | Quick keyword search |
+| `GET` | `/health` | Health check |
+| `GET` | `/docs` | OpenAPI documentation |
+
+See `DEPLOY.md` for full deployment instructions.
 
 ## Model Tiering Strategy
 
@@ -435,11 +491,19 @@ mypy src/irys/
 - **PDF** - Full support via PyMuPDF
 - **DOCX** - Full support including tables
 - **TXT** - Plain text files
+- **MHT/MHTML** - Web archive files (emails, saved web pages)
 
 **Not Supported:**
 - Legacy `.doc` format (pre-2007)
 - `.rtf` files
 - Scanned PDFs without OCR
+
+### Smart Search
+The search engine includes a `smart_search` mode that:
+- First attempts exact phrase matching
+- Falls back to OR search on individual terms if no exact matches
+- Automatically deduplicates results
+- Particularly useful for multi-word legal queries
 
 ### Search Limitations
 - Uses literal text matching (grep-style), not semantic search

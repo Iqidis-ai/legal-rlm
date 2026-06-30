@@ -1,0 +1,8 @@
+{
+  "query_num": 93,
+  "query": "What authentication issues might affect key exhibits?",
+  "status": "error",
+  "elapsed_seconds": 0.0,
+  "output": "",
+  "error": "[WinError 2] The system cannot find the file specified"
+}

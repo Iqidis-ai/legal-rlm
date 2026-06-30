@@ -1,0 +1,8 @@
+{
+  "query_num": 4,
+  "query": "Who is Bassim Haider and what role did he play in this dispute?",
+  "status": "completed",
+  "elapsed_seconds": 11.9,
+  "output": "Got it. To review CITIOM v. Gulfstream, I’ll need the case materials you want analyzed (briefs, orders, opinion, record excerpts). Which documents should I use, and what scope do you want (issue spotting, holding/rationale summary, procedural posture, strengths/weaknesses, or something else)?",
+  "error": null
+}

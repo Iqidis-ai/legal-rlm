@@ -1,0 +1,8 @@
+{
+  "query_num": 39,
+  "query": "Compare documentation of promised vs actual delivery dates across sources.",
+  "status": "timeout",
+  "elapsed_seconds": 425.4,
+  "output": "",
+  "error": "Timeout after 300s"
+}

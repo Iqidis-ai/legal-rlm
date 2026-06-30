@@ -1,0 +1,8 @@
+{
+  "query_num": 71,
+  "query": "What legal elements must CITIOM prove to establish misrepresentation?",
+  "status": "completed",
+  "elapsed_seconds": 4.2,
+  "output": "I don’t have the case record or briefs yet. Please point me to the relevant files in `C:\\Users\\devan\\OneDrive\\Desktop\\Projects\\RLMs` (complaint, motions, orders, opinions, or a case summary), and tell me the specific issues you want analyzed (e.g., jurisdiction, contract interpretation, damages, procedural posture).",
+  "error": null
+}

@@ -1,0 +1,744 @@
+{
+  "query_num": 74,
+  "query": "What is the legal significance of the proposal being an 'estimate'?",
+  "status": "completed",
+  "elapsed_seconds": 220.9,
+  "documents_read": 33,
+  "searches_performed": 12,
+  "citations_count": 95,
+  "max_depth_reached": 3,
+  "hypothesis": "The legal significance of a proposal being an 'estimate' or 'quote' is multifaceted, typically revolving around whether it was a non-binding projection (e.g., a 'Rough Order of Magnitude' or ROM, often reflecting industry norms for understanding potential costs) or a representation intended to be relied upon as a cost ceiling or accurate projection. Disputes frequently arise when actual costs (e.g., manhours) substantially exceed the initial estimate, particularly when the estimate is found to be 'unrealistic,' 'deficient,' or indicative of 'gross inadequacy' in planning and risk assessment due to the failure to utilize readily available historical data or new analytical capabilities. Claims often include breach of contract, misrepresentation, or unjust enrichment. The core legal analysis will focus on determining the parties' intent, the specific contractual language, disclaimers, and industry practices surrounding the 'estimate' at the time of agreement formation and throughout the project lifecycle.",
+  "final_output": "**MEMORANDUM**\n\n**TO:** Litigation File\n**FROM:** Senior Partner\n**DATE:** October 26, 2023\n**RE:** Legal Significance of Gulfstream's \"Estimate\" in the CITIOM Matter\n\n---\n\n### **Executive Summary**\n\nThe legal significance of the proposal being an \"estimate\" is that while it is likely not a binding contractual term for cost or downtime, its gross inaccuracy may support claims for negligent misrepresentation and breach of the duty of reasonable care. The analysis will focus on whether Gulfstream's \"unrealistic\" estimate, which failed to incorporate available historical data, constitutes gross negligence, potentially vitiating the contractual disclaimers that would otherwise shield it from liability under the applicable law.\n\n### **Factual Background**\n\nOn June 2, 2023, Gulfstream Aerospace (\"Gulfstream\") provided a maintenance proposal to Channel IT Isle of Man Ltd. (\"CITIOM\") for a 192-month inspection of its aircraft. [NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf, p. 5 [UNVERIFIED]]. The proposal quoted a work scope cost of $835,931 and estimated 2,800 manhours would be required for the inspection. [CITIOM Amended Statement of Claim.pdf, p. 3 [VERIFIED]]. It also included a downtime estimate of 35-45 days. [NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf, p. 14 (referenced)]. CITIOM alleges it agreed to the proposal in reliance on these express representations. [CITIOM Amended Statement of Claim.pdf, p. 3 [VERIFIED]].\n\nThe proposal contained disclaimer language stating that any downtime figures were \"only provided as an estimate\" and did not \"represent a contractual commitment.\" [Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf, p. 5 [UNVERIFIED]]. It further stated that the estimate would be adjusted if additional work was required. [In re CITCOM v Gulfstream - Analysis of Claims and Defenses Related to Repairs on GS550-5174(80915932.pdf, p. 3 [UNVERIFIED]].\n\nAround July 2023, Gulfstream began incorporating estimates for discrepancies based on historical data into its maintenance proposals for other clients but admits it did not revise the proposal provided to CITIOM. [CITIOM v. Gulfstream - Gulfstream's Responses to CITIOM's Requests for Admission (2025.04.21).pdf, p. 3 [UNVERIFIED]].\n\nThe inspection began on January 29, 2024. [NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf, p. 1 (inferred)]. By May 2024, the actual manhours had exceeded 14,000, a five-fold increase over the 2,800-hour estimate. [NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf, p. 9 [UNVERIFIED]]. Subsequently, discrepancies discovered during the inspection added an estimated 20,000 additional manhours to the project, with the completion date pushed to mid-November 2024. [207-329.pdf, p. 2 [UNVERIFIED]]. An expert report prepared for CITIOM by D. Farnham on March 21, 2025, characterizes Gulfstream's initial estimate as \"unrealistic\" and indicative of \"gross inadequacy of... pre-inspection planning and risk assessment.\"\n\n### **Analysis**\n\n#### **Key Findings**\n\n*   **The Proposal Contains Strong Disclaimer Language:** The proposal explicitly states that downtime figures are estimates and not contractual commitments, a significant hurdle for a direct breach of contract claim based on delay. [Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf, p. 5 [UNVERIFIED]].\n*   **The Estimate's Inaccuracy Is a Central Issue:** The dramatic variance between the estimated 2,800 manhours and the actual 14,000+ (as of May 2024) is the factual predicate for CITIOM's claims. [NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf, p. 9 [UNVERIFIED]]. CITIOM alleges this was a \"materially misleading proposal.\" [Damage Summary Handout for Tribunal.docx, p. 1 [UNVERIFIED]].\n*   **Claims Focus on Negligence and Misrepresentation:** The core legal theory is not that the estimate was a binding promise, but that Gulfstream breached a duty to exercise reasonable care in its creation. CITIOM alleges Gulfstream \"knowingly or recklessly provided misleading estimates\" by failing to use its own historical data and analytical capabilities. [Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf, p. 3 [UNVERIFIED]].\n*   **Exculpatory Clauses May Not Protect Against Gross Negligence:** Under Georgia law, which has been cited in the matter, contractual limitations on liability are generally valid but do not relieve a party from liability for acts of \"gross negligence or willful/wanton conduct.\" [In re CITCOM v Gulfstream - Analysis of Claims and Defenses Related to Repairs on GS550-5174(80915932.pdf, p. 4 [UNVERIFIED]]; *Monitronics Int'l, Inc. v. Veasley*, 323 Ga. App. 126 (2013). The \"gross inadequacy\" of the estimate may meet this standard.\n*   **Industry Standards are a Benchmark for Reasonableness:** The expert report will assess the reasonableness of Gulfstream's proposal against \"industry standards.\" Evidence suggests an industry norm of providing a \"Rough Order of Magnitude\" (ROM) that includes potential costs for discrepancies, which Gulfstream's initial proposal allegedly failed to do. [NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf, pp. 4, 7 [UNVERIFIED]].\n\n#### **Supporting Evidence**\n\nThe strongest evidence centers on the factual discrepancy and expert analysis thereof. The D. Farnham Expert Report directly addresses \"Initial Quote Deficiencies\" and the \"Financial Impact of Quote and Scope Mismanagement,\" concluding the 2,800-manhour quote was \"Unrealistic.\" [NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf, pp. 3, 9 [UNVERIFIED]]. CITIOM's reliance is explicitly stated in its Amended Statement of Claim. [CITIOM Amended Statement of Claim.pdf, p. 3 [VERIFIED]].\n\nCritically, Gulfstream's own admission that it began including discrepancy estimates in proposals around July 2023 but did not update CITIOM's June 2023 proposal supports the allegation that it failed to use available and developing capabilities, bolstering the claim of negligence. [CITIOM v. Gulfstream - Gulfstream's Responses to CITIOM's Requests for Admission (2025.04.21).pdf, p. 3 [UNVERIFIED]].\n\n#### **Contradictions or Concerns**\n\nThe primary legal tension is between Gulfstream's explicit contractual disclaimers and CITIOM's claims of misrepresentation and negligence. Gulfstream will argue that CITIOM accepted the risk of overruns by agreeing to a proposal that clearly defined the downtime figures as non-binding estimates subject to change. A significant unresolved issue is the governing law for the dispute, which the Arbitrators will address as necessary. [Report of Preliminary Hearing and Scheduling Order (002).docx, p. 1 [UNVERIFIED]]. The analysis of exculpatory clauses is currently based on Georgia law, which may not ultimately apply.\n\n#### **Evidence Strength Assessment**\n\n**Moderate.** The evidence establishing the core facts—the initial estimate versus the actual costs and delays—is strong and appears in multiple documents, including verified pleadings. The existence of an expert report condemning the estimate as \"unrealistic\" is also a significant strength. However, the overall strength is downgraded to Moderate because the vast majority of documentary evidence, including the crucial expert report and contractual excerpts, is cited as [UNVERIFIED]. Without reviewing the full, authenticated source documents, the context and precise language of these key pieces of evidence remain provisional.\n\n### **Entities & Relationships**\n\n*   **Claimant:** Channel IT Isle of Man Ltd. (\"CITIOM\"), the aircraft owner.\n*   **Respondent:** Gulfstream Aerospace, the maintenance and repair provider responsible for the 192-month inspection and the proposal at issue.\n*   **Expert Witness:** D. Farnham, retained by CITIOM to evaluate the reasonableness of Gulfstream's work scope and estimates.\n\n### **Gaps & Limitations**\n\n*   **Unverified Documents:** The primary limitation is that 90% of the cited documents are unverified. The full text of the June 2, 2023 Proposal, the Work Order, and the complete Expert Reports must be obtained and reviewed.\n*   **Undefined Governing Law:** The choice of law for the contract has not been established. This is a critical gap, as the standards for negligent misrepresentation and the enforceability of liability limitations vary significantly by jurisdiction.\n*   **Incomplete Record:** The available evidence is heavily weighted toward the Claimant's perspective. Gulfstream's full defense, its justification for the underestimation (e.g., unforeseen corrosion, aircraft condition), and its own expert testimony are not present in the provided materials.\n\n### **Recommendations**\n\n1.  **Immediate Actions:**\n    *   Obtain and authenticate all key documents cited in the investigation, particularly the June 2, 2023 Proposal and the full D. Farnham and FAZ expert reports.\n    *   Immediately commence a choice-of-law analysis based on the contract terms and party locations to determine the likely governing law.\n\n2.  **Additional Investigation:**\n    *   Pursue discovery related to Gulfstream's proposal-drafting process, specifically seeking documents on its use of historical data and the \"new analytical capabilities\" it allegedly developed in July 2023.\n    *   Depose the Gulfstream employees responsible for creating the CITIOM proposal and the D. Farnham expert to secure testimony.\n    *   Subpoena records from other Gulfstream customers who received maintenance proposals after July 2023 to establish a pattern of practice regarding discrepancy estimates.\n\n3.  **Risk Mitigation:**\n    *   Advise the client that a breach of contract claim based solely on the overrun of the estimated downtime is weak due to the explicit disclaimers.\n    *   The primary legal strategy should focus on tort claims (negligent misrepresentation) and contract claims based on breach of the duty of good faith, fair dealing, and reasonable care, arguing the estimate was so deficient as to constitute gross negligence.\n    *   Prepare to counter Gulfstream's defense that unforeseen aircraft conditions, which it could not have known about, were the superseding cause of the delays and cost increases.",
+  "accumulated_facts": [
+    "Multiple emails from 'The Jet Business', 'Ana Luisa DERENUSSON | DDSA', and 'wcosta@walaviation.com' contain a disclaimer stating that the email is 'not intended to form a binding contract - unless expressly stated in the body of the text of the email'.",
+    "Under Georgia law, contractual limitations on damages and exculpatory clauses are generally 'valid and binding' and not void against public policy, unless they purport to relieve liability for acts of gross negligence or willful/wanton conduct. This holds true even if there has been a breach of contract or warranty.",
+    "The case Monitronics Int'l, Inc. v. Veasley, 323 Ga. App. 126, 135, 746 S.E.2d 793, 802 (2013), is cited as precedent for the validity of exculpatory clauses under Georgia law.",
+    "The legal analysis concerning contractual limitations under Georgia law appears in the context of claims and defenses related to 'Repairs on GS550-5174' in the case 'In re CITCOM v Gulfstream'.",
+    "An expert report by D. Farnham, dated March 21, 2025, is evaluating \"Gulfstream's 192-Month Inspection Workscope and Estimates.\"",
+    "The expert's assignment includes assessing the \"reasonableness and accuracy of Gulfstream's initial proposal, particularly concerning estimated manhours, downtime, and costs.\" This assessment will consider \"industry standards and Gulfstream’s own historical data and capabilities.\"",
+    "Gulfstream is alleged to have \"made misrepresentations and provided unrealistic estimates regarding manhours, timeline, and costs\" in its \"initial proposal and subsequent communications\" for the 192-Month Inspection.",
+    "Gulfstream's Proposal estimated a \"downtime of 35-45 days\" for the \"Inspection only\" (referenced on page 14 of the Proposal).",
+    "This downtime estimate is considered a \"critical omission\" because it \"failed to address potential additional downtime and costs arising from discrepancies typically discovered during such a major inspection.\"",
+    "The D. Farnham Expert Report, dated March 21, 2025, addresses 'Quote and Scope Management Issues,' 'Initial Quote Deficiencies,' and 'Financial Impact of Quote and Scope Mismanagement' concerning Gulfstream Savannah outsourcing problems.",
+    "An executive summary within a CITIOM proposal for a 120-month inspection on a Challenger 300 included a 'ROM (Rough Order of Magnitude)' quote of $866,242.00, with an estimated total including discrepancies at $1,100,000.00, and an estimated over-and-above amount of $234,000.00.",
+    "The document states that ROM examples 'illustrate the industry norm of providing owners with an understanding of potential' costs.",
+    "A proposal 'quoted an estimated 2,800 manhours' for a 192-Month Inspection, but by May 2024, the actual manhours had exceeded 14,000.",
+    "This discrepancy is characterized as an 'Unrealistic Quote' and highlights 'gross inadequacy of Gulfstream's initial manhour estimate' and 'significant failure in pre-inspection planning and risk assessment.'",
+    "Ilona Avramenko (Keystone Law) sent an execution copy of the Aircraft Purchase Agreement (APA) on May 8, 2024.",
+    "Ana Luisa Derenusson (DDSA) requested specific blanks to be filled in the 'Escrow Agent Account' definition within the APA.",
+    "Ana Luisa Derenusson provided details for Apex Agency Services Ltd. as the process agent on May 7, 2024.",
+    "Ilona Avramenko requested KYC documentation for Timbro Trading S.A. on May 7, 2024, due to Chanel IT's requirements.",
+    "The original work order quote estimated 2,800 manhours for the required inspections and services associated with the 192-month inspection.",
+    "Discrepancies discovered during the inspection process added an estimated 20,000 additional manhours to the project.",
+    "Gulfstream Aerospace is providing overtime labor at no charge to expedite the work.",
+    "The estimated completion date is projected to be mid-November, subject to change depending on engineering repair dispositions for corrosion.",
+    "Gulfstream Aerospace has no way to determine how or where the aircraft has been operated, stored, and maintained, all of which have a direct impact on the number and type of discrepancies noted.",
+    "Failure to keep up with the progress payment schedule will result in work stoppage.",
+    "The expert report focuses on Gulfstream's performance during the 192-month inspection event from January 29, 2024, to November 29, 2024.",
+    "The report is intended to provide an independent expert evaluation of Gulfstream's performance, including proposal development.",
+    "Section II of the report is titled 'Evaluation of Gulfstream's 192-Month Inspection Workscope and Estimates'.",
+    "Subsection II.1 is titled 'Gulfstream's 192-Month Inspection Proposal'.",
+    "Subsection II.2 is titled 'Analysis of Gulfstream's Justification for Underestimation'.",
+    "Subsection II.3 is titled 'Proposal Process Deficiencies and Lack of Due Diligence'.",
+    "Section IV is titled 'Contract and Proposal Analysis'.",
+    "Subsection IV.1 is titled 'Industry Standards for Proposal Development'.",
+    "Subsection IV.2 is titled 'Analysis of Gulfstream's June 2, 2023 Proposal (Revisited)'.",
+    "Section XI is titled 'Quote and Scope Management Issues'.",
+    "Subsection XI.1 is titled 'Initial Quote Deficiencies'.",
+    "Subsection XI.3 is titled 'Financial Impact of Quote and Scope Mismanagement'.",
+    "Subsection XI.4 is titled 'Comparison to Industry Best Practices'.",
+    "Subsection XII.1 is titled 'Opinion on Additional Costs Due to Delays and Mismanagement (Completed)'.",
+    "Subsection XII.2 discusses 'Repairs That Should Have Been Covered Under Warranty or Identified in Prior Maintenance'.",
+    "The document discusses a 'maintenance proposal dated June 2, 2023'.",
+    "The document references 'scope and cost of work on Aircraft, estimated return to service date of Aircraft, subsequent maintenance work, and related workforce/timeline matters' as key issues.",
+    "The document refers to 'estimated return to service date of Aircraft' and 'December 2024: Actual Aircraft return to service date'.",
+    "Under Part 5, '192-Month Inspection Communications (RFPs 7-8)', it states 'Content: All non-privileged communications regarding: Proposal/quotes, Scheduling, Induction, Downtime estimates, Cost estimates'.",
+    "In Part 3, 'Key Terms and Industry Language', 'RTS (Return to Service)' is defined, and under 'Case-Specific Terms', 'Return to service (RTS) - Estimated vs. actual dates' is listed.",
+    "CITIOM alleges that Gulfstream breached its warranty and failed to perform required warranty repairs within a reasonable time, causing the warranty to fail of its essential purpose.",
+    "Gulfstream allegedly failed to identify conditions requiring repair in 2020 and 2023, and misclassified warranty repairs for the 192-month inspection as CITIOM's account instead of Gulfstream's.",
+    "The Aircraft was out of service from January 29, 2024, through November 29, 2024, due to Gulfstream's alleged failures, delays, and mismanagement.",
+    "FAZ Forensics was retained to assess economic damages due to Gulfstream's alleged failures.",
+    "The report calculates approximately €2.4 million in economic damages suffered by CITIOM.",
+    "Damages consist of €1,613,175 in lost financial contribution (net profit) and €814,067 in additional consequential costs (out-of-pocket travel expenses).",
+    "The expert's compensation is not contingent on the conclusions reached or the arbitration's outcome.",
+    "The expert relied on assumptions that provided documents are complete and accurate, and that all information provided is true and correct.",
+    "The expert has not independently verified the information and did not perform an audit in accordance with GAAS.",
+    "The extended period the Aircraft was out of service was from January 29, 2024, through November 29, 2024.",
+    "The Expert Report concludes CITIOM suffered economic damages of approximately €2.4 million due to Gulfstream's breaches and failures related to the 192-Month Inspection.",
+    "FAZ Forensics was retained by Watson Farley & Williams LLP to provide financial analysis and assess economic damages.",
+    "The expert's opinions are based on professional training, experience, and evaluation of documents, including pleadings, agreements, contracts, invoices, emails, flight hour schedules, and monthly cost reports.",
+    "The expert made assumptions that provided documents are complete and conform to originals, and that all provided information is true and correct.",
+    "The expert has not independently verified the information and has not performed an audit of the Company's financial statements in accordance with GAAS.",
+    "Gulfstream could have readily obtained precise information early in the proposal process, but their failure to do so demonstrated a lack of proactive planning.",
+    "Gulfstream's failure to obtain precise information during the proposal process resulted in increased costs and delays for all parties.",
+    "The standard proposal process explicitly includes gathering precise information.",
+    "Gulfstream exhibited consistently slow and inefficient processes for evaluating technical issues, determining repair strategies, and obtaining engineering dispositions.",
+    "These protracted processes for obtaining engineering dispositions significantly contributed to delays across various aspects of the 192-Month Inspection.",
+    "A telephonic preliminary hearing and scheduling conference was held on an unspecified date in 2024.",
+    "The hearing was held pursuant to the CPR 2019 Administered Arbitration Rules.",
+    "The Claimant is CHANNEL IT of MAN LIMITED.",
+    "The Respondent is GULFSTREAM AEROSPACE CORPORATION.",
+    "The CPR File number is G-24-115-AA.",
+    "Governing law issues shall be addressed by the parties and Arbitrators as necessary.",
+    "Fact discovery shall be concluded on or before an unspecified date.",
+    "Expert discovery schedule will be set by the Arbitrators upon notice.",
+    "The hearing in this matter shall commence on an unspecified date and continue through another unspecified date.",
+    "The Arbitrators shall issue a reasoned award within 30 days of the conclusion of post-hearing briefing.",
+    "The award will be reasoned and briefly describe the Arbitrators' reasons for disposition of each claim.",
+    "Gulfstream's initial proposal for the 192-Month Inspection of the Aircraft quoted an estimated 2,800 manhours.",
+    "By May 2024, the 192-Month Inspection had already exceeded 14,000 manhours, significantly surpassing the initial quoted estimate.",
+    "CITIOM claims that this massive discrepancy between the quoted 2,800 hours and actual 14,000+ hours, along with Gulfstream's repeated delays in estimated return to service, is central to their claims of breach of contract and misrepresentation.",
+    "An expert report characterizes Gulfstream's initial manhour estimate as 'Unrealistic Quote,' indicative of 'gross inadequacy,' and a 'significant failure in pre-inspection planning and risk assessment.'",
+    "The expert report also states that the 'massive scope growth' from 2,800 to over 14,000 manhours and corresponding cost escalation indicates a 'significant failure in initial scope assessment and subsequent scope management.'",
+    "CITIOM claims damages including €1,613,175 for lost financial contribution and €814,067 for additional consequential costs (out-of-pocket travel expenses) due to the aircraft's unavailability, which resulted from the delays and extended inspection.",
+    "Gulfstream's 192-Month Inspection Proposal was developed by Gulfstream Aerospace Corporation.",
+    "Danny Farnham's expert report analyzes Gulfstream's 192-Month Inspection Workscope and Estimates.",
+    "The report analyzes Gulfstream's justification for underestimation in its proposal.",
+    "Deficiencies in the proposal process and lack of due diligence are identified.",
+    "Gulfstream's proposal and planning are analyzed for inadequacies with specific examples.",
+    "The report includes an 'Analysis of Gulfstream's June 2, 2023 Proposal (Revisited)'.",
+    "The financial impact of quote and scope mismanagement is discussed, including the initial quote deficiencies.",
+    "The report discusses additional costs due to delays and mismanagement related to completed work.",
+    "Gulfstream provided an estimate of 35-45 working days for the 192-month inspection.",
+    "Michael Brown used April 1, 2024, as the assumed return-to-service date for the aircraft.",
+    "Michael Brown's damages calculation excluded reputational loss, diminution in resale value, and failed sale damages.",
+    "Michael Brown's damages figure is expressed in Euros (€2,427,242 total).",
+    "Michael Brown's damages are based on Avcon Jet's monthly reports for 2022-2024, detailing usage, revenue, and margins.",
+    "The Proposal for the 192-month inspection was prepared and presented by Gulfstream on June 2, 2023.",
+    "The Proposal included an 'Estimated Downtime' section stating that downtime estimates 'are only provided as an estimate' and 'is not a contractual commitment by Gulfstream.'",
+    "The document notes that Gulfstream 'knowingly or recklessly provided outdated and misleading estimates, failed to apply more accurate forecasting tools it had recently developed, and withheld critical information from Claimant before and throughout the 192-month inspection.'",
+    "The Aircraft was ultimately returned to service in November 2024, nearly nine months after the estimated return to service date.",
+    "CITIOM claims that Gulfstream's 'misleading proposal for the work in June 2023' contributed to the substantial delays and resulting expenditures and lost profits.",
+    "Gulfstream submitted a customer support proposal dated 02 June 2023 for the Aircraft's 192-month inspection.",
+    "The Proposal quoted a workscope cost of $835,931.",
+    "Gulfstream estimated 2,800 manhours were required for the 192-month inspection, with an initial downtime of 35-45 business days.",
+    "CITIOM agreed to the Proposal relying on the express representations made by Gulfstream, believing these quotes and estimates were made in good faith and based on Gulfstream's experience and knowledge.",
+    "Gulfstream introduced 'new data collection and analytical capabilities' in July 2023, which could enable operators to make more informed decisions and set reasonable expectations.",
+    "Gulfstream did not revise or update its Proposal, nor the estimated manhours, downtime, or costs, despite having these new capabilities since July 2023.",
+    "CITIOM input the Aircraft with Gulfstream in January 2024, based on the Proposal and the anticipated return date of April 1, 2024.",
+    "Gulfstream later claimed additional work, costs, and manhours were necessary due to conditions discovered during the 192-month check.",
+    "Gulfstream conceded in April 2024 that the original work order quoted 2,800 manhours and advised the estimated completion date was moved to June 21st.",
+    "Gulfstream blamed increased downtime on 'numerous discrepancies' identified during inspection.",
+    "CITIOM argued that several issues Gulfstream claimed to have discovered should have been previously identified and addressed during prior maintenance events or resulted from Gulfstream's own ineffective repairs.",
+    "Example: Gulfstream claims a need to replace leading edges due to corrosion, but CITIOM notes this corrosion should have been visible and addressed during the July-August 2023 maintenance when the leading edges were removed and refurbished.",
+    "AVCON contacted Gulfstream in May 2023 to request a 'quote' for an upcoming 192-month inspection, scheduled for late 2024 or early 2025.",
+    "Gulfstream subsequently provided a 'Customer Support Proposal #Q-11876' dated June 2023.",
+    "AVCON, acting on behalf of the aircraft owner, 'approved and returned the proposal' in September 2023, approximately 4-5 months prior to the inspection input.",
+    "Expert Reports from D. Farnham are dated March 21, 2025, and an LB Expert Rebuttal Report is dated April 21, 2025, indicating ongoing expert analysis related to the case.",
+    "A proposal for a '192-Month Inspection' by Gulfstream quoted an estimated 2,800 manhours.",
+    "By May 2024, the actual manhours for the 192-Month Inspection had already exceeded 14,000.",
+    "This discrepancy (2,800 estimated vs. 14,000+ actual manhours) is characterized as an 'Unrealistic Quote,' a 'massive discrepancy,' and 'gross inadequacy of Gulfstream's initial manhour estimate.'",
+    "The initial 2,800 manhour estimate represents a 'significant failure in pre-inspection planning and risk assessment' and a 'failure to properly plan and scope the work based on available aircraft history.'",
+    "The 'massive scope growth' in manhours (from 2,800 to over 14,000) led to a corresponding escalation in costs.",
+    "Increased labor costs resulting from the escalation of manhours (2,800 to over 14,000) are identified as a 'major component of the additional and largely unpredicted costs.'",
+    "The discrepancy and scope growth are linked to the 'presence of corrosion and associated repairs during the 192-Month Inspection.'",
+    "Florian Schaller requests a 'rough estimate RTS' (Return To Service) for the aircraft.",
+    "Joseph Schuster states that 'Chad will share that updated list early next week.'",
+    "Joseph Schuster quotes a 'repair exchange price' of $74,803.89 for the RESERVOIR ASSY, HYDR - RIGHT (PIN: 1159H50126-45).",
+    "Joseph Schuster states that 'supplier cannot provide a cost or lead time until they evaluate.' regarding customer property repair.",
+    "Joseph Schuster mentions that 'cost could be more than the repair exchange price quoted.' for customer property repair.",
+    "Joseph Schuster advises against customer property repair due to a leaking bootstrap and significant lead time for detail repair parts, recommending 'repair exchange' instead.",
+    "The Proposal for the 192-month inspection was dated 02 June 2023.",
+    "The Claimant alleges that Gulfstream provided 'outdated and misleading estimates' and failed to apply more accurate forecasting tools, resulting in millions in damages and a failed aircraft sale.",
+    "The Claimant argues that Gulfstream 'possessed or should have readily accessed a comprehensive understanding of the Aircraft’s maintenance history and condition' sufficient to provide a realistic proposal, but failed to do so.",
+    "Gulfstream admits that it performed maintenance and/or services for or on the Aircraft prior to the 192-month inspection, including a 144-month inspection between March and July 2020, and additional maintenance services in July and August 2023.",
+    "Gulfstream admits that it performed repairs on the Aircraft's horizontal stabilizer during the 144-month inspection due to internal bondline corrosion findings identified through non-destructive testing techniques, and also performed repairs on the Aircraft's horizontal stabilizer during the 192-month inspection due to corrosion findings.",
+    "Gulfstream admits that in or around July 2023, it began including in maintenance service visit proposals estimates for additional downtime and costs associated with correcting discrepancies during scheduled maintenance visits, based on historical data.",
+    "Gulfstream admits only that it did not revise the Proposal that was originally provided to Claimant in June 2023 to include estimated downtime or costs associated with correcting discrepancies discovered during the 192-month inspection.",
+    "Gulfstream admits that certain components, including the main entrance door, rudder, and elevators, were sent to Gulfstream’s Savannah facility for evaluation, repair and/or painting.",
+    "Gulfstream admits that pursuant to its corporate email retention policy, Gulfstream’s mail system automatically deletes emails after 60 days, unless the emails are saved or archived by the user.",
+    "Gulfstream provided a proposal quoting 2,800 labor hours and 35–45 business days.",
+    "Gulfstream allegedly had internal forecasting tools, prior inspection data, and knowledge of the Aircraft’s service history that contradicted the proposal.",
+    "Gulfstream performed prior maintenance on the same Aircraft (G550).",
+    "Gulfstream had internal data showing G550 inspections at St. Louis routinely exceeded 100–300 days.",
+    "Gulfstream developed a downtime analytics tool in July 2023 but failed to apply it to this project.",
+    "The Claimant seeks total damages of €4,100,000+.",
+    "Claim 1 (Negligent Misrepresentation) subtotal is €2,613,175 – €2,813,175.",
+    "Claim 2 (Breach of Contract / Duty of Care) subtotal is €1,214,067+.",
+    "Lost Charter Profit is claimed at €1,613,175.",
+    "Lost Sale Proceeds are claimed at €1,000,000 – €1,200,000.",
+    "Replacement Travel & Logistics are claimed at €814,067.",
+    "Improperly Charged Warranty Work is estimated at €400,000+.",
+    "An original letter concerning manpower for G550, SN 5174 was sent to Legal Counsel in April.",
+    "The current communication is a 'refresh' of the original letter.",
+    "Danny Farnham expresses extreme dissatisfaction with the 'dismal effort' by Gulfstream management to meet project demands, particularly regarding manpower.",
+    "Farnham states that the manpower has been 'not adequate, not consistent, some not experienced,' and experienced technicians have been moved to other projects or sent for training.",
+    "Farnham notes that an experienced technician has been working on a floor beam cap task for 'several weeks now' but only works 'four ten hour days per week,' implying a lack of urgency or efficient allocation.",
+    "Bassim Haidar states '11 months for a 192 check and we are struggling to get my aircraft back. This is unbelievable.'",
+    "Mark Burns requested a response to questions regarding the deliverable and timetable by COB on August 15, 2024.",
+    "Gulfstream is attempting to get an approved draft to Mark Burns by COB on August 15, 2024.",
+    "Contractual limitations on damages are generally valid under Georgia law.",
+    "Exculpatory clauses seeking to relieve a business from its own negligence are valid and binding in Georgia, unless they purport to relieve liability for acts of gross negligence or willful or wanton conduct.",
+    "Under Georgia law, a customer must establish notification of a defect to the warrantor as a condition of proving breach of warranty, and the warrantor must have a reasonable time to repair the defect.",
+    "The time for making repairs runs from the date the warrantor receives notice of each defect.",
+    "Gulfstream issued Customer Support Proposal #Q-11876 Rev 0, dated June 2, 2023, for a 192-Month Inspection of the Aircraft.",
+    "The Proposal was pending approval until September 2023, and the Aircraft input for the inspection was in January 2024.",
+    "Despite Gulfstream's access to extensive historical data from numerous prior 192-month inspections and 'new data collection and analytic capabilities' available since July 2023, the Proposal failed to incorporate or reference this information to provide a 'more realistic and comprehensive estimate of potential overall costs and downtime.'",
+    "Mr. Zimmerman claimed to have introduced 'new data collection and analytic capabilities' in July 2023, which were not demonstrably utilized to inform the Proposal.",
+    "The 2023 Proposal estimated downtime for the 192-month inspection and specified maintenance tasks to be \"35-45 Working Days\".",
+    "The actual downtime for the aircraft has exceeded approximately 160 working days and is still ongoing.",
+    "Gulfstream's defense claims the increased downtime was due to repairs for discrepancies (including corrosion) discovered during the inspection, which were not included in the Proposal.",
+    "The 2023 Proposal explicitly states that \"any expression of downtime is only provided as an estimate. This estimate is not a contractual commitment by Gulfstream.\"",
+    "The Proposal also states that estimated downtime \"may be extended by Gulfstream\" if additional Work is required beyond what was specifically identified.",
+    "Georgia law implies a 'reasonable time' for performance when a contract is silent on the matter.",
+    "Gulfstream's Work Authorization Terms and Conditions ('T&C') include an exclusion of damages clause (Section 8) barring punitive, special, incidental, or consequential damages, including loss of use, loss of time, inconvenience, diminution in value, or commercial loss.",
+    "Original maintenance proposal date: June 2, 2023",
+    "The arbitration matter involves maintenance services performed on a Gulfstream G550 aircraft (Serial No. 5174).",
+    "Key issues involve the preparation and execution of a maintenance proposal dated June 2, 2023, scope and cost of work on Aircraft, estimated return to service date of Aircraft, subsequent maintenance work, and related workforce/timeline matters.",
+    "192-month inspection (Major maintenance event at issue)",
+    "Maintenance proposal (June 2, 2023 proposal)",
+    "Return to service (RTS) - Estimated vs. actual dates",
+    "Content: All non-privileged communications regarding: Proposal/quotes, Scheduling, Induction, Downtime estimates, Cost estimates",
+    "Tag as: \"RFP7_8_Inspection_Comms\"",
+    "An executive summary for a 120-month inspection on a Challenger 300 included 'quotes' which contained a 'ROM (Rough Order of Magnitude)' of $866,242.00.",
+    "The Challenger 300 example's ROM also included estimated discrepancies from inspection at $1,100,000.00, with an estimated over-and-above amount of $234,000.00.",
+    "These examples (like the Challenger 300 ROM) illustrate 'the industry norm of providing owners with an understanding of potential' costs.",
+    "The Challenger 300 example is highlighted as 'industry best practice' in contrast to 'Gulfstream’s deviation from it in the CITIOM proposal'.",
+    "The D. Farnham Expert Report identifies 'inadequate staffing levels and inefficient workforce management practices' as contributing 'significantly to delays and increased costs' in the context of CITIOM v. GAC.",
+    "The D. Farnham Expert Report states that Gulfstream 'failed to adequately identify and address existing corrosion issues during previous maintenance events,' specifically the '144-month inspection in 2020' and 'July 2023 maintenance.' This failure led to 'recurrence and exacerbation of corrosion findings during the 192-Month Inspection' and contributed to 'increased costs.'",
+    "According to the D. Farnham Expert Report, 'Industry standards mandate rigorous inspection protocols to identify and evaluate corrosion in all accessible areas of the aircraft structure,' implying a standard of care for maintenance evaluations.",
+    "The Proposal was presented by Gulfstream to CITIOM on June 2, 2023.",
+    "The Proposal is described as providing 'estimated downtime' which is explicitly stated as 'not a contractual commitment by Gulfstream'.",
+    "The estimated downtime in the Proposal may be adjusted depending on the 'final induction schedule and mutually agreed facility selected' and 'may increase or decrease depending upon the availability of the mutually agreed facility'.",
+    "Gulfstream's proposal for the 192-month inspection was potentially misleading.",
+    "CITIOM incurred millions in expenditures and lost millions in profit as a result of Gulfstream's alleged malfeasance.",
+    "CITIOM has suffered economic damages of approximately €2.4 million.",
+    "Damages consist of Lost Financial Contribution (€1,613,175) and Additional Consequential Costs (€814,067).",
+    "The damages are attributed to Gulfstream's breaches and failures related to the 192-Month Inspection of CITIOM's Gulfstream G550 Aircraft.",
+    "CITIOM also alleges Gulfstream failed to identify conditions requiring repair in 2020 and 2023, and misclassified current warranty repairs as CITIOM's expense.",
+    "The expert was asked to assume Gulfstream violated its agreements and that CITIOM can establish its claims.",
+    "The expert's opinions are based on professional training, experience, and evaluation of documents.",
+    "The expert has reviewed pleadings, agreements, contracts, invoices, emails, flight hour schedules, and monthly cost reports.",
+    "The expert has not independently verified the information and states procedures do not constitute an audit."
+  ],
+  "citations": [
+    {
+      "document": "Combined_20250505172300.pdf",
+      "page": 12,
+      "text": "100% secure. Unless expressly stated in the body of the text of the email, this email is not intended to form a binding contract - a list of",
+      "verified": false
+    },
+    {
+      "document": "Combined_20250505172300.pdf",
+      "page": 13,
+      "text": "100% secure. Unless expressly stated in the body of the text of the email, this email is not intended to form a binding contract - a list of",
+      "verified": false
+    },
+    {
+      "document": "In re CITCOM v Gulfstream - Analysis of Claims and Defenses Related to Repairs on GS550-5174(80915932.pdf",
+      "page": 4,
+      "text": "in which a business seeks to relieve itself from its own negligence are valid and binding in this State, and are not",
+      "verified": false
+    },
+    {
+      "document": "331-463.pdf",
+      "page": 24,
+      "text": "100% secure. Unless expressly stated in the body of the text of the email, this email is not intended to form a binding contract - a list of",
+      "verified": false
+    },
+    {
+      "document": "331-463.pdf",
+      "page": 25,
+      "text": "100% secure. Unless expressly stated in the body of the text of the email, this email is not intended to form a binding contract - a list of",
+      "verified": false
+    },
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 2,
+      "text": "II. Evaluation of Gulfstream's 192-Month Inspection Workscope and Estimates .......... 5",
+      "verified": false
+    },
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 4,
+      "text": "related to Gulfstream's the 192-Month Inspection workscope and estimates:",
+      "verified": false
+    },
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 4,
+      "text": "Evaluation of Gulfstream's 192-Month Inspection workscope and estimates: This includes",
+      "verified": false
+    },
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 4,
+      "text": "concerning estimated manhours, downtime, and costs, in light of industry standards and",
+      "verified": false
+    },
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 3,
+      "text": "Quote and Scope Management Issues ....................................................................... 22",
+      "verified": false
+    },
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 3,
+      "text": "Initial Quote Deficiencies ............................................................................................. 22",
+      "verified": false
+    },
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 3,
+      "text": "Financial Impact of Quote and Scope Mismanagement ............................................... 23",
+      "verified": false
+    },
+    {
+      "document": "331-463.pdf",
+      "page": 2,
+      "text": "“Escrow Agent Account” means the bank account with [*], ABA # [*], SWIFT [*], credit to INSURED AIRCRAFT TITLE SERVICE, ACCOUNT # [*], 21 E. Main Street, Suite 100, Oklahoma City, OK 73104, Advise: Ms. Kelli Schmidt, e-mail: kellis@insuredaircraft.com, telephone number: +1-405-681-6663, where the Pu",
+      "verified": false
+    },
+    {
+      "document": "331-463.pdf",
+      "page": 5,
+      "text": "As part of the Chanel IT’s KYC requirement, could you kindly provide the following documents for Timbro Trading S.A:",
+      "verified": false
+    },
+    {
+      "document": "331-463.pdf",
+      "page": 3,
+      "text": "I attach an execution copy of the APA together with the aircraft specifications.",
+      "verified": false
+    },
+    {
+      "document": "207-329.pdf",
+      "page": 2,
+      "text": "The original work order quote estimated 2800 manhours was needed to perform the required inspections and services associated with the 192-month inspection.",
+      "verified": false
+    },
+    {
+      "document": "207-329.pdf",
+      "page": 2,
+      "text": "The number and type of discrepancies that were discovered during the inspection process, beyond the original work scope and requiring rectification, to date, have added an additional 20,000 manhours to the project.",
+      "verified": false
+    },
+    {
+      "document": "207-329.pdf",
+      "page": 2,
+      "text": "Based upon our current projection, the estimated completion date will likely be in mid-November.",
+      "verified": false
+    },
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 6,
+      "text": "Analysis of Gulfstream's Justification for Underestimation",
+      "verified": false
+    },
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 7,
+      "text": "Proposal Process Deficiencies and Lack of Due Diligence",
+      "verified": false
+    }
+  ],
+  "steps": [
+    {
+      "time": 0.0,
+      "type": "thinking",
+      "content": "Query classified as factual (complexity: 2/5)"
+    },
+    {
+      "time": 0.0,
+      "type": "thinking",
+      "content": "Analyzing repository structure..."
+    },
+    {
+      "time": 14.9,
+      "type": "thinking",
+      "content": "Hypothesis: The legal significance of the 'estimate' likely revolves around whether it was a non-binding projection or a representation intended to be relied upon as a cost ceiling. The dispute probab"
+    },
+    {
+      "time": 14.9,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 1)"
+    },
+    {
+      "time": 14.9,
+      "type": "search",
+      "content": "Investigating: Search for: \"estimate\" OR \"estimated cost\" OR \"estimated price\" OR \"approximate cost\" OR \"rough estimate\""
+    },
+    {
+      "time": 18.9,
+      "type": "finding",
+      "content": "Found 1230 matches in 91 files"
+    },
+    {
+      "time": 18.9,
+      "type": "search",
+      "content": "Investigating: Search for: \"quote\" OR \"quotation\" OR \"fixed price\" OR \"firm offer\" OR \"not to exceed\""
+    },
+    {
+      "time": 18.9,
+      "type": "finding",
+      "content": "Found 621 matches in 91 files"
+    },
+    {
+      "time": 18.9,
+      "type": "search",
+      "content": "Investigating: Search for: \"binding\" OR \"non-binding\" OR \"subject to change\" OR \"variance\" OR \"contingency\""
+    },
+    {
+      "time": 19.0,
+      "type": "finding",
+      "content": "Found 59 matches in 91 files"
+    },
+    {
+      "time": 37.7,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 37.7,
+      "type": "reading",
+      "content": "Deep reading: 1-110.pdf"
+    },
+    {
+      "time": 37.7,
+      "type": "reading",
+      "content": "Deep reading: Opening Statement.docx"
+    },
+    {
+      "time": 37.7,
+      "type": "reading",
+      "content": "Deep reading: 331-463.pdf"
+    },
+    {
+      "time": 38.4,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 38.4,
+      "type": "reading",
+      "content": "Deep reading: NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf"
+    },
+    {
+      "time": 38.4,
+      "type": "reading",
+      "content": "Deep reading: 207-329.pdf"
+    },
+    {
+      "time": 38.4,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream-FAZ Report.pdf"
+    },
+    {
+      "time": 41.5,
+      "type": "replan",
+      "content": "Hypothesis updated: The legal significance of a proposal being an 'estimate' or 'quote' is multifaceted, typically revolving around whether it was a non-binding projection (e.g., a 'Rough Order of Mag"
+    },
+    {
+      "time": 41.5,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 41.5,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream-FAZ Report.pdf"
+    },
+    {
+      "time": 41.5,
+      "type": "reading",
+      "content": "Deep reading: CITIOM Statement of Claim.pdf"
+    },
+    {
+      "time": 41.5,
+      "type": "reading",
+      "content": "Deep reading: Document Review Protocol(80929109.3) (1).docx"
+    },
+    {
+      "time": 52.4,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 2)"
+    },
+    {
+      "time": 52.4,
+      "type": "search",
+      "content": "Investigating: Obtain and review the full document 'In re CITCOM v Gulfstream - Analysis of Claims and Defenses Related to Repairs on GS550-5174(80915932.pdf' to understand the specific facts of that "
+    },
+    {
+      "time": 52.5,
+      "type": "finding",
+      "content": "Found 68 matches in 91 files"
+    },
+    {
+      "time": 52.5,
+      "type": "search",
+      "content": "Investigating: Locate and review the specific document referred to as \"Gulfstream's 192-Month Inspection Proposal,\" especially page 14, to understand the exact wording of the estimates and any disclai"
+    },
+    {
+      "time": 52.6,
+      "type": "finding",
+      "content": "Found 427 matches in 91 files"
+    },
+    {
+      "time": 70.6,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 70.6,
+      "type": "reading",
+      "content": "Deep reading: Combined_20250505172300.pdf"
+    },
+    {
+      "time": 70.6,
+      "type": "reading",
+      "content": "Deep reading: NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf"
+    },
+    {
+      "time": 70.6,
+      "type": "reading",
+      "content": "Deep reading: Report of Preliminary Hearing and Scheduling Order (002).docx"
+    },
+    {
+      "time": 77.7,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 77.7,
+      "type": "reading",
+      "content": "Deep reading: Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf"
+    },
+    {
+      "time": 77.7,
+      "type": "reading",
+      "content": "Deep reading: 3. Mike Brown (FAZ) Direct Outline with Redirect & Rehab.docx"
+    },
+    {
+      "time": 77.7,
+      "type": "reading",
+      "content": "Deep reading: CITIOM Amended Statement of Claim.pdf"
+    },
+    {
+      "time": 88.3,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 3)"
+    },
+    {
+      "time": 88.3,
+      "type": "search",
+      "content": "Investigating: Identify and review the 'Proposal' that quoted 2,800 manhours for the 192-Month Inspection to understand its contractual nature, any caveats, and the context of the 'estimated' manhours"
+    },
+    {
+      "time": 88.4,
+      "type": "finding",
+      "content": "Found 101 matches in 91 files"
+    },
+    {
+      "time": 88.4,
+      "type": "search",
+      "content": "Investigating: Obtain and thoroughly review the full 'D. Farnham Expert Report - Mar 21 2025' to understand the context, scope of analysis, and specific financial implications of the criticized proces"
+    },
+    {
+      "time": 88.5,
+      "type": "finding",
+      "content": "Found 229 matches in 91 files"
+    },
+    {
+      "time": 102.2,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 102.2,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream - Gulfstream's Responses to CITIOM's Requests for Admission (2025.04.21).pdf"
+    },
+    {
+      "time": 102.2,
+      "type": "reading",
+      "content": "Deep reading: 464-544.pdf"
+    },
+    {
+      "time": 102.2,
+      "type": "reading",
+      "content": "Deep reading: Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf"
+    },
+    {
+      "time": 106.1,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 106.1,
+      "type": "reading",
+      "content": "Deep reading: 111-206.pdf"
+    },
+    {
+      "time": 106.1,
+      "type": "reading",
+      "content": "Deep reading: Damage Summary Handout for Tribunal.docx"
+    },
+    {
+      "time": 106.1,
+      "type": "reading",
+      "content": "Deep reading: 7. Leonard B - Cross Exam & Impeachment.docx"
+    },
+    {
+      "time": 118.2,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 4)"
+    },
+    {
+      "time": 118.2,
+      "type": "search",
+      "content": "Investigating: Locate and review 'Customer Support Proposal #Q-11876' dated June 2023, provided by Gulfstream to AVCON."
+    },
+    {
+      "time": 118.3,
+      "type": "finding",
+      "content": "Found 159 matches in 91 files"
+    },
+    {
+      "time": 118.3,
+      "type": "search",
+      "content": "Investigating: Search for: \"proposal\" AND (\"agreement\" OR \"contract\" OR \"SOW\" OR \"purchase order\")"
+    },
+    {
+      "time": 118.4,
+      "type": "search",
+      "content": "Investigating: Research the case 'Monitronics Int'l, Inc. v. Veasley, 323 Ga. App. 126, 135, 746 S.E.2d 793, 802 (2013)' for a deeper understanding of Georgia's stance on binding contractual clauses a"
+    },
+    {
+      "time": 118.5,
+      "type": "finding",
+      "content": "Found 48 matches in 91 files"
+    },
+    {
+      "time": 131.8,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 131.8,
+      "type": "reading",
+      "content": "Deep reading: Combined_20250505172300.pdf"
+    },
+    {
+      "time": 131.8,
+      "type": "reading",
+      "content": "Deep reading: In re CITCOM v Gulfstream - Analysis of Claims and Defenses Related to Repairs on GS550-5174(80915932.pdf"
+    },
+    {
+      "time": 131.8,
+      "type": "reading",
+      "content": "Deep reading: 1-66.pdf"
+    },
+    {
+      "time": 136.9,
+      "type": "replan",
+      "content": "Hypothesis updated: The legal significance of a proposal being an 'estimate' or 'quote' is multifaceted, typically revolving around whether it was a non-binding projection (e.g., a 'Rough Order of Mag"
+    },
+    {
+      "time": 136.9,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 136.9,
+      "type": "reading",
+      "content": "Deep reading: Craig Klebe Outline #1.docx"
+    },
+    {
+      "time": 136.9,
+      "type": "reading",
+      "content": "Deep reading: Document Review Protocol(80929109.3) (1).docx"
+    },
+    {
+      "time": 136.9,
+      "type": "reading",
+      "content": "Deep reading: 2. Craig Kleebe - Cross Exam & Impeachment.docx"
+    },
+    {
+      "time": 149.0,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 5)"
+    },
+    {
+      "time": 149.0,
+      "type": "search",
+      "content": "Investigating: Identify and review the \"subsequent communications\" from Gulfstream that allegedly contain \"unrealistic estimates\" or \"misrepresentations.\""
+    },
+    {
+      "time": 149.2,
+      "type": "finding",
+      "content": "Found 193 matches in 91 files"
+    },
+    {
+      "time": 149.2,
+      "type": "search",
+      "content": "Investigating: Identify and examine the specific CITIOM proposal for the Challenger 300 120-month inspection to ascertain the precise language and disclaimers associated with the 'ROM (Rough Order of "
+    },
+    {
+      "time": 149.2,
+      "type": "finding",
+      "content": "Found 134 matches in 91 files"
+    },
+    {
+      "time": 162.5,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 162.5,
+      "type": "reading",
+      "content": "Deep reading: 1. Joe Rivera - Cross Exam & Impeachment .docx"
+    },
+    {
+      "time": 162.5,
+      "type": "reading",
+      "content": "Deep reading: 1. Bassim Haider Direct Outline with Redirect & Rehab.docx"
+    },
+    {
+      "time": 162.5,
+      "type": "reading",
+      "content": "Deep reading: 1-110.pdf"
+    },
+    {
+      "time": 166.2,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 166.2,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream-FAZ Report.pdf"
+    },
+    {
+      "time": 166.2,
+      "type": "reading",
+      "content": "Deep reading: Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf"
+    },
+    {
+      "time": 166.2,
+      "type": "reading",
+      "content": "Deep reading: Report of Preliminary Hearing and Scheduling Order (002).docx"
+    },
+    {
+      "time": 176.9,
+      "type": "verify",
+      "content": "Verifying 95 citations..."
+    },
+    {
+      "time": 177.0,
+      "type": "verify",
+      "content": "Verification complete: 5 verified, 90 unverified"
+    },
+    {
+      "time": 177.0,
+      "type": "synthesis",
+      "content": "Synthesizing final analysis..."
+    },
+    {
+      "time": 220.9,
+      "type": "synthesis",
+      "content": "Analysis complete"
+    }
+  ],
+  "error": null
+}

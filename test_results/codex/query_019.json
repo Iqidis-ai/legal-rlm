@@ -1,0 +1,8 @@
+{
+  "query_num": 19,
+  "query": "How many man-hours were originally estimated for the inspection?",
+  "status": "timeout",
+  "elapsed_seconds": 444.6,
+  "output": "",
+  "error": "Timeout after 300s"
+}

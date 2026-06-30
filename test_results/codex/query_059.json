@@ -1,0 +1,8 @@
+{
+  "query_num": 59,
+  "query": "Are there contradictions in how different Gulfstream employees described the estimate?",
+  "status": "timeout",
+  "elapsed_seconds": 524.5,
+  "output": "",
+  "error": "Timeout after 300s"
+}

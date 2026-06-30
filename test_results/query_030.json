@@ -1,0 +1,740 @@
+{
+  "query_num": 30,
+  "query": "What evidence links the painting costs to the overall dispute?",
+  "status": "completed",
+  "elapsed_seconds": 264.6,
+  "documents_read": 33,
+  "searches_performed": 11,
+  "citations_count": 91,
+  "max_depth_reached": 3,
+  "hypothesis": "The 'painting costs' (specifically, the inadequacy of prior priming and painting for corrosion prevention on wing-to-body fairings and the Forward Fuselage Fairing Frame *[evidence for this specific inadequacy is still pending]*, as well as a confirmed paint matching issue on the Main Entrance Door and Rudder) are demonstrably a significant component of the overall damages claimed in a larger dispute. This stems from identified deficiencies in Gulfstream's paint work and corrosion prevention practices, including significant corrosion recurrence within 42 months after priming and painting specific areas *[evidence for this specific recurrence is still pending]*, despite prior assurances *[May 11, 2020 email is still pending]*. These deficiencies and the identified issues of paint mismatch, coupled with extensive documented inconsistencies in manpower and inefficient utilization throughout the 10-month 192-month service event for SN 5174 (an aircraft known by Gulfstream to be in a 'high probability of corrosion category'), led to prolonged repairs, extensive rework, and widespread inefficiencies. The dispute centers on Gulfstream's liability for these treatment, quality, and communication failures, and their resulting unexpected costs and impact on asset usability/value.",
+  "final_output": "**MEMORANDUM**\n\n**TO:** Senior Partner\n**FROM:** [Your Name/Title]\n**DATE:** October 26, 2023\n**RE:** Evidentiary Links Between Painting Costs and Overall Dispute in CITIOM v. Gulfstream Aerospace Corporation, Regarding G550, SN 5174\n\n***\n\n### **Executive Summary**\n\nThe evidence directly links the painting costs to the overall dispute by establishing them as a significant, quantifiable component of CITIOM's damages claim resulting from Gulfstream's breach of warranty and negligent performance. Defective paint work on key components by Gulfstream's Savannah facility necessitated costly rework and materially contributed to the extended aircraft downtime, which is a central pillar of CITIOM's broader claim for systemic project mismanagement and financial loss.\n\n### **Factual Background**\n\nThe dispute concerns the 192-Month Inspection of Gulfstream G550, Serial Number 5174 (the \"Aircraft\"), owned by the Claimant, CITIOM. The inspection was conducted at the Gulfstream St. Louis Service Center and spanned an extended period from January 29, 2024, to November 29, 2024 [NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf, p. 4] [UNVERIFIED].\n\nDuring this service event, components including the Main Entrance Door and the Rudder were sent to Gulfstream's facility in Savannah for evaluation, repair, and painting under the oversight of Patrick Stockton, the Savannah Paint Shop Manager [NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf, p. 21] [UNVERIFIED]; [6. Patrick Stockton - Cross Exam & Impeachment.docx, p. 1] [UNVERIFIED]. Upon return and reinstallation of these components in St. Louis, they were found to be \"visibly mismatched\" with the Aircraft's fuselage paint scheme [Patrick Stockton Outline #1.docx, p. 1] [UNVERIFIED]. This \"botched paint-matching attempt\" required extensive rework to be performed [Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf, p. 33] [UNVERIFIED].\n\nThe defective painting and subsequent rework contributed to significant delays. The original return-to-service date of April 2024 was repeatedly postponed, ultimately extending into November 2024 [1-66.pdf, p. 5] [UNVERIFIED]. CITIOM claims direct repainting costs estimated at up to $400,000, in addition to damages from weeks of associated aircraft downtime [Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf, p. 33] [UNVERIFIED]. These costs are framed as \"warranty-related damages\" pursuant to Gulfstream’s 24-month paint warranty for refurbishment work [Patrick Stockton Outline #1.docx, p. 1] [UNVERIFIED].\n\n### **Analysis**\n\n#### **Key Findings**\n\n*   **Defective Performance by Gulfstream:** Gulfstream's Savannah facility, under the supervision of Patrick Stockton, performed defective painting work on the Aircraft's Rudder and Main Entrance Door, resulting in a visible paint mismatch upon reinstallation [Patrick Stockton Outline #1.docx, p. 1] [UNVERIFIED]; [NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf, p. 22] [UNVERIFIED].\n*   **Direct Causation of Damages:** The paint mismatch directly caused CITIOM to incur damages, including estimated repainting costs of up to $400,000 and financial losses from extended aircraft downtime required for the rework [Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf, p. 33] [UNVERIFIED].\n*   **Breach of Warranty:** The failure to provide properly matched painted components constitutes a breach of Gulfstream's offered 24-month paint warranty, making the associated rework and downtime costs recoverable as warranty-related damages [Patrick Stockton Outline #1.docx, p. 1] [UNVERIFIED].\n*   **Symptomatic of Systemic Failures:** The painting issue is not an isolated incident but is presented as evidence of systemic failures in Gulfstream’s project management. CITIOM’s expert, D. Farnham, identifies broader issues including \"Systemic Issues Underlying Gulfstream Savannah Outsourcing Problems,\" \"Scope Creep,\" and \"Initial Quote Deficiencies\" that plagued the entire 192-month inspection [NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf, pp. 21-22] [UNVERIFIED].\n\n#### **Supporting Evidence**\n\nThe strongest evidence connecting the painting costs to the dispute is the consistency across multiple documents prepared for CITIOM's case. The expert report by D. Farnham explicitly identifies the \"Paint Matching Issue\" as a consequence of outsourcing components to the Savannah facility, which led to rework and delays [NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf, pp. 17, 21] [UNVERIFIED].\n\nThis finding is corroborated by the Claimant's Pre-Hearing Brief, which characterizes the incident as a \"botched paint-matching attempt\" and quantifies the resulting damages at up to $400,000 plus downtime [Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf, p. 33] [UNVERIFIED]. Further, planned cross-examination outlines for Patrick Stockton seek to confirm his direct responsibility for the mismatched components and that CITIOM should not have borne the cost of repainting [6. Patrick Stockton - Cross Exam & Impeachment.docx, p. 1] [UNVERIFIED].\n\nThe painting issue is integrated into the broader claim of malfeasance. The Amended Statement of Claim alleges that ongoing corrosion issues should have been addressed in prior maintenance events, suggesting a pattern of substandard work by Gulfstream that includes failures in protective coatings and painting [CITIOM Amended Statement of Claim.pdf, p. 5] [VERIFIED].\n\n#### **Contradictions or Concerns**\n\nThe primary concern is the unverified status of the majority of the cited documents. While consistent, their evidentiary weight is provisional until authenticated.\n\nFurthermore, Gulfstream's defense presents a direct contradiction. According to its Prehearing Brief, the initial proposal for the inspection \"clearly states that the correction of discrepancies is not included in the quoted price\" [Gulfstream - Prehearing Brief .pdf, p. 2] [VERIFIED]. Gulfstream will likely argue that the paint mismatch was a \"discrepancy\" discovered post-installation, the correction of which falls outside the initial scope and warranty. CITIOM must frame this not as a pre-existing discrepancy but as defective work performed by Gulfstream during the contract period.\n\nFinally, the working hypothesis notes that specific evidence linking painting to corrosion prevention failures and recurrence is still pending, representing a current weakness in that line of argument.\n\n#### **Evidence Strength Assessment**\n\n**Moderate.** The evidence consistently establishes a narrative of defective work, rework, costs, and delays across multiple claimant-side documents (expert reports, briefs, cross-examination outlines). This consistency provides a solid foundation for the claim. However, the assessment is downgraded from \"Strong\" due to two factors: (1) the overwhelming majority of supporting documents are currently unverified, and (2) Gulfstream has presented a coherent, contract-based defense that must be overcome.\n\n### **Entities & Relationships**\n\n*   **CITIOM:** The Claimant and owner of the Aircraft (G550, SN 5174).\n*   **Gulfstream Aerospace Corporation:** The Respondent; service provider for the 192-month inspection.\n*   **Gulfstream St. Louis:** The primary service center performing the inspection.\n*   **Gulfstream Savannah:** The facility whose paint shop, under Patrick Stockton, performed the defective paint work.\n*   **Patrick Stockton:** Manager of the Gulfstream Savannah Paint Shop.\n*   **D. Farnham:** Expert witness retained by CITIOM.\n\n### **Gaps & Limitations**\n\n*   **Document Verification:** As noted, most citations are unverified. The entire argument hinges on the admissibility and accuracy of these documents, particularly the Farnham Report and Claimant's Pre-Hearing Brief.\n*   **Pending Evidence:** Key evidence related to corrosion prevention is admittedly absent. Specifically, evidence for the inadequacy of prior priming and painting, corrosion recurrence within 42 months, and a May 11, 2020 email assurance are still pending.\n*   **Respondent's Internal Records:** We lack internal Gulfstream documents, such as communications between the St. Louis and Savannah facilities, quality control reports, work orders, or internal investigations related to the paint mismatch. Such documents are crucial to fully substantiate the claim of negligence and overcome Gulfstream's contractual defense.\n\n### **Recommendations**\n\n1.  **Immediate Actions:**\n    *   Prioritize the authentication and verification of all cited documents, especially the D. Farnham Expert Report.\n    *   Depose Patrick Stockton to obtain testimony regarding the procedures, communications, and quality control measures related to the painting of the SN 5174 components.\n\n2.  **Additional Investigation:**\n    *   Serve targeted requests for production on Gulfstream for all internal and inter-facility communications, work orders, and quality control reports concerning the painting of the Main Entrance Door and Rudder for SN 5174.\n    *   Focus discovery efforts on obtaining the \"pending\" evidence identified in the working hypothesis to strengthen the related claims of negligence in corrosion prevention.\n\n3.  **Risk Mitigation:**\n    *   Develop a legal strategy to preemptively counter Gulfstream's defense that the rework was an out-of-scope \"discrepancy.\" The argument must clearly distinguish between finding a pre-existing issue and Gulfstream's creation of a new defect through its own substandard workmanship during the service event, which would constitute a breach of its performance obligations and warranty.\n    *   Retain a damages expert to precisely quantify the period of downtime and associated financial losses directly attributable to the paint rework, separating it from other concurrent delays to create a clear and defensible damages calculation.",
+  "accumulated_facts": [
+    "CITIOM bore the consequences of repainting the Aircraft and associated delays, seemingly without compensation under the warranty.",
+    "The dispute involves whether CITIOM should have borne the burden of repainting mismatched components.",
+    "The repainting of the Aircraft was necessitated by a 'botched paint-matching attempt' by Gulfstream.",
+    "The cost of repainting is estimated to be up to $400,000, plus weeks of downtime during which the Aircraft is unavailable for use or charter.",
+    "These repainting costs and associated downtime are considered 'warranty-related damages' and are subject to Gulfstream’s two-year paint warranty.",
+    "The warranty-related damages include direct repair costs and extended labor hours.",
+    "CITIOM is the Claimant in the dispute, as evidenced by the 'Claimant CITIOM Pre-Hearing Brief' dated April 14, 2025.",
+    "The Main Entrance Door of an aircraft was sent to Gulfstream Savannah for evaluation, repair, and painting. This outsourcing led to delays and a 'paint mismatch issue,' which required rework in St. Louis.",
+    "The Rudder of an aircraft was also outsourced to Gulfstream Savannah for evaluation, repair, and painting, and similarly 'suffered from the paint mismatch problem upon return and installation.'",
+    "Patrick Stockton was the Manager of the Gulfstream Savannah Paint Shop, and his scope included oversight of painting and refurbishment of components for aircraft SN 5174 (identified as a G550) sent from St. Louis to Savannah.",
+    "A key theme for Patrick Stockton's cross-examination is his alleged 'failure to ensure proper coordination with St. Louis' regarding SN 5174 components, implying issues with the outsourced painting and refurbishment work.",
+    "The issues described (paint mismatch, delays, rework) are documented in an expert report by D. Farnham, dated March 21, 2025.",
+    "Gulfstream offers a 24-month paint warranty for refurbishment work.",
+    "The rudder and main entrance door painted by Stockton's team were visibly mismatched with the fuselage paint scheme upon reinstallation.",
+    "The rudder return was delayed to at least April 30, 2024.",
+    "The aircraft's return to service was repeatedly pushed, from April to June, to August, and ultimately into November.",
+    "CITIOM bore the consequences of repainting and delays without compensation under the warranty.",
+    "CITIOM claims painting costs estimated at up to $400,000 plus weeks of aircraft downtime.",
+    "Stockton's team delivered visibly mismatched painted components (rudder and main entrance door), necessitating rework and further delay.",
+    "The 192-Month Inspection event at Gulfstream St. Louis Service Center spanned from January 29, 2024, to November 29, 2024.",
+    "The expert, Danny Farnham, commenced his on-site observation on January 29, 2024, with the input/kick-off meeting.",
+    "The expert's report focuses on the maintenance event for Gulfstream G550, Serial Number 5174.",
+    "The report analyzes Gulfstream's performance regarding proposal development, execution of work, corrosion management, project management, staffing, communication, and adherence to industry standards.",
+    "The report discusses 'Painting Costs' as a significant component of overall damages, stemming from deficiencies (paint mismatch) in outsourced painting services by Gulfstream Savannah.",
+    "The deficiencies in painting led to rework requirements in St. Louis and associated delays.",
+    "The document mentions 'Outsourcing Components to Gulfstream Savannah Facility' as a section with potential issues.",
+    "The report indicates 'Systemic Issues Underlying Gulfstream Savannah Outsourcing Problems'.",
+    "The report includes a section on 'Quote and Scope Management Issues', which details 'Initial Quote Deficiencies', 'Scope Creep', and 'Financial Impact of Quote and Scope Mismanagement'.",
+    "The Claimant, CITIOM, is claiming millions in expenditures and lost profit due to Gulfstream's alleged fraudulent and negligent mishandling of the inspection and service of the Aircraft.",
+    "Gulfstream's alleged malfeasance spanned from its misleading proposal in June 2023, the designation of the St. Louis facility, inefficient staffing, poorly trained technicians, to broken promises on return to service date.",
+    "The Aircraft was ultimately returned to service in November 2024, nearly nine months after the estimated return to service date.",
+    "CITIOM commenced this Arbitration on May 31, 2024.",
+    "Gulfstream filed a Notice of Defense and Counterclaim dated August 7, 2024.",
+    "CITIOM has provided expert reports from Danny Farnham (technical expert) and FAZ Forensics (accounting/damages expert).",
+    "Gulfstream provided a Customer Support Proposal dated 02 June 2023 for the 192-month inspection.",
+    "The Proposal includes estimated downtime, explicitly stating it is 'not a contractual commitment by Gulfstream' and can be adjusted.",
+    "The Proposal includes an Addendum for Interior Refurbishment Warranty for twenty-four (24) months or twelve hundred (1200) flight hours, which is in lieu of other terms.",
+    "Gulfstream Savannah paint shop, managed by Patrick Stockton, painted the rudder and main entrance door for SN 5174.",
+    "The rudder and main entrance door were found to be visibly mismatched in paint tone and finish when reinstalled on the aircraft in St. Louis.",
+    "The rudder refurbishment and shipment from Fokker (via Savannah) was delayed to at least April 30, 2024.",
+    "Parts painted under Stockton’s supervision contributed to SN 5174’s extended downtime into late 2024.",
+    "St. Louis staff and the owner’s representative expressed ongoing frustration with lack of communication from support functions—including delays traced to Savannah.",
+    "Patrick Stockton was the Manager of Gulfstream Savannah Paint Shop, overseeing painting and refurbishment of key SN 5174 components including the rudder, elevators, and main entrance door.",
+    "Failures in painting and refurbishment contributed to both aesthetic mismatch and extended downtime for SN 5174.",
+    "The rudder delay persisted into late April or May despite Aircraft input in January.",
+    "Savannah received no direct escalation requests from St. Louis until delays were already compounding.",
+    "The rudder and main entrance door were painted under Stockton's supervision and were visibly mismatched with the Aircraft's fuselage upon reinstallation.",
+    "Gulfstream’s standard paint warranty on refurbishment is 24 months.",
+    "CITIOM did not receive compensation or coverage for the mismatch correction.",
+    "Savannah had prior work on SN 5174, including the 144-month inspection, indicating familiarity with the aircraft's paint scheme.",
+    "The owner's rep (Farnham) had to chase updates directly from Savannah, indicating communication failures.",
+    "Parts returned by Savannah played a role in SN 5174’s delays into Q4 2024.",
+    "The 'painting costs' are a significant component of the overall damages claimed by CITIOM, estimated at up to $400,000 plus weeks of aircraft downtime.",
+    "These costs stem from a 'botched paint-matching attempt' by Gulfstream and are claimed as 'warranty-related damages'.",
+    "Gulfstream's misleading proposal for the work in June 2023.",
+    "Designation of the poor-performing St. Louis facility to perform the inspection and repairs.",
+    "Inefficient staffing and poorly trained technicians at the St. Louis facility.",
+    "The Aircraft was ultimately returned to service in November 2024 (nearly nine months after the estimated return to service date).",
+    "CITIOM incurred millions in expenditures and lost millions in profit as a direct result of Gulfstream's malfeasance.",
+    "Gulfstream knowingly or recklessly provided outdated and misleading estimates, failed to apply more accurate forecasting tools it had recently developed, and withheld critical information from Claimant before and throughout the 192-month inspection.",
+    "Corrosion was found in the very same areas that were extensively repaired by Gulfstream, namely the horizontal stabilizer and under the leading wing edges – calling into question the efficacy of the previous repairs.",
+    "When the Aircraft was approaching the required 192-month inspection, Claimant turned again to Gulfstream because Gulfstream was very familiar with the Aircraft, having performed its prior maintenance, and because of Gulfstream’s warranty on the Aircraft and subsequent work and parts.",
+    "Gulfstream “possessed or should have readily accessed a comprehensive understanding of the Aircraft’s maintenance history and condition” sufficient to provide a realistic proposal for the 192-month inspection.",
+    "Gulfstream appears to not have taken this into consideration in preparing the Proposal for the 192-month inspection, resulting in a very misleading proposal.",
+    "The Proposal is comprised of, in relevant parts: Part I, Workscope Description: describing the work to be performed with respect to Interior, Avionics /Cabin Electronics, Mechanical, Other Items, consistent with a typical 192-month inspection; (ASOC ¶ 8, Ex. 1).",
+    "Part II, Contingencies and Assumptions of Proposal Offer: addressing, pricing, scheduling and, inter alia: B. Estimated Downtime... Any downtime estimates included in this Proposal are based upon Gulfstream’s general understanding of the time required to accomplish the work outlined in this Proposal. Estimated downtime may be adjusted depending on the final induction schedule and mutually agreed facility selected for completion of the Work... if additional Work is required beyond that specifically identified in this Proposal, then the estimated downtime may be extended by Gulfstream.",
+    "Primers, paints, and sealants are used as protective coatings against moisture and environmental contaminants.",
+    "An email dated May 11, 2020, provided assurances that 'corrosion on the wing to body fairings has been approved for continued airworthiness from engineering so we will prime and paint those areas.'",
+    "Despite the priming and painting mentioned in the May 11, 2020 email, significant corrosion recurred on the wing to body fairings within 42 months.",
+    "The recurrence of corrosion indicates deficiencies in Gulfstream's corrosion prevention and treatment practices.",
+    "There was a 'Paint Matching Issue' involving rework performed by Gulfstream Savannah.",
+    "The Main Entrance Door and Rudder were painted in Gulfstream Savannah but failed to match the Aircraft’s paint upon installation in St. Louis.",
+    "This paint matching failure exemplifies communication and quality control issues between facilities.",
+    "Corrosion recurrence in specific areas of the aircraft (horizontal stabilizer and under leading wing edges) occurred within 192 months after extensive repairs performed by Gulfstream.",
+    "Gulfstream performed the 144-month inspection and subsequent maintenance on the Aircraft in 2020 and July/August 2023, respectively, including repairs to areas where corrosion later recurred.",
+    "The 192-month inspection was a major service event for the Aircraft.",
+    "Gulfstream appears to not have taken into consideration the Aircraft's maintenance history and condition, including previous repairs, when preparing the Proposal for the 192-month inspection, resulting in a misleading proposal.",
+    "The Expert Witness Report by Danny Farnham is based on firsthand, on-site observation of work performed by Gulfstream Aerospace Corporation at its St. Louis Service Center, and direct communication with Gulfstream employees and management during the 192-month inspection event (January 29, 2024, to November 29, 2024).",
+    "The report is to provide an independent expert evaluation of Gulfstream's performance during the 192-Month Inspection of Claimant’s Gulfstream G550, Serial Number 5174.",
+    "The analysis addresses Gulfstream's pre-inspection planning, proposal development, execution of work, corrosion management, project management, staffing, communication, and adherence to industry standards.",
+    "Section V of the report is dedicated to 'Corrosion Detection and Management Failures,' including 'Standard Corrosion Assessment Procedures,' 'Horizontal Stabilizer Corrosion Issues,' and 'Other Corrosion-related Issues.'",
+    "Section XI is titled 'Quote and Scope Management Issues,' detailing 'Initial Quote Deficiencies,' 'Scope Creep and Lack of Proactive Scope Management,' 'Financial Impact of Quote and Scope Mismanagement,' and 'Comparison to Industry Best Practices.'",
+    "Section XII, 'General Opinion on Financial Impact,' discusses 'Additional Costs Due to Delays and Mismanagement' and 'Repairs That Should Have Been Covered Under Warranty or Identified in Prior Maintenance.'",
+    "Section XIII, 'Conclusions,' includes a 'Summary of Expert Opinions,' 'Key Findings Regarding Gulfstream's Performance,' 'Causal Relationship Between Deficiencies and Delays,' and 'Industry Standard Violations Identified.'",
+    "Patrick Stockton is identified as the Manager of the Gulfstream Savannah Paint Shop and Service Center Operations, Manager at Gulfstream’s Savannah service center.",
+    "Patrick Stockton is a listed witness for Gulfstream and may testify about aircraft painting.",
+    "Patrick Stockton's scope of oversight includes the painting and refurbishment of key SN 5174 components, specifically the rudder, elevators, and main entrance door.",
+    "Failures in the painting and refurbishment of SN 5174 components (rudder, elevators, main entrance door) contributed to both aesthetic mismatch and extended downtime for the aircraft.",
+    "The components for SN 5174 were sent from Gulfstream's St. Louis service center to Savannah for painting and refurbishment.",
+    "Patrick Stockton may be questioned regarding internal discussions of communication failures, potentially related to coordination with St. Louis.",
+    "Patrick Stockton, Manager at Gulfstream’s Savannah service center, may testify about aircraft painting.",
+    "Savannah had prior work experience on SN 5174, including the 144-month inspection and familiarity with its paint scheme and history.",
+    "The document outlines impeachment points focusing on mismatched paint, quality control breakdown, failure to expedite or escalate paint delays, and breach of paint warranty.",
+    "Internal logs show the rudder return was not anticipated until April 30, undermining Gulfstream’s claim of full resource deployment.",
+    "D. Farnham's Expert Report, dated March 21, 2025, addresses economic damages incurred by Claimant CITIOM due to the Aircraft being out of service from January 29, 2024, through November 29, 2024.",
+    "AVCON, acting on behalf of the aircraft owner, requested a quote from Gulfstream in May 2023 for an upcoming 192-month inspection, planned for late 2024 or early 2025.",
+    "Gulfstream issued Customer Support Proposal #Q-11876 in June 2023 for the 192-month inspection, which AVCON approved and returned in September 2023.",
+    "An expert (from the 'LB Expert Rebuttal Report') is currently involved with a Gulfstream G550 undergoing a 144-month inspection with Gulfstream in Savannah, as of April 2025.",
+    "Gulfstream admits that certain components, including the main entrance door, rudder, and elevators, were sent to Gulfstream’s Savannah facility for evaluation, repair and/or painting.",
+    "Gulfstream admits that it performed repairs on the Aircraft’s horizontal stabilizer during the 144-month inspection due to internal bondline corrosion findings identified through non-destructive testing techniques.",
+    "Gulfstream admits that it performed repairs on the Aircraft’s horizontal stabilizer during the 192-month inspection due to corrosion findings.",
+    "Gulfstream admits that pursuant to its corporate email retention policy, Gulfstream’s mail system automatically deletes emails after 60 days, unless the emails are saved or archived by the user.",
+    "Leonard A. Beauchemin is retained by counsel for Gulfstream to serve as an expert in this arbitration.",
+    "Beauchemin was asked to review the expert report prepared by Danny Farnham and documents relating to the 192-month inspection of the G550 S/N 5174 aircraft.",
+    "Beauchemin's opinions address the roles of owner/operator vs. OEM/MRO, industry standards for MRO proposal processes, the nature of the Gulfstream proposal, the predictability of corrosion findings, evidence for corrosion correction failures, and common MRO practices regarding technician movement and third-party vendors.",
+    "Beauchemin has 42 years of business jet aircraft maintenance and management experience, including significant roles at Bombardier MRO and managing/procuring proposals for hundreds of inspections and modifications, including at Gulfstream.",
+    "Beauchemin served on the Gulfstream committee responsible for developing the maintenance program for the GV (G550) aircraft.",
+    "Despite the priming and painting in 2020, \"significant corrosion\" recurred on the same wing-to-body fairings within 42 months, identified during the 192-month inspection in February 2024, indicating inadequate treatment.",
+    "The recurrent corrosion issue, discovered in February 2024, led to a prolonged repair process that was not completed until October (9 months later).",
+    "Onsite management and engineering initially determined it would be \"more cost effective to replace the entire frame with a new part in lieu of repairing the existing frame\" for the Forward Fuselage Fairing Frame.",
+    "A new replacement frame for the Forward Fuselage Fairing Frame arrived with manufacturing defects (pilot holes not lining up), requiring \"extensive modification\" and resulting in \"hundreds of hours of labor\" and a \"huge negative impact to schedule!\"",
+    "The expert identifies this sequence of events (inadequate prior treatment leading to recurrence, and subsequent problematic repair/replacement) as \"one example of widespread inefficiencies we experienced over a ten month period of time!\" directly linking it to \"Hours, rework and inefficiencies.\"",
+    "Corrosion was found in the same areas (horizontal stabilizer and under leading wing edges) that were extensively repaired by Gulfstream previously.",
+    "Gulfstream performed maintenance on the Aircraft in July/August 2023, during which the leading edges of the wings were removed and refurbished, and corrosion was repaired under the leading edge exhaust shields.",
+    "The 192-month inspection proposal was presented by Gulfstream on June 2, 2023.",
+    "Gulfstream's defense claims increased downtime was caused by 'repairs to the Aircraft resulting from discrepancies in the Aircraft (including without limitation corrosion) discovered during the performance' that were not included in the 2023 Proposal.",
+    "The 192-month inspection requires substantial disassembly of the aircraft, including removal of interior components and exterior access to systems and structure.",
+    "Gulfstream claims it has incurred 9,822 hours allocated to warranty for corrosion and structural discrepancies, representing 55% of man-hours spent on the inspection.",
+    "Gulfstream states its 20-year structural warranty covers structural repairs due to structural corrosion, but not the removal of minor corrosion considered standard maintenance.",
+    "The Work Authorization Terms and Conditions (T&C) contain an 'Exclusion of Damages Clause' (Section 8) that excludes punitive, special, incidental, or consequential damages, including loss of use, loss of time, inconvenience, and commercial loss.",
+    "The 2023 Proposal states estimated downtime is not a contractual commitment and may be adjusted depending on the final induction schedule, mutually agreed facility, and if additional Work is required.",
+    "Georgia law implies a 'reasonable time' for performance when a contract is silent on the matter.",
+    "Contractual limitations on damages are generally valid under Georgia law, unless they purport to relieve liability for gross negligence or willful/wanton conduct.",
+    "Gulfstream also warranties previous work for 12 months or 1,000 hours, with the sole remedy for defects being repair or replacement.",
+    "During the 192-month event for aircraft SN 5174, the Main Entrance Door and Rudder were painted in Savannah, but upon installation on the aircraft, the paint did not match.",
+    "Gulfstream 550, SN 5174 (manufactured in 2008) was in a 'high probability of corrosion category,' a fact that should have been obvious to Gulfstream experts.",
+    "This 'high probability of corrosion' information is critical for providing the aircraft owner with reasonable expectations of estimated costs and downtime for a maintenance event like the 192-month inspection.",
+    "The project for SN 5174 at the Gulfstream facility experienced inconsistent and sporadic manpower, inefficient utilization of resources, and experienced technicians being moved to other projects over a 10-month period, leading to documented deficiencies.",
+    "Engine mounts from SN 5174 were shipped to Savannah on April 20, 2024, and the issue was finally resolved on September 26, after which Gulfstream agreed to provide a solution.",
+    "The 192 MOS inspection project for Gulfstream G550, SN 5174, OE-LIM was initiated on January 28, 2024.",
+    "The estimated return to service (RTS) date has been continually postponed since April 2024.",
+    "A specific issue involves the unavailability of a replacement for the WTBF Frame PN 1159B51246-39, with an estimated date set for January 6th, 2025.",
+    "Work on the aircraft ceased on June 17, 2024, due to an unpaid interim invoice, with outstanding billing concerns.",
+    "The current investigation focus mentions deficiencies in Gulfstream's paint work and corrosion prevention practices, leading to significant corrosion recurrence within 42 months after priming and painting specific areas.",
+    "The aforementioned paint deficiencies led to prolonged repairs (9 months) and extensive rework.",
+    "A Certified Public Accountant (CPA), Certified Fraud Examiner (CFE), and Certified in Financial Forensics (CFF), licensed in the State of New York, is employed as a Director at FAZ Forensics. This individual has approximately 40 years of combined experience in forensic and financial accounting, auditing, and litigation consulting, and is involved in the CITIOM v. Gulfstream matter.",
+    "The expert's Curriculum Vitae (CV), detailing their background, qualifications, articles, presentations, seminars, and list of other cases, is attached as Appendix A to at least some versions of their reports (e.g., Chennel IT Report Draft- 4-2-25.docx, Updated Faz Report.docx).",
+    "Gulfstream's defense claims increased downtime was due to repairs for discovered discrepancies and corrosion not included in the original proposal.",
+    "Gulfstream claims it has incurred 9,822 hours allocated to its warranty in addressing corrosion and structural discrepancies.",
+    "Gulfstream's 20-year structural warranty covers costs associated with structural repairs due to structural corrosion.",
+    "The contract's exclusion of damages clause (Section 8) broadly prohibits claims for punitive, special, incidental, or consequential damages, including loss of use, loss of time, inconvenience, and commercial loss, regardless of contract breach, warranty failure, or essential purpose failure.",
+    "CITIOM alleges Gulfstream failed to previously identify conditions requiring repair when it performed maintenance on the Aircraft in 2020 and 2023.",
+    "CITIOM alleges Gulfstream misclassified warranty repairs for the current 192-month inspection for the account of CITIOM instead of Gulfstream.",
+    "The Expert Report concludes that CITIOM has suffered economic damages of approximately €2.4 million as a direct result of Gulfstream's breaches and failures related to the 192-Month Inspection of CITIOM's Gulfstream G550 Aircraft.",
+    "The damages are comprised of Lost Financial Contribution (€1,613,175) and Additional Consequential Costs (€814,067).",
+    "Gulfstream's proposal explicitly stated that 'correction of discrepancies is not included in the quoted price' ten separate times in Section I, and that the proposal 'does not include repairs to the Aircraft resulting from discrepancies . . . discovered during the [inspection].'",
+    "Gulfstream's proposal stated that any 'discrepancies [discovered during the inspection] will be corrected upon request at additional charge and with additional downtime.'",
+    "Claimant retained Avcon Jet, A.G. to manage the aircraft and arrange for maintenance, and Avcon Jet executed the proposal on behalf of Claimant. Danny Farnham acted as Claimant’s onsite representative.",
+    "Gulfstream discovered 'significant corrosion that far exceeded what Gulfstream has experienced on any other G550 aircraft in the fleet' upon opening up the aircraft.",
+    "Claimant's Aircraft took more than 27,000 hours to complete the 192-month inspection and correct discrepancies, compared to an industry fleet average of approximately 5,400 hours.",
+    "Of the 27,000-plus hours worked, 16,270 hours were billed to Gulfstream's 20-year structural warranty, equating to $3.5 million of revenue-generating work at Gulfstream's cost.",
+    "Gulfstream initially provided a completion date of June 21, 2024, for the Aircraft, simultaneously estimating an additional 5,730 hours of work. This followed an earlier inadequate estimate of 2,800 labor hours and a missed April 1, 2024 availability.",
+    "Gulfstream repeatedly failed to provide timely and transparent communication regarding escalating delays and cost overruns to CITIOM.",
+    "Initial assurances of a June 21, 2024 return-to-service date were repeatedly extended, often with little advance notice and inadequate explanation.",
+    "Return-to-service dates for the Aircraft were consistently pushed back from an initial April 1, 2024 estimate to June 21, 2024, then sequentially to August 1, August 15, August 20, August 27, September 19, December 16, 2024, and finally mid-November 2024.",
+    "The Expert Report of D. Farnham, dated March 21, 2025, is cited as a key document addressing CITIOM's experienced delays and cost escalations within the dispute (sections II, III, V, VI, VIII, XIII.1, XIII.2).",
+    "Gulfstream claims to have identified a need to replace certain leading edges due to corrosion.",
+    "Gulfstream claims that corrosion was visible under panels (attachment flange and Piccolo tubes for anti-icing) on the leading edges.",
+    "During the July Maintenance, Gulfstream removed and reinstalled the APU, APU exhaust shield, and addressed corrosion on the fuselage side under the exhaust shield, but not the APU enclosure access door frame.",
+    "An email from Bassim Haidar to Mark Burns expresses frustration about an 11-month delay for a 192 check on G550 SN 5174, stating, 'we are struggling to get my aircraft back. This is unbelievable.'",
+    "An email from Danny Farnham to Murtaza Hassan (and others) details severe dissatisfaction with Gulfstream's manpower allocation for project G550 SN 5174, calling it a 'dismal effort' and the 'greatest example of mismanagement of facilities and resources.'",
+    "Danny Farnham states that over the last 6 months, promises to increase experienced technicians for the project have been a 'failed commitment' and have fallen 'short of all expectations.'",
+    "Danny Farnham criticizes the manpower flow as 'not adequate, not consistent, some not experienced,' and notes that experienced technicians have been moved to other projects or sent for training, making manpower allocation 'dismal, seriously lacking in all respects.'",
+    "Danny Farnham questions the message this sends to the owner about the importance or priority given to his plane to get back in service.",
+    "The document indicates a 'refresh' of an original letter sent in April to Legal Counsel regarding the TSTO request for G550 SN 5174 Manpower.",
+    "The sender of the email on page 2, Beth Mitchell, requests that Murtaza Hassan and Michael Kehoe ensure 'the statements are accurate' in the revised letter.",
+    "An expedited review is requested to get an 'approved draft to Mark by COB.'",
+    "The aircraft was out of service for an extended period from January 29, 2024, through November 29, 2024, due to Gulfstream’s delays and mismanagement during a '192-month inspection.'",
+    "CITIOM alleges Gulfstream breached its warranty, failed to perform required warranty repairs beginning in January 2024, and misclassified warranty repairs during the 192-month inspection.",
+    "Damages claimed include €1,613,175 in lost financial contribution from charter operations during 2024 and €814,067 in additional consequential costs (out-of-pocket travel expenses) directly incurred by CITIOM due to the aircraft's downtime.",
+    "Gulfstream's President of Customer Support, Derek Zimmerman, sent a letter to Mr. Haidar on April 30, 2024, attempting to justify the lack of overall downtime or expense estimates by citing the 'highly variable nature' of inspections.",
+    "An independent expert evaluation of Gulfstream's work during the 192-month inspection commenced on January 29, 2024, with D. Farnham's participation.",
+    "The Main Entrance Door and Rudder for SN 5174 were painted in Savannah, but upon installation on the aircraft, the paint did not match the existing paint.",
+    "SN 5174 (Gulfstream 550, manufactured in 2008) was identified by Gulfstream Experts as falling into a 'high probability of corrosion category,' making this critical information for estimating costs and downtime for its 192-month inspection.",
+    "The 192-month event for SN 5174 at the Gulfstream St. Louis Service Center involved a 10-month duration at the facility.",
+    "Manpower on the SN 5174 project was inconsistent and sporadic, with employees cycled in and out, many being entry-level or apprentice level, and tasks often not finished by the same technician, contributing to inefficient utilization over the 10-month period.",
+    "The Gulfstream St. Louis Service Center was reportedly downgraded from a Tier 4 to a Tier 3, though the exact timing relative to SN 5174's input is unclear.",
+    "Resolution of an issue concerning engine mounts (among other parts) on SN 5174 took from April 20, 2024, when parts were shipped to Savannah, until September 26, when Gulfstream agreed to a solution.",
+    "Gulfstream requests documents sufficient to show whether the Aircraft has experienced corrosion that has been repaired, corrected, or otherwise addressed by any individual or entity other than Gulfstream, and documents relating to those efforts to repair, correct or otherwise address the corrosion.",
+    "Gulfstream requests documents, including internal and external communications, related to the quoting (proposal), scheduling, and induction of the Aircraft for the 192-month inspection at the Gulfstream St. Louis Service Center.",
+    "Gulfstream requests internal and external communications by and between and among Channel IT, Avcon, Danny Farnham, Ben Schouten, and any Gulfstream representative(s) or employee(s), or any combination thereof, related to the Aircraft’s 192-month inspection, including but not limited to communications related to the downtime and/or estimated cost of the Aircraft related to the Aircraft’s 192-month inspection.",
+    "Gulfstream requests internal and external communications by and between and among Channel IT, Avcon, Danny Farnham, Ben Schouten, or any combination thereof, with other Gulfstream customer related to downtime or cost of any prior maintenance visits for the Aircraft at Gulfstream facilities.",
+    "Gulfstream requests internal or external communications by and between and among Channel IT, Avcon, Danny Farnham, Ben Schouten, or any combination thereof, relating to any responsibility that Avcon, Danny Farnham, or Ben Schouten have in relation to any aspect of the 192-month inspection.",
+    "Gulfstream requests documents sufficient to show the nature, amount, and basis for each form of damages that Channel IT seeks in this case.",
+    "Gulfstream requests documents sufficient to show a complete accounting of Channel IT’s revenue, costs, expenses, profits, and other financial metrics associated with owning, operating, maintaining, and chartering the Aircraft, to the extent Channel IT is seeking a form of lost profits.",
+    "Gulfstream requests all documents Channel IT relies on or intends to rely on in this matter."
+  ],
+  "citations": [
+    {
+      "document": "Patrick Stockton Outline #1.docx",
+      "page": 1,
+      "text": "Confirm that CITIOM bore the consequences of repainting and delays without compensation under the warranty.",
+      "verified": false
+    },
+    {
+      "document": "6. Patrick Stockton - Cross Exam & Impeachment.docx",
+      "page": 1,
+      "text": "Would Stockton agree that CITIOM should not have borne the burden of repainting mismatched components?",
+      "verified": false
+    },
+    {
+      "document": "Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf",
+      "page": 33,
+      "text": "Additionally, the cost of repainting the Aircraft after the botched paint-matching attempt of",
+      "verified": false
+    },
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 22,
+      "text": "evaluation, repair, and painting. It too suffered from the paint mismatch problem upon return",
+      "verified": false
+    },
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 21,
+      "text": "evaluation, repair, and painting. This outsourcing led to delays and ultimately the paint",
+      "verified": false
+    },
+    {
+      "document": "CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025.pdf",
+      "page": 22,
+      "text": "evaluation, repair, and painting. It too suffered from the paint mismatch problem upon return",
+      "verified": false
+    },
+    {
+      "document": "Patrick Stockton Outline #1.docx",
+      "page": 1,
+      "text": "Acknowledge Gulfstream offers a 24-month paint warranty for refurbishment work.",
+      "verified": false
+    },
+    {
+      "document": "Patrick Stockton Outline #1.docx",
+      "page": 1,
+      "text": "Confirm that Savannah painted the rudder and main entrance door for SN 5174.",
+      "verified": false
+    },
+    {
+      "document": "Patrick Stockton Outline #1.docx",
+      "page": 1,
+      "text": "Confirm that once reinstalled, the rudder and door were visibly mismatched with the fuselage paint scheme.",
+      "verified": false
+    },
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 4,
+      "text": "The purpose of this report is to provide an independent expert evaluation of Gulfstream's performance during the 192-Month Inspection of the Claimant’s Gulfstream G550, Serial Number 5174 (the “Aircraft”). This evaluation addresses key aspects of the maintenance event, including Gulfstream's pre-ins",
+      "verified": false
+    },
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 21,
+      "text": "Issues with Outsourcing Components to Gulfstream Savannah Facility",
+      "verified": false
+    },
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 21,
+      "text": "Specific Component Examples Outsourced to Gulfstream Savannah (Beyond Air Ducts).",
+      "verified": false
+    },
+    {
+      "document": "Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf",
+      "page": 2,
+      "text": "CITIOM commenced this action against Respondent-Counter-Claimant Gulfstream Aerospace Corporation (“Respondent\" or “Gulfstream”) for its fraudulent and negligent mishandling of its inspection and service of the Aircraft. As a direct result of Gulfstream's malfeasance—which spanned from Gulfstream's ",
+      "verified": false
+    },
+    {
+      "document": "Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf",
+      "page": 3,
+      "text": "This case arises from a breakdown in trust between a customer and a sophisticated aircraft manufacturer and maintenance, repair and overhaul service provider.",
+      "verified": false
+    },
+    {
+      "document": "Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf",
+      "page": 3,
+      "text": "But rather than offer a candid assessment of the scope and timeline, Gulfstream knowingly or recklessly provided outdated and misleading estimates, failed to apply more accurate forecasting tools it had recently developed, and withheld critical information from Claimant before and throughout the 192",
+      "verified": false
+    },
+    {
+      "document": "Patrick Stockton Outline #1.docx",
+      "page": 1,
+      "text": "Farnham identifies the rudder and door as \"cosmetically mismatched\" and notes the issue caused reputational and logistical harm, necessitating rework and delay (Farnham p. 21; PHB p. 17).",
+      "verified": false
+    },
+    {
+      "document": "6. Patrick Stockton - Cross Exam & Impeachment.docx",
+      "page": 1,
+      "text": "Role: Manager, Gulfstream Savannah Paint Shop\nScope: Oversight of painting and refurbishment of key SN 5174 components (rudder, elevators, main entrance door), with failures contributing to both aesthetic mismatch and extended downtime.",
+      "verified": false
+    },
+    {
+      "document": "6. Patrick Stockton - Cross Exam & Impeachment.docx",
+      "page": 1,
+      "text": "Confirm rudder delay persisted into late April or May despite Aircraft input in January.",
+      "verified": false
+    },
+    {
+      "document": "6. Patrick Stockton - Cross Exam & Impeachment.docx",
+      "page": 1,
+      "text": "Confirm that the rudder and main entrance door were painted under his supervision.",
+      "verified": false
+    },
+    {
+      "document": "Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf",
+      "page": 1,
+      "text": "As a direct result of Gulfstream's malfeasance—which spanned from Gulfstream's misleading proposal for the work in June 2023, the designation of the poor-performing St. Louis facility to perform the inspection and repairs, through inefficient staffing and poorly trained technicians, to broken promis",
+      "verified": false
+    }
+  ],
+  "steps": [
+    {
+      "time": 0.0,
+      "type": "thinking",
+      "content": "Query classified as unknown (complexity: 1/5)"
+    },
+    {
+      "time": 0.0,
+      "type": "thinking",
+      "content": "Analyzing repository structure..."
+    },
+    {
+      "time": 16.2,
+      "type": "thinking",
+      "content": "Hypothesis: The 'painting costs' are likely a significant component of the overall damages claimed in a larger dispute, potentially stemming from a breach of contract, warranty claim, or negligence re"
+    },
+    {
+      "time": 16.2,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 1)"
+    },
+    {
+      "time": 16.2,
+      "type": "search",
+      "content": "Investigating: Search for: \"painting costs\""
+    },
+    {
+      "time": 22.3,
+      "type": "finding",
+      "content": "Found 24 matches in 91 files"
+    },
+    {
+      "time": 22.3,
+      "type": "search",
+      "content": "Investigating: Search for: \"paint defect\""
+    },
+    {
+      "time": 22.5,
+      "type": "finding",
+      "content": "Found 515 matches in 91 files"
+    },
+    {
+      "time": 22.5,
+      "type": "search",
+      "content": "Investigating: Search for: \"repainting\""
+    },
+    {
+      "time": 22.6,
+      "type": "finding",
+      "content": "Found 4 matches in 91 files"
+    },
+    {
+      "time": 36.9,
+      "type": "replan",
+      "content": "Hypothesis updated: The 'painting costs' are a significant component of the overall damages claimed by CITIOM, estimated at up to $400,000 plus weeks of aircraft downtime. These costs stem from a 'bot"
+    },
+    {
+      "time": 36.9,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 36.9,
+      "type": "reading",
+      "content": "Deep reading: Patrick Stockton Outline #1.docx"
+    },
+    {
+      "time": 36.9,
+      "type": "reading",
+      "content": "Deep reading: 6. Patrick Stockton - Cross Exam & Impeachment.docx"
+    },
+    {
+      "time": 36.9,
+      "type": "reading",
+      "content": "Deep reading: Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf"
+    },
+    {
+      "time": 37.9,
+      "type": "replan",
+      "content": "Hypothesis updated: The 'painting costs' are demonstrably a significant component of the overall damages in a dispute involving a G550 aircraft (SN 5174). These costs stem from deficiencies (paint mis"
+    },
+    {
+      "time": 37.9,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 37.9,
+      "type": "reading",
+      "content": "Deep reading: NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf"
+    },
+    {
+      "time": 38.0,
+      "type": "reading",
+      "content": "Deep reading: Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf"
+    },
+    {
+      "time": 38.0,
+      "type": "reading",
+      "content": "Deep reading: Patrick Stockton Outline #1.docx"
+    },
+    {
+      "time": 56.5,
+      "type": "replan",
+      "content": "Hypothesis updated: The 'painting costs' are demonstrably a significant component of the overall damages claimed in a larger dispute, stemming from identified deficiencies in Gulfstream's paint work a"
+    },
+    {
+      "time": 56.5,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 56.5,
+      "type": "reading",
+      "content": "Deep reading: Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf"
+    },
+    {
+      "time": 56.5,
+      "type": "reading",
+      "content": "Deep reading: 1-110.pdf"
+    },
+    {
+      "time": 56.5,
+      "type": "reading",
+      "content": "Deep reading: NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf"
+    },
+    {
+      "time": 66.6,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 2)"
+    },
+    {
+      "time": 66.6,
+      "type": "search",
+      "content": "Investigating: The full 'Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf' needs to be reviewed to understand the broader context of the damages claimed, the legal arguments, and how the painti"
+    },
+    {
+      "time": 66.7,
+      "type": "finding",
+      "content": "Found 229 matches in 91 files"
+    },
+    {
+      "time": 66.7,
+      "type": "search",
+      "content": "Investigating: Patrick Stockton appears to be a key witness or individual involved in assessing paint work. His outline and cross-examination document should be fully reviewed to understand his role a"
+    },
+    {
+      "time": 66.8,
+      "type": "finding",
+      "content": "Found 5 matches in 91 files"
+    },
+    {
+      "time": 98.2,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 98.2,
+      "type": "reading",
+      "content": "Deep reading: 6. Patrick Stockton - Cross Exam & Impeachment.docx"
+    },
+    {
+      "time": 98.2,
+      "type": "reading",
+      "content": "Deep reading: Patrick Stockton Outline #1.docx"
+    },
+    {
+      "time": 98.2,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream - Gulfstream's Final Witness Disclosures (2025.04.21).pdf"
+    },
+    {
+      "time": 106.3,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 106.3,
+      "type": "reading",
+      "content": "Deep reading: 1-66.pdf"
+    },
+    {
+      "time": 106.3,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream - LB Expert Rebuttal Report (4-21-25).pdf"
+    },
+    {
+      "time": 106.3,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream - Gulfstream's Responses to CITIOM's Requests for Admission (2025.04.21).pdf"
+    },
+    {
+      "time": 116.8,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 3)"
+    },
+    {
+      "time": 116.8,
+      "type": "search",
+      "content": "Investigating: Investigate Patrick Stockton (Manager, Gulfstream Savannah Paint Shop). Obtain his deposition, testimony, and any internal communications related to SN 5174's painting/refurbishment."
+    },
+    {
+      "time": 116.9,
+      "type": "finding",
+      "content": "Found 2352 matches in 91 files"
+    },
+    {
+      "time": 116.9,
+      "type": "search",
+      "content": "Investigating: Obtain and review the May 11, 2020 email regarding corrosion treatment and painting of wing to body fairings."
+    },
+    {
+      "time": 117.0,
+      "type": "finding",
+      "content": "Found 55 matches in 91 files"
+    },
+    {
+      "time": 140.4,
+      "type": "replan",
+      "content": "Hypothesis updated: The 'painting costs' (specifically, the inadequacy of prior priming and painting for corrosion prevention on wing-to-body fairings and the Forward Fuselage Fairing Frame) are demon"
+    },
+    {
+      "time": 140.4,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 140.4,
+      "type": "reading",
+      "content": "Deep reading: Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf"
+    },
+    {
+      "time": 140.4,
+      "type": "reading",
+      "content": "Deep reading: In re CITCOM v Gulfstream - Analysis of Claims and Defenses Related to Repairs on GS550-5174(80915932.pdf"
+    },
+    {
+      "time": 140.4,
+      "type": "reading",
+      "content": "Deep reading: Bassim Draft Witness Statement.docx"
+    },
+    {
+      "time": 151.4,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 151.4,
+      "type": "reading",
+      "content": "Deep reading: 1-66.pdf"
+    },
+    {
+      "time": 151.4,
+      "type": "reading",
+      "content": "Deep reading: 3. Murtaza Hassan - Cross Exam & Impeachment.docx"
+    },
+    {
+      "time": 151.4,
+      "type": "reading",
+      "content": "Deep reading: Craig Klebe Outline #1.docx"
+    },
+    {
+      "time": 160.9,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 4)"
+    },
+    {
+      "time": 160.9,
+      "type": "search",
+      "content": "Investigating: Examine the full scope of Patrick Stockton's expected testimony and cross-examination, once available, for further details on the 'aesthetic mismatch,' 'extended downtime,' and painting"
+    },
+    {
+      "time": 161.1,
+      "type": "finding",
+      "content": "Found 17 matches in 91 files"
+    },
+    {
+      "time": 161.1,
+      "type": "search",
+      "content": "Investigating: Examine D. Farnham's Expert Report (March 21, 2025), specifically sections II, III, V, VI, VIII, XIII.1, and XIII.2, for itemized damages related to 'aircraft out of service' period, an"
+    },
+    {
+      "time": 161.2,
+      "type": "finding",
+      "content": "Found 238 matches in 91 files"
+    },
+    {
+      "time": 170.9,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 170.9,
+      "type": "reading",
+      "content": "Deep reading: In re CITCOM v Gulfstream - Analysis of Claims and Defenses Related to Repairs on GS550-5174(80915932.pdf"
+    },
+    {
+      "time": 170.9,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream-FAZ Report.pdf"
+    },
+    {
+      "time": 170.9,
+      "type": "reading",
+      "content": "Deep reading: Gulfstream - Prehearing Brief .pdf"
+    },
+    {
+      "time": 178.5,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 178.5,
+      "type": "reading",
+      "content": "Deep reading: CITIOM Amended Statement of Claim.pdf"
+    },
+    {
+      "time": 178.5,
+      "type": "reading",
+      "content": "Deep reading: Opening Statement.docx"
+    },
+    {
+      "time": 178.5,
+      "type": "reading",
+      "content": "Deep reading: 111-206.pdf"
+    },
+    {
+      "time": 189.6,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 5)"
+    },
+    {
+      "time": 189.6,
+      "type": "search",
+      "content": "Investigating: Identify and analyze documents related to aircraft SN 5174 (G550), including its maintenance records, original paint specifications, and repair orders for the Main Entrance Door, Rudder"
+    },
+    {
+      "time": 189.7,
+      "type": "finding",
+      "content": "Found 2352 matches in 91 files"
+    },
+    {
+      "time": 189.7,
+      "type": "search",
+      "content": "Investigating: Investigate the details and findings of the '144-Month Inspection' and '192-Month Inspection (February 2024)' related to the fuselage fairings."
+    },
+    {
+      "time": 189.8,
+      "type": "finding",
+      "content": "Found 3104 matches in 91 files"
+    },
+    {
+      "time": 207.2,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 207.2,
+      "type": "reading",
+      "content": "Deep reading: 1. Respondent's Requests for Production of Documents.pdf"
+    },
+    {
+      "time": 207.2,
+      "type": "reading",
+      "content": "Deep reading: 7. Leonard B - Cross Exam & Impeachment.docx"
+    },
+    {
+      "time": 207.2,
+      "type": "reading",
+      "content": "Deep reading: 3. Murtaza Hassan - Cross Exam & Impeachment.docx"
+    },
+    {
+      "time": 214.3,
+      "type": "replan",
+      "content": "Hypothesis updated: The 'painting costs' (specifically, the inadequacy of prior priming and painting for corrosion prevention on wing-to-body fairings and the Forward Fuselage Fairing Frame *[evidence"
+    },
+    {
+      "time": 214.3,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 214.3,
+      "type": "reading",
+      "content": "Deep reading: 1. Bassim Haider Direct Outline with Redirect & Rehab.docx"
+    },
+    {
+      "time": 214.3,
+      "type": "reading",
+      "content": "Deep reading: 5. Joe Schuster - Cross Exam & Impeachment.docx"
+    },
+    {
+      "time": 214.3,
+      "type": "reading",
+      "content": "Deep reading: (v3) 5. Joe Schuster - Cross Exam & Impeachment.docx"
+    },
+    {
+      "time": 224.8,
+      "type": "verify",
+      "content": "Verifying 91 citations..."
+    },
+    {
+      "time": 224.8,
+      "type": "verify",
+      "content": "Verification complete: 6 verified, 85 unverified"
+    },
+    {
+      "time": 224.8,
+      "type": "synthesis",
+      "content": "Synthesizing final analysis..."
+    },
+    {
+      "time": 264.6,
+      "type": "synthesis",
+      "content": "Analysis complete"
+    }
+  ],
+  "error": null
+}

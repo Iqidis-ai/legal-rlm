@@ -1,0 +1,831 @@
+{
+  "query_num": 8,
+  "query": "Who is Danny Farnham and what was his expert opinion?",
+  "status": "completed",
+  "elapsed_seconds": 218.9,
+  "documents_read": 33,
+  "searches_performed": 11,
+  "citations_count": 99,
+  "max_depth_reached": 3,
+  "hypothesis": "Danny Farnham was designated as an expert witness for the Claimant (CITIOM) in an arbitration proceeding against Gulfstream (GAC). His expert opinion is formally documented in Expert Reports, including one dated March 21, 2025, from which excerpts are available, and another dated March 5, 2025 (yet to be reviewed in detail). The March 21, 2025 report addresses issues related to Gulfstream's maintenance and repair work on a G550 aircraft, particularly concerning delays and economic damages incurred by CITIOM. Specifically, the March 21, 2025 report opines that Gulfstream failed to adequately identify and address existing corrosion issues during previous maintenance events, including the 144-month inspection in 2020 and July 2023 maintenance, which led to a recurrence and exacerbation of corrosion findings during the 192-Month Inspection. It also attributes delays and increased costs to Gulfstream's inadequate staffing levels and inefficient workforce management practices, and discusses industry standards for rigorous inspection protocols and Manufacturer's Maintenance Manual Requirements. His opinions are expected to focus on technical standards and responsibilities, and have been challenged in an expert rebuttal report dated April 21, 2025, authored by Gulfstream's expert ('LB').",
+  "final_output": "**LEGAL MEMORANDUM**\n\n**TO:** Managing Partner\n**FROM:** Senior Partner\n**DATE:** October 26, 2023\n**RE:** Summary and Analysis of Expert Witness Danny Farnham in *CITIOM v. Gulfstream*\n\n---\n\n### ## Executive Summary\nDanny Farnham is the designated technical expert for the Claimant, CITIOM, in its arbitration against Gulfstream Aerospace Corporation (GAC). Mr. Farnham opines that Gulfstream failed to meet the industry standard of care as a maintenance provider during a 192-Month Inspection of a G550 aircraft, citing systemic failures in planning, corrosion management, and project execution which he concludes were the proximate cause of extensive delays and damages incurred by CITIOM.\n\n### ## Factual Background\nDanny Farnham is an aviation maintenance professional with a career beginning in 1966, who has specialized in business jet aviation since 1981 [PDF 2 - EXPERT WITNESS REPORT March 5 copy.pdf, p. 17] [UNVERIFIED]. He was engaged by the Claimant (CITIOM) to act as its on-site representative and designated technical expert for the 192-Month Inspection of G550 aircraft S/N 5174 at Gulfstream's St. Louis Service Center [Gulfstream - Prehearing Brief .pdf, p. 3] [VERIFIED].\n\nThe inspection event commenced on January 29, 2024 [PDF 2 - EXPERT WITNESS REPORT March 5 copy.pdf, p. 1] [UNVERIFIED]. CITIOM accepted Gulfstream's initial proposal, which quoted a cost of $835,931 and estimated 2,800 manhours, relying on Gulfstream's representations and expertise [CITIOM Statement of Claim.pdf, p. 3] [VERIFIED]. Mr. Farnham was present on-site for the duration of the maintenance event, which concluded on November 29, 2024, observing work performed and interacting directly with Gulfstream personnel [PDF 2 - EXPERT WITNESS REPORT March 5 copy.pdf, p. 1] [UNVERIFIED].\n\nDuring the inspection, significant unforeseen discrepancies, particularly related to corrosion, led to substantial delays and cost overruns. Mr. Farnham documented his concerns throughout the process, including questioning Gulfstream's initial 35-45 day downtime estimate and formally expressing disappointment to Gulfstream management on August 9 regarding the failure to maintain an experienced and consistent workforce on the project [PDF 2 - EXPERT WITNESS REPORT March 5 copy.pdf, p. 6-7] [UNVERIFIED].\n\nFollowing the event, Mr. Farnham authored at least two expert reports, dated March 5, 2025, and March 21, 2025, to formalize his opinions for the arbitration proceeding [In re CITCOM v Gulfstream - Analysis of Claims and Defenses Related to Repairs on GS550-5174(80915932.pdf, p. Query Context] [UNVERIFIED]. These opinions have been formally challenged in an expert rebuttal report dated April 21, 2025, authored by Gulfstream's designated expert, 'LB' [CITIOM v. Gulfstream - LB Expert Rebuttal Report (4-21-25).pdf, p. 4] [UNVERIFIED].\n\n### ## Analysis\n\n#### ### Key Findings\n- **Mr. Farnham is Claimant's designated technical expert and on-site representative.** His role was to provide firsthand visibility into the daily operations and failures at the Gulfstream facility and to opine on technical deficiencies in Gulfstream’s maintenance work [Gulfstream - Prehearing Brief .pdf, p. 3] [VERIFIED]; [Full Direct List.docx, p. 1] [UNVERIFIED].\n- **Farnham opines that Gulfstream failed to meet the required standard of care.** His reports detail numerous deficiencies in Gulfstream’s performance, including inadequate pre-inspection planning, proposal deficiencies, workforce and project management failures, and substandard corrosion management practices [No Exhibits - CITIOM v. Gulfstream-FAZ Report copy.pdf, p. 6] [UNVERIFIED].\n- **Farnham's core technical opinion is that Gulfstream missed prior opportunities to address corrosion.** He asserts that Gulfstream failed to adequately identify and address existing corrosion issues during previous maintenance, including the 144-month inspection in 2020, which led to the exacerbation of these findings during the 192-Month Inspection [Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf, p. 3] [UNVERIFIED]; [NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf, p. 5] [UNVERIFIED].\n- **Farnham directly links the project delays to Gulfstream's mismanagement.** Based on his on-site observations, he attributes delays and increased costs to Gulfstream's inadequate staffing levels and inefficient workforce management, which he personally observed and reported to Gulfstream management [111-206.pdf, p. 5] [UNVERIFIED].\n- **Farnham concludes that Gulfstream's failures were the proximate cause of CITIOM's damages.** His reports assert a direct causal link between Gulfstream's substandard performance and the extensive delays and economic damages suffered by CITIOM [No Exhibits - CITIOM v. Gulfstream-FAZ Report copy.pdf, p. 7] [UNVERIFIED].\n\n#### ### Supporting Evidence\nThe strongest evidence of Mr. Farnham's role is Gulfstream's own prehearing brief, which explicitly identifies him as CITIOM's \"onsite representative\" [Gulfstream - Prehearing Brief .pdf, p. 3] [VERIFIED]. CITIOM's Amended Statement of Claim corroborates the factual predicate of his opinion by establishing that CITIOM relied upon Gulfstream's initial representations regarding scope and downtime [CITIOM Amended Statement of Claim.pdf, p. 3] [VERIFIED].\n\nMr. Farnham's opinions are detailed in his expert report dated March 21, 2025. This report is consistently referenced as the basis for CITIOM's technical arguments, particularly the assertion that Gulfstream, given its familiarity with the aircraft from prior inspections, should have provided a more accurate proposal and anticipated the corrosion issues [Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf, p. 4] [UNVERIFIED]. The existence of these reports is confirmed in multiple procedural documents [Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf, p. 2] [UNVERIFIED].\n\n#### ### Contradictions or Concerns\nThe primary challenge to Mr. Farnham's opinion comes from Gulfstream's expert rebuttal report authored by 'LB'. Additionally, Gulfstream's prehearing brief contains a key counter-argument: it asserts that \"Mr. Farnham have experience with Gulfstream’s proposal process and knew (or should have known)\" that initial proposals do not account for unforeseen discrepancies [Gulfstream - Prehearing Brief .pdf, p. 3] [VERIFIED]. This directly attacks the credibility of Farnham's opinion that Gulfstream's initial proposal was negligently prepared.\n\n#### ### Evidence Strength Assessment\n**Strong.** The body of evidence supporting Mr. Farnham's role and the general substance of his opinion is substantial and consistent across multiple documents, including filings from both parties. The availability of two formal expert reports, though unverified, provides a clear documentary basis for his testimony. The primary weakness lies in the fact that many key documents, including the expert reports themselves, remain unverified. However, the verified documents confirm his central role in the dispute, and the consistency of the unverified evidence provides a coherent and credible narrative of his expected testimony.\n\n### ## Entities & Relationships\n-   **Danny Farnham:** Claimant's Technical Expert and On-Site Representative.\n-   **CITIOM (Claimant):** Client and owner of the G550 aircraft. Also referred to as \"Channel IT.\"\n-   **Gulfstream Aerospace Corporation (GAC) (Respondent):** Maintenance, Repair, and Overhaul (MRO) provider that performed the 192-Month Inspection.\n-   **'LB':** Gulfstream's designated rebuttal expert witness.\n-   **Avcon Jet / Avcon Industries:** Appears to be an entity associated with Mr. Farnham, where he is an \"Aircraft Manager\" [Document Review Protocol(80929109.3) (1).docx, p. 2] [UNVERIFIED].\n\n### ## Gaps & Limitations\n-   **Unverified Core Documents:** The full text of Mr. Farnham's March 5 and March 21, 2025 expert reports, as well as the rebuttal report from 'LB', have not been verified. Review of these primary source documents is critical.\n-   **Farnham's CV:** Mr. Farnham's Curriculum Vitae is referenced as a key document but has not been provided in the available materials [Document Review Protocol(80929109.3) (1).docx, p. 1] [UNVERIFIED].\n-   **Limited Rebuttal Details:** The specific arguments made by Gulfstream's expert, 'LB', are not detailed in the summary, preventing a full assessment of their potential impact on Mr. Farnham's testimony.\n\n### ## Recommendations\n1.  **Immediate Actions:**\n    *   Prioritize obtaining and verifying the complete expert reports of Danny Farnham (March 5 and March 21, 2025) and the rebuttal report of 'LB' (April 21, 2025).\n    *   Prepare Mr. Farnham for deposition and cross-examination, specifically focusing on Gulfstream's defense that he \"knew or should have known\" the limitations of their proposal process.\n    *   Obtain and review Mr. Farnham's CV to confirm his qualifications and identify any potential areas for challenge by opposing counsel.\n\n2.  **Additional Investigation Needed:**\n    *   Depose Gulfstream's expert, 'LB', to fully understand the basis of the rebuttal opinions.\n    *   Investigate Gulfstream's admission that it has used \"new data collection and analytical capabilities\" since July 2023 to determine if these tools were, or should have been, applied to the proposal for this aircraft [CITIOM Amended Statement of Claim.pdf, p. 3] [VERIFIED].\n\n3.  **Risk Mitigation Steps:**\n    *   Conduct a thorough review of Mr. Farnham's prior dealings with Gulfstream to proactively address the \"knew or should have known\" defense.\n    *   Develop a clear line of questioning for Mr. Farnham on direct examination to establish why, in this specific instance, Gulfstream's performance fell below the standard of care regardless of standard proposal practices.",
+  "accumulated_facts": [
+    "Danny Farnham is an expert witness who authored an \"EXPERT WITNESS REPORT\" detailing observations and opinions regarding a \"192-month inspection event\" at Gulfstream Aerospace Corporation's St. Louis Service Center.",
+    "Danny Farnham is designated to testify as a technical expert in an arbitration proceeding between CITIOM (Claimant) and Gulfstream.",
+    "His expert opinion, to be presented at arbitration, focuses on \"technical deficiencies in Gulfstream’s maintenance and repair work.\"",
+    "His opinions are based on firsthand, on-site observation of work performed and direct communication with Gulfstream employees and management during the 192-month inspection event, which occurred from January 29, 2024, to November 29, 2024.",
+    "Danny Farnham's aviation career began in 1966 in the US Air Force as an aircraft maintenance technician, including 18 months in Vietnam.",
+    "Since 1981, he has worked in the business jet segment of aviation, involved with Gulfstream, Bombardier, Dassault, Textron, and Embraer aircraft in maintenance, operations, management, and leadership roles.",
+    "He questioned Gulfstream's initial 35-45 day downtime estimate for the 192-month inspection, noting the Gulfstream team's lack of research and preparedness for work scope beyond basic inspection.",
+    "He expressed concern and disappointment to Gulfstream St. Louis management on August 9 (during a conference call) regarding their failure to maintain an experienced and consistent level of manpower on the project.",
+    "Ilona Avramenko sent an execution copy of the Aircraft Purchase Agreement (APA) on May 8, 2024.",
+    "Ana Luisa DERENUSSON requested specific bank details for the 'Escrow Agent Account' to be filled into the agreement.",
+    "Ilona Avramenko attached Exhibit E, containing the escrow agent's bank details, on May 8, 2024.",
+    "Ana Luisa DERENUSSON provided the details for Apex Agency Services Ltd. as the 'process agent'.",
+    "Ilona Avramenko requested KYC documents for Timbro Trading S.A. on May 7, 2024, as part of Chanel IT's requirements.",
+    "Danny Farnham is an expert witness who has provided information and opinions in an 'EXPERT WITNESS REPORT'.",
+    "Danny Farnham will testify as a technical expert regarding 'technical deficiencies in Gulfstream’s maintenance and repair work' in an arbitration proceeding titled 'CITIOM v. Gulfstream'.",
+    "His expert opinion is based on firsthand, on-site observation of work performed by Gulfstream Aerospace Corporation ('Gulfstream') at its St. Louis Service Center, and direct communication and interaction with Gulfstream employees and management.",
+    "These observations span the duration of a '192-month inspection event' that occurred from January 29, 2024, to November 29, 2024.",
+    "Specific opinions expressed by Farnham include questioning Gulfstream's initial '35-45 days downtime' estimate for the inspection and expressing concern and disappointment with Gulfstream not maintaining 'an experienced and consistent level of manpower' on the project (e.g., during an August 9 conference call with Gulfstream St Louis management).",
+    "Danny Farnham's aviation career started in 1966 when he enlisted in the US Air Force, serving as an aircraft maintenance technician. He has been in the business jet segment of aviation since 1981, working with Gulfstream, Bombardier, Dassault, Textron, and Embraer aircraft in various roles.",
+    "There are at least two versions of Danny Farnham's expert report referenced, one dated March 5, 2025 ('PDF 2 - EXPERT WITNESS REPORT March 5 copy.pdf') and another dated March 21, 2025 ('NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf').",
+    "Farnham's report notes that an email to him and 'Martin' on May 11, 2020, discussed 'corrosion on the wing to body fairings'.",
+    "Danny Farnham is an aviation maintenance professional.",
+    "Danny Farnham was engaged by the Claimant (CITIOM) as a technical expert in the CITIOM v. Gulfstream arbitration.",
+    "Danny Farnham authored an Expert Report dated March 21, 2025.",
+    "Danny Farnham is expected to testify in the Arbitration as a technical expert regarding deficiencies in Gulfstream’s maintenance and repair work.",
+    "Farnham's expert opinion is that Gulfstream failed to meet the standard of care as an MRO provider in planning, execution, and management of the 192-Month Inspection of the G550 S/N 5174 aircraft.",
+    "Farnham's report details numerous deficiencies in Gulfstream’s performance, including inadequate pre-inspection planning, proposal deficiencies, workforce and project management failures, and substandard corrosion management practices, which allegedly contributed to extensive delays and increased costs.",
+    "Farnham's report concludes that Gulfstream’s failures were the proximate cause of delays and damages suffered by CITIOM.",
+    "Farnham's report indicates that Gulfstream missed opportunities to address corrosion at earlier checks.",
+    "Another expert (identified as 'LB', retained by Gulfstream) prepared a rebuttal report to Farnham's report, dated April 21, 2025.",
+    "LB's rebuttal report challenges Farnham's report, stating it misconstrues the respective roles and responsibilities of the owner/operator and the OEM/MRO facility for maintaining aircraft.",
+    "LB's rebuttal report states that Farnham's report misstates the industry standard for information considered by, and provided to, MRO facilities during the proposal process and prior to aircraft induction.",
+    "Danny Farnham is the seller's on-site project manager.",
+    "Gulfstream requests information on the aircraft, but the seller is hesitant until the LOI is signed and the deposit is in place.",
+    "Once an authorization form is signed, the seller requests all information requests go through Danny Farnham to ensure one clear channel of communication.",
+    "Michael Makarius (AVCON JET AG) attributes significant delays and dissatisfaction in the 192 MOS inspection project (Gulfstream G550, SN 5174, OE-LIM) to inadequate organization and effectiveness on the part of Gulfstream's team.",
+    "Michael Makarius states that their on-site representative, Danny, is often the only source of communication regarding project progress, and without his presence, they fear remaining uninformed.",
+    "The seller requested that all information requests go through Danny Farnham once the authorization form is signed.",
+    "Danny Farnham is often the only source of communication regarding project progress.",
+    "Without Danny Farnham's presence, the sender fears they would remain uninformed about the inspection status.",
+    "Danny Farnham sent an email on August 13, 2024, expressing concerns about manpower shortages on Project G550, SN 5174.",
+    "Farnham's email details a 'failed commitment' from Gulfstream to increase experienced technicians on his project.",
+    "Farnham describes the situation as a 'greatest example of mismanagement of facilities and resources' he has experienced in many years in aviation, dating back to 'early Gill days.'",
+    "Farnham states that manpower has fallen short in all areas for Project G550, SN 5174: not adequate, not consistent, some not experienced.",
+    "Farnham notes that experienced technicians have been moved to other projects or sent for training, leaving the project with insufficient skilled labor.",
+    "Farnham observes an experienced technician re-installing a floor beam cap, working only four ten-hour days per week, and other technicians working miscellaneous tasks or being moved.",
+    "Farnham questions what message this sends to the owner about the importance or priority given to getting his plane back in service.",
+    "The email from Danny Farnham was sent to Murtaza Hassan and CC'd several other Gulfstream employees, including Joseph Allen, Joseph Schuster, Derek Zimmerman, and others.",
+    "Bassim Haidar forwarded an email from Danny Farnham to Mark Burns on August 13, 2024, stating '11 months for a 192 check and we are struggling to get my aircraft back. This is unbelievable.'",
+    "Danny Farnham is designated as an expert witness.",
+    "Farnham's primary goals include establishing firsthand visibility into daily failures at Gulfstream's St. Louis facility and explaining why a 10-month downtime is not industry standard.",
+    "Farnham's preparation focus includes a walk-through of key timeline slippages, explaining pre-inspection data Gulfstream should have had (e.g., corrosion history), and rebutting Beauchemin’s assertion that MROs owe no duty of care.",
+    "Farnham is expected to use documents such as inspection schedules, update logs, internal Gulfstream correspondence, and proposal vs. actual labor hours.",
+    "Danny Farnham's expert opinion addresses technical deficiencies in Gulfstream's maintenance and repair work on the G550 S/N 5174 aircraft during a 192-Month Inspection.",
+    "Farnham concludes that Gulfstream's failures (including inadequate planning, management, and corrosion practices) were the proximate cause of CITIOM's delays and damages.",
+    "His report and expected testimony are focused on technical standards and responsibilities.",
+    "His opinions have been challenged in a rebuttal report by Gulfstream's expert.",
+    "Danny Farnham is identified as a person acting on behalf of Claimant, Channel IT, in this arbitration.",
+    "The request for documents is made pursuant to Scheduling Order No. 1.",
+    "Respondents request that Claimant produce documents by December 4, 2024.",
+    "The definition of 'Channel IT' or 'CITOM' includes 'any of its parents, subsidiaries, affiliates, predecessors, successors, owners, executives, employees, representatives, agents, and/or anyone else acting on its behalf, including but not limited to Danny Farnham.'",
+    "The definition of 'Document' includes 'any writing, recording, photograph, electronic message, chat, instant message, or other type of memorialized content regardless of how it is memorialized.'",
+    "Gulfstream requests documents from November 2018 through the date documents are collected.",
+    "Request 4 asks for documents showing the number and model of Gulfstream Aircraft that Avcon and Danny Farnham have had experience managing and/or supervising maintenance for in the previous ten (10) years.",
+    "Request 8 asks for internal and external communications by and between and among Channel IT, Avcon, Danny Farnham, Ben Schouten, and any Gulfstream representative(s) or employee(s)... related to the Aircraft’s 192-month inspection.",
+    "Request 11 asks for documents relating to any responsibility that Avcon, Danny Farnham, or Ben Schouten have in relation to any aspect of the 192-month inspection, including correspondence involving legal counsel.",
+    "Danny Farnham authored an Expert Report for CITIOM (Claimant) in an arbitration against Gulfstream, dated March 21, 2025, concerning technical deficiencies in maintenance and repair work on aircraft G550 S/N 5174.",
+    "A key issue identified in Farnham's report is Gulfstream's handling of a ground air start system duct, which was deemed unrepairable after evaluation between the second week of July and the second week of September.",
+    "Gulfstream could not source a new replacement duct and eventually located and purchased a used duct. This used duct was initially unserviceable, requiring further repair and certification.",
+    "The repair, certification, and installation of the used duct on S/N 5174 occurred on October 8, 2024.",
+    "Farnham's opinion criticizes Gulfstream's process for the duct, stating it took 'Three (3) months to evaluate, determine the original duct is not repairable, locate a replacement duct, (new not available) locate a replacement used duct, repair the used duct and finally ship to St Louis for installation on the aircraft! This is a typical example of a complex, cumbersome and very inefficient system!'",
+    "Beyond the duct, Farnham's report also details other rework items resulting from 'poor workmanship, lack of experience/training, and possibly carelessness,' including damage to flight control cables, LH Fixed engine cowl, LH inboard spoiler, wing torque link fittings, APU inlet, and APU installation issues.",
+    "Danny Farnham acted as Claimant’s onsite representative during the maintenance visit.",
+    "Avcon Jet and Mr. Farnham had experience with Gulfstream’s proposal process and knew (or should have known) that Gulfstream just quoted the work associated with the inspection itself.",
+    "Danny Farnham is CITIOM's technical expert.",
+    "CITIOM has provided the expert reports of Mr. Danny Farnham (technical expert) and FAZ Forensics (accounting/damages expert).",
+    "Farnham's expert report informs the planning and scope of the 192-Month Inspection, specifically referencing prior maintenance events and corrosion.",
+    "Gulfstream 'possessed or should have readily accessed a comprehensive understanding of the Aircraft’s maintenance history and condition' (Farnham p. 9) sufficient to provide a realistic proposal for the 192-month inspection.",
+    "Danny Farnham authored an Expert Report for the Claimant (CITIOM) concerning Gulfstream's maintenance and repair work on the G550 S/N 5174 aircraft.",
+    "Farnham's Expert Report is dated March 21, 2025, with other related documents possibly dated March 5 (year not explicitly stated for March 5, but implied to be around the same timeframe).",
+    "Farnham's opinion details deficiencies in Gulfstream's processes, citing a specific example of the 'ground air start system' duct repair for SN 5174.",
+    "For the ground air start duct, Gulfstream took from the second week in July to the second week in September to determine the original duct was unrepairable. A new duct was unavailable.",
+    "A serviceable used duct was eventually located, purchased by Gulfstream, repaired, certified, and installed on SN 5174 on October 8, 2024.",
+    "Farnham concludes that the approximately three-month process for the duct (evaluation, finding unrepairable, locating replacement, repairing used, shipping) is 'a typical example of a complex, cumbersome and very inefficient system!'",
+    "Farnham's report also points to 'Damage and Rework' resulting from 'poor workmanship, lack of experience/training, and possibly carelessness,' leading to 'many additional manhours of labor' and a 'negative impact on the schedule.'",
+    "Corrosion was found at the connection flanges on 6 air ducts that were removed, and Gulfstream reportedly lacked the capability to assess or repair these ducts, requiring them to be sent to Savannah.",
+    "Gulfstream claims to have incurred 9,822 hours addressing corrosion and other structural discrepancies on Claimant's aircraft, claiming warranty work accounts for 55% of man-hours.",
+    "The original work order quote estimated 2800 manhours for the 192-month inspection.",
+    "Discrepancies discovered during the inspection process added an estimated 20,000 additional manhours to the project.",
+    "Gulfstream is providing overtime labor at no charge to expedite work.",
+    "The estimated completion date was projected to be mid-November, subject to change based on engineering evaluations of corrosion.",
+    "Gulfstream has no way to determine how or where the aircraft has been operated, stored, and maintained, all of which have a direct impact on the number and type of discrepancies noted during the inspection process.",
+    "The estimated completion date was June 21st, which was later than an end-of-April request.",
+    "Gulfstream is covering overtime labor costs at no charge to the client to expedite work.",
+    "Failure to keep up with the progress payment schedule will result in work stoppage.",
+    "Michael Makarius mentions that without Danny Farnham's presence, they fear they would remain uninformed about the inspection status.",
+    "CITIOM is the owner of Gulfstream G550, Serial Number 5174 (the \"Aircraft\").",
+    "CITIOM commenced arbitration against Gulfstream pursuant to the Notice of Arbitration dated May 31, 2024.",
+    "Gulfstream submitted a customer support proposal dated 02 June 2023 for the Aircraft's 192-month inspection.",
+    "The Proposal quoted a workscope cost of $835,931.",
+    "Gulfstream estimated 2,800 manhours were required for the 192-month inspection, with an initial downtime of 35-45 business days.",
+    "CITIOM agreed to the Proposal relying on Gulfstream's express representations and believing them to be made in good faith.",
+    "Gulfstream introduced 'new data collection and analytical capabilities' in July 2023.",
+    "CITIOM input the Aircraft with Gulfstream in January 2024.",
+    "Gulfstream advised in April 2024 that the estimated completion date would be June 21st, with increased downtime and costs.",
+    "Gulfstream blamed increased downtime on 'numerous discrepancies' discovered during inspection.",
+    "CITIOM argued that several discovered issues should have been previously identified or resulted from Gulfstream's own ineffective repairs.",
+    "Gulfstream claimed a need to replace leading edges due to corrosion, but CITIOM contends this should have been addressed in July-August 2023.",
+    "CITIOM objects to Gulfstream's Instruction 3, which requests documents from November 2018 through the date of collection, on the grounds of overbreadth and burden. CITIOM will only produce responsive documents from March 2020 onwards, unless otherwise specified.",
+    "CITIOM objects to Gulfstream's Request No. 1 (location of Aircraft, flights, and between-trip storage) as overbroad, seeking documents unrelated to the dispute. CITIOM will produce flight logs from July 2020 to present.",
+    "CITIOM objects to Gulfstream's Request No. 2 (parking, storage, hangarage) as overbroad, seeking unrelated contracts. CITIOM advises that the Aircraft was not put into storage from 2018 to present.",
+    "CITIOM objects to Gulfstream's Request No. 3 (number and model of aircraft owned by CITIOM or for Bassim Haidar) as overbroad, seeking documents unrelated to the dispute. CITIOM will produce documents showing the number and model of the Bombardier CL-600-2B16 Challenger 605, S/N 5745, owned by Mr. Haidar.",
+    "CITIOM objects to Gulfstream's Request No. 4 (Gulfstream Aircraft experience of Avcon and Danny Farnham) as overbroad, seeking documents unrelated to the dispute. CITIOM will produce Mr. Farnham's CV and documents showing Gulfstream Aircraft managed by Avcon since July 2020.",
+    "CITIOM objects to Gulfstream's Request No. 5 (maintenance proposals executed by Avcon/Danny Farnham) as overbroad and notes that such proposals are likely in Gulfstream's possession.",
+    "CITIOM agrees to produce documents related to corrosion repairs performed by entities other than Gulfstream, provided the documents are not in Gulfstream's possession, custody, or control and that Gulfstream performed all regular maintenance.",
+    "CITIOM objects to Gulfstream's Request No. 7 (communications regarding the 192-month inspection) on grounds of attorney-client privilege, work product doctrine, and documents in Gulfstream's possession. CITIOM agrees to produce non-privileged documents.",
+    "CITIOM objects to Gulfstream's Request No. 8 (communications related to the 192-month inspection, downtime, and cost) on grounds of privilege and documents in Gulfstream's possession. CITIOM agrees to produce responsive documents.",
+    "CITIOM objects to Gulfstream's Request No. 9 (communications with other Gulfstream customers regarding downtime or cost of prior maintenance visits) on grounds of overbreadth and seeking documents unrelated to the dispute.",
+    "Danny Farnham is the author of an expert report for CITIOM in an arbitration proceeding, dated March 21, 2025.",
+    "In his expert opinion, Danny Farnham states that Gulfstream failed to adequately identify and address existing corrosion issues during previous maintenance events.",
+    "The specific maintenance events cited by Farnham where Gulfstream's failure to address corrosion occurred are the 144-month inspection in 2020 and the July 2023 maintenance.",
+    "These failures by Gulfstream led to a recurrence and exacerbation of corrosion findings during the 192-Month Inspection.",
+    "Farnham's expert opinion is based on the premise that industry standards mandate rigorous inspection protocols to identify and evaluate corrosion in all accessible areas of aircraft structure.",
+    "He also references 'Manufacturer's Maintenance Manual Requirements' as a basis for proper corrosion inspection.",
+    "The context of his report indicates his opinion may also address 'inadequate staffing levels and inefficient workforce management practices' by Gulfstream, contributing to delays and increased costs.",
+    "The Expert Report of D. Farnham dated March 21, 2025, is cited in relation to economic damages incurred by CITIOM due to an aircraft being out of service from January 29, 2024, through November 29, 2024.",
+    "D. Farnham's Expert Report (March 21, 2025) references sections II, III, V, VI, VIII, XIII.1, and XIII.2.",
+    "There is an 'EXPERT WITNESS REPORT' dated March 5, 2025 (implied by file name 'March 5 copy.pdf' and context of '2025 input') that discusses an 'upcoming 192 - month inspection for a late 2024, early 2025 input'.",
+    "AVCON contacted Gulfstream in May 2023 for a quote for the 192-month inspection, and Gulfstream provided Customer Support Proposal #Q-11876, dated June 2023. AVCON, on behalf of the aircraft owner, approved and returned the proposal in September 2023.",
+    "An 'LB Expert Rebuttal Report' dated April 21, 2025, exists in the CITIOM v. Gulfstream proceedings.",
+    "The author of the 'LB Expert Rebuttal Report' is the Director of Aviation for a high net worth individual, responsible for overseeing technical maintenance of their Gulfstream G550, which is undergoing a 144-month inspection with Gulfstream in Savannah as of April 2025.",
+    "Danny Farnham is not mentioned in the provided document excerpts.",
+    "The document is a Protective Order and Confidentiality Agreement for the arbitration between Channel IT Isle of Man Ltd. (Claimant) and Gulfstream Aerospace Corporation (Respondent), Case No. G-24-115-AA.",
+    "The Protective Order incorporates the attached Confidentiality Agreement as Exhibit A.",
+    "Confidential Material can be designated by marking 'Confidential Material' or 'Confidential – Subject To Protective Order' on documents.",
+    "Highly Confidential Material may be designated to protect trade secrets, proprietary or competitively sensitive financial information, and/or customer identifying information.",
+    "Gulfstream may partially redact documents and produce them with a 'Confidential Material' designation in lieu of 'Highly Confidential Material' for certain information like customer names or cost/profit information.",
+    "Parties agree to meet and confer in good faith if Claimant objects to Gulfstream's redactions of information.",
+    "If disagreements over redactions cannot be resolved, the issue may be submitted to the Tribunal.",
+    "Danny Farnham is identified as the seller's on-site project manager for aircraft maintenance and repair.",
+    "Michael Makarius of AVCON JET AG describes Danny as 'our on-site representative' and 'often the only source of communication regarding project progress.'",
+    "Without Danny Farnham's presence, AVCON JET AG feared they would remain uninformed about the inspection status.",
+    "Michael Makarius of AVCON JET AG identified Danny as the 'only source of communication regarding project progress' without his presence.",
+    "Ana Luisa Derenusson from DDSA requested the Word version of the APA on May 8, 2024.",
+    "Ana Luisa Derenusson requested specific blank fields to be filled in the definition of 'Escrow Agent Account' on May 8, 2024.",
+    "Ilona Avramenko attached the bank details for the escrow agent at Exhibit E on May 8, 2024.",
+    "Ilona Avramenko attached an execution copy of the APA and aircraft specifications on May 7, 2024.",
+    "Ilona Avramenko mentioned that the APU is on JSSI and the attached APA was updated accordingly, with a redline copy showing this change and the insertion of a process agent on May 7, 2024.",
+    "Ana Luisa Derenusson provided the details for Apex Agency Services Ltd. as the process agent on May 7, 2024.",
+    "The requested KYC documents for Timbro Trading S.A. included Certificate of Incorporation, Register(s) of Shareholders, Passport of beneficial owners, and proof of address, all needing to be certified.",
+    "Gulfstream requested that the seller releases information on the aircraft.",
+    "The seller is hesitant to release information until the LOI is signed and the deposit is in place.",
+    "Once the authorization form is signed, all information requests should go through Danny Farnham.",
+    "The 192 MOS inspection project for the Gulfstream G550, SN 5174, OE-LIM was initiated on January 28, 2024.",
+    "Gulfstream admits that it performed maintenance and/or services for or on the Aircraft prior to the 192-month inspection, including a 144-month inspection between March and July 2020, and additional maintenance services in July and August 2023.",
+    "Gulfstream denies tracking and recording labor hours and/or downtime specifically for 192-month inspections on G550 aircraft at its St. Louis facility since 2018, but admits to having systems that can identify labor hours and visit length for maintenance visits, some of which included tasks associated with 192-month inspections.",
+    "Gulfstream denies developing and implementing a new analytical tool in or around July 2023 designed to improve cost and downtime estimates for certain maintenance events, including 192-month inspections.",
+    "Gulfstream denies not disclosing the existence or use of the 'New Analytical Tool' or using it to update the June 2023 Proposal, admitting only that the original June 2023 Proposal was not revised to include estimated downtime or costs for correcting discrepancies discovered during the 192-month inspection.",
+    "Gulfstream denies outsourcing the evaluation, repair, and/or painting of certain aircraft components, including the main entrance door, rudder, and elevators, to its Savannah facility during the 192-month inspection, admitting only that these components were sent to the Savannah facility for those services.",
+    "Gulfstream denies that the transfer of components to the Savannah facility delayed the 192-month inspection or caused paint mismatch issues requiring rework.",
+    "Gulfstream denies having opportunities to inspect for and identify corrosion in areas where it was subsequently discovered during the 192-month inspection, despite prior maintenance services (144-month inspection in 2020 and July-August 2023 maintenance).",
+    "Gulfstream denies performing extensive repairs to the horizontal stabilizer due to significant internal corrosion during the 144-month inspection in 2020, but admits to performing repairs due to internal bondline corrosion findings identified through non-destructive testing during the 144-month inspection and also admitting to performing repairs due to corrosion findings during the 192-month inspection.",
+    "Gulfstream denies that discrepancies and repairs performed during the 192-month inspection relating to conditions that existed or should have been addressed during prior maintenance services were the responsibility of Gulfstream under applicable warranties or standard of care.",
+    "Gulfstream denies an auto deletion policy of emails with no archival backup leading to deleted or unpreserved communications pertaining to the Aircraft and its 192-month inspection. It admits that its mail system automatically deletes emails after 60 days unless saved or archived by the user, pursuant to its corporate email retention policy.",
+    "Danny Farnham's Expert Report dated March 21, 2025, asserts that Gulfstream's failure to obtain necessary information early in the proposal process demonstrated a lack of proactive planning, resulting in increased costs and delays for all parties.",
+    "Danny Farnham's Expert Report dated March 21, 2025, identifies 'Protracted and inefficient processes for evaluating repairs and obtaining engineering dispositions' as a contributor to issues.",
+    "Danny Farnham's Expert Report dated March 21, 2025, specifically criticizes 'Complex and slow processes for obtaining engineering dispositions, particularly when involving coordination between St. Louis and Gulfstream Savannah facilities.'",
+    "Danny Farnham's Expert Report dated March 21, 2025, states that Gulfstream's consistently slow and inefficient processes for evaluating technical issues, determining repair strategies, and obtaining engineering dispositions significantly contributed to delays across various aspects of the 192-Month Inspection.",
+    "A legal proceeding exists between CITIOM and GAC (likely Gulfstream Aerospace Corporation), evidenced by a 'Confidentiality Agreement and Proposed Protective Order.'",
+    "The telephonic preliminary hearing and scheduling conference was held on an unspecified date in 2024.",
+    "The Arbitrators are John A. Sherrill, Glenn P. Hendrix, and Robert W. Murphy.",
+    "The Claimant was represented by an unnamed individual from an unnamed law firm.",
+    "The case involves CHANNEL IT of MAN LIMITED as Claimant and GULFSTREAM AEROSPACE CORPORATION as Respondent.",
+    "The CPR Case Number is G-24-115-AA.",
+    "Fact discovery shall be concluded on or before a blank date.",
+    "Parties shall not submit written discovery requests to one another within 30 days of the fact discovery deadline.",
+    "The parties shall submit an agreed protective order on or before a blank date.",
+    "Parties shall notify the Arbitrators on or before a blank date whether they will present expert witnesses.",
+    "The hearing in this matter shall commence on a blank date and continue through a blank date.",
+    "A final pre-hearing conference call will be held on a blank date at a blank ET.",
+    "The Arbitrators shall issue a reasoned award within 30 days of the conclusion of post-hearing briefing.",
+    "The Order is dated August ___, 2024.",
+    "Danny Farnham was designated as an expert witness for the Claimant (CITIOM).",
+    "Danny Farnham's expert opinions are formally documented in Expert Reports dated March 5, 2025, and March 21, 2025.",
+    "These reports address issues related to Gulfstream's maintenance and repair work on a G550 aircraft.",
+    "Farnham's reports discuss delays and economic damages incurred by CITIOM due to the aircraft being out of service from January 29, 2024, through November 29, 2024.",
+    "The March 5, 2025 report specifically discusses an upcoming 192-month inspection.",
+    "AVCON acted on behalf of the aircraft owner in negotiations with Gulfstream in 2023 regarding the 192-month inspection.",
+    "Danny Farnham's opinions are expected to focus on technical standards and responsibilities.",
+    "Gulfstream's expert, identified as 'LB', authored an expert rebuttal report dated April 21, 2025, challenging Farnham's opinions.",
+    "Danny Farnham's Expert Report is dated March 21, 2025.",
+    "Farnham's March 21, 2025 report addresses economic damages incurred by CITIOM due to the G550 aircraft being out of service from January 29, 2024, through November 29, 2024.",
+    "In his March 21, 2025 Expert Report, Farnham states that Gulfstream repeatedly failed to provide timely and transparent communication to CITIOM regarding delays and cost escalations.",
+    "Farnham's March 21, 2025 Expert Report details Gulfstream's inconsistent and unreliable return-to-service date projections, which were pushed back from an initial April 1, 2024, estimate to June 21, 2024, then August 1, August 15, August 20, August 27, September 19, December 16, 2024, and finally mid-November 2024.",
+    "Farnham's March 21, 2025 Expert Report concludes that these shifting return-to-service projections demonstrate a lack of control over the project timeline and unreliable communication by Gulfstream.",
+    "Gulfstream initially provided a completion date of June 21, 2024, estimating an additional 5,730 hours of work, after conceding it could not meet an April 2024 return date.",
+    "Danny Farnham's Expert Report dated March 21, 2025, includes sections II, III, V, VI, VIII, XIII.1, and XIII.2.",
+    "Gulfstream estimated 2,800 manhours and an initial downtime of 35-45 business days for the 192-month inspection.",
+    "Gulfstream stated that if the Aircraft was input on January 29, 2024, its return to service date would be April 1, 2024.",
+    "In April 2024, Gulfstream advised that the estimated completion date would be June 21st, blaming \"numerous discrepancies\" identified during inspection.",
+    "Gulfstream claims to have identified a need to replace certain leading edges due to corrosion, which CITIOM argues should have been addressed during July-August 2023 maintenance.",
+    "Michael Makarius of AVCON JET AG formally expressed concerns and dissatisfaction regarding the efficiency and service level during the 192 MOS inspection project for Gulfstream G550, SN 5174, OE-LIM, initiated on January 28, 2024.",
+    "Michael Makarius states that Danny, the on-site representative, is often the only source of communication regarding project progress.",
+    "Michael Makarius implies that without Danny's presence, AVCON JET AG fears remaining uninformed about inspection status.",
+    "Gulfstream admits that it has systems in place that can be searched to identify labor hours and length of visit for maintenance service visits at its St. Louis facility since 2018, and that some of these visits included inspection tasks associated with 192-month inspections.",
+    "Gulfstream admits that in or around July 2023, it began including in maintenance service visit proposals estimates for additional downtime and costs associated with correcting discrepancies during scheduled maintenance visits, based on historical data.",
+    "Gulfstream admits that it did not revise the Proposal originally provided to Claimant in June 2023 to include estimated downtime or costs associated with correcting discrepancies discovered during the 192-month inspection.",
+    "Gulfstream admits that certain components, including the main entrance door, rudder, and elevators, were sent to Gulfstream’s Savannah facility for evaluation, repair and/or painting.",
+    "Gulfstream admits that it performed repairs on the Aircraft's horizontal stabilizer during the 144-month inspection due to internal bondline corrosion findings identified through non-destructive testing, and that it performed repairs on the Aircraft's horizontal stabilizer during the 192-month inspection due to corrosion findings.",
+    "Gulfstream admits that pursuant to its corporate email retention policy, its mail system automatically deletes emails after 60 days, unless saved or archived by the user.",
+    "An expert witness in the CITIOM v. Gulfstream arbitration is a Certified Public Accountant (CPA) licensed in New York, a Certified Fraud Examiner (CFE), and Certified in Financial Forensics (CFF).",
+    "This expert is currently employed as a Director at FAZ Forensics.",
+    "This expert possesses approximately 40 years of combined experience in forensic and financial accounting, auditing, and litigation consulting.",
+    "The expert's Curriculum Vitae (CV), detailing their background, qualifications, articles, presentations, seminars, and list of other cases, is attached as Appendix A to their report.",
+    "Reports related to these qualifications are associated with the case 'CITIOM v. Gulfstream' and include file names like 'CITIOM v. Gulfstream-FAZ Report.pdf' and 'Chennel IT Report Draft- 4-2-25.docx'.",
+    "Danny Farnham, along with Avcon Jet, had experience with Gulfstream's proposal process and knew (or should have known) that Gulfstream quoted only the work associated with the inspection itself.",
+    "The March 21, 2025 report criticizes Gulfstream for repeated failure to provide timely and transparent communication regarding delays and cost escalations.",
+    "The March 21, 2025 report also criticizes Gulfstream's inconsistent and unreliable return-to-service date projections.",
+    "Return-to-service date projections shifted from an initial April 1, 2024 estimate to multiple subsequent dates, ending in mid-November 2024.",
+    "The March 5, 2025 report specifically discusses an upcoming 192-month inspection for which AVCON acted on behalf of the aircraft owner in negotiations with Gulfstream in 2023.",
+    "Farnham's opinions have been challenged in an expert rebuttal report dated April 21, 2025, authored by Gulfstream's expert ('LB').",
+    "Danny Farnham authored an expert report for CITIOM titled 'NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf', indicating he is an expert witness for CITIOM.",
+    "In his March 21, 2025 expert report, Danny Farnham opines that Gulfstream failed to adequately identify and address existing corrosion issues during the 144-month inspection in 2020 and July 2023 maintenance.",
+    "Farnham's March 21, 2025 report states that Gulfstream's prior failures to address corrosion led to a recurrence and exacerbation of corrosion findings during the subsequent 192-Month Inspection.",
+    "Farnham's report also attributes delays and increased costs to Gulfstream's 'inadequate staffing levels and inefficient workforce management practices'.",
+    "Danny Farnham's March 21, 2025 report discusses industry standards for rigorous inspection protocols to identify and evaluate corrosion and references Manufacturer's Maintenance Manual Requirements.",
+    "The legal proceeding is an arbitration between CITIOM and GAC (likely Gulfstream), operating under CPR rules and involving arbitrators.",
+    "The arbitration involves 'sensitive proprietary, commercial or technical information', and specifically mentions Gulfstream's 'cost or profit information' and 'customer identifying information' as highly confidential.",
+    "Danny Farnham is identified as the Aircraft Manager for Avcon Industries.",
+    "Danny Farnham's CV is a priority document for immediate production.",
+    "Avcon Aircraft Management Records (July 2020 onwards) are part of RFP 4, which also includes Danny Farnham's CV.",
+    "Danny Farnham's expert opinion, documented in a report dated March 21, 2025, addresses Gulfstream's failure to identify and address corrosion issues.",
+    "His expert opinion attributes delays and increased costs to Gulfstream's inadequate staffing and workforce management.",
+    "Gulfstream's Defense claims increased downtime (approx. 160 working days vs. 35-45 estimated) was due to repairs for discrepancies (including corrosion) discovered during the 192-month inspection that were not included in the original Proposal.",
+    "Gulfstream determined the St. Louis Service Center would perform the inspection following the execution of the 2023 Proposal, and Claimant agreed to this.",
+    "The 192-month inspection requires substantial disassembly of the aircraft's interior and exterior.",
+    "The process for fixing corrosion is time and manpower-intensive, involving grinding, measuring, submitting to engineers, and engineer approval or instruction for further repair.",
+    "Gulfstream's 20-year structural warranty covers costs associated with structural repairs due to structural corrosion.",
+    "Gulfstream claims 9,822 hours have been allocated to warranty work for corrosion and structural discrepancies on Claimant's aircraft, representing 55% of the total man-hours spent on the inspection.",
+    "Gulfstream states its warranty covers structural repairs but not the removal of minor corrosion, considered standard maintenance. Gulfstream determines warranty coverage.",
+    "The Gulfstream Work Authorization Terms and Conditions (T&C) include an exclusion of damages clause (Section 8) barring punitive, special, incidental, or consequential damages, including loss of use, loss of time, inconvenience, diminution in value, or commercial loss.",
+    "The 2023 Proposal states estimated downtime is not a contractual commitment but an estimate based on Gulfstream's understanding, which may be adjusted based on the final schedule, facility, and if additional Work is required.",
+    "Georgia law implies a 'reasonable time' for performance when a contract is silent on the matter of completion deadlines.",
+    "Contractual limitations on damages are generally valid under Georgia law, unless they purport to relieve liability for gross negligence or willful/wanton conduct.",
+    "Gulfstream also warrants previous work for 12 months or 1,000 hours of flight time, with the sole remedy being repair or replacement.",
+    "Michael Brown (FAZ Forensics) was engaged as a Damages Expert.",
+    "The scope of Mr. Brown's analysis included lost charter income and alternative transportation expenses.",
+    "Mr. Brown's headline damages figure is €2.4 million, composed of €1.6M in lost profit and €814k in alternate transport costs.",
+    "Lost charter income was calculated based on Avcon Jet reports from 2022–2024, assuming a Return to Service (RTS) date of April 1, 2024, as quoted by Gulfstream.",
+    "Alternate transportation costs totaling €814,067 were based on actual invoices and receipts provided by Avcon Jet and CITIOM’s accounting team.",
+    "Mr. Brown explicitly excluded categories like reputational harm, lost sale, direct repair costs, or warranty disputes from his analysis.",
+    "The RTS date of April 1, 2024, was derived from Gulfstream's June 2023 proposal.",
+    "Mr. Brown's methodology followed AICPA forensic standards and industry practice for aviation loss modeling.",
+    "The damages model was based on historical booking patterns and prior demand, not necessarily on pre-contracted flights.",
+    "Gulfstream is the opposing party against whom CITIOM is seeking damages, as implied by the context of the expert's engagement.",
+    "CITIOM is the claimant and engaged Mr. Brown's services.",
+    "Avcon Jet provided operating reports and CITIOM's accounting team provided invoices for transportation costs."
+  ],
+  "citations": [
+    {
+      "document": "PDF 2 - EXPERT WITNESS REPORT                                     March 5 copy.pdf",
+      "page": 1,
+      "text": "The information and opinions provided in this report by Danny Farnham are based on firsthand,",
+      "verified": false
+    },
+    {
+      "document": "PDF 2 - EXPERT WITNESS REPORT                                     March 5 copy.pdf",
+      "page": 1,
+      "text": "month inspection) event (January 29, 2024 – November 29, 2024). Danny’s participation",
+      "verified": false
+    },
+    {
+      "document": "PDF 2 - EXPERT WITNESS REPORT                                     March 5 copy.pdf",
+      "page": 6,
+      "text": "During the input meeting and after review of the proposal Danny Farnham questioned the 35-",
+      "verified": false
+    },
+    {
+      "document": "PDF 2 - EXPERT WITNESS REPORT                                     March 5 copy.pdf",
+      "page": 7,
+      "text": "during a conference call with Gulfstream St Louis management on the call I, Danny, again",
+      "verified": false
+    },
+    {
+      "document": "PDF 2 - EXPERT WITNESS REPORT                                     March 5 copy.pdf",
+      "page": 17,
+      "text": "Danny’s aviation career started in 1966 when he enlisted in the US Air Force. He was trained as",
+      "verified": false
+    },
+    {
+      "document": "331-463.pdf",
+      "page": 2,
+      "text": "Can you be so kind to fill in the following blanks in the agreement: “Escrow Agent Account” means the bank account with [*], ABA # [*], SWIFT [*], credit to INSURED AIRCRAFT TITLE SERVICE, ACCOUNT # [*], 21 E. Main Street, Suite 100, Oklahoma City, OK 73104, Advise: Ms. Kelli Schmidt, e-mail: kellis",
+      "verified": false
+    },
+    {
+      "document": "331-463.pdf",
+      "page": 4,
+      "text": "The process agente will be: Apex Agency Services Ltd. 6th Floor 125 London Wall London EC2Y 5AS",
+      "verified": false
+    },
+    {
+      "document": "331-463.pdf",
+      "page": 5,
+      "text": "As part of the Chanel IT’s KYC requirement, could you kindly provide the following documents for Timbro Trading S.A: a) Certificate of Incorporation (or equivalent); b) Register(s) of Shareholders / Structure Chart showing full ownership of the company up to and including the Beneficial Owner(s); c)",
+      "verified": false
+    },
+    {
+      "document": "No Exhibits - CITIOM v. Gulfstream-FAZ Report copy.pdf",
+      "page": 3,
+      "text": "understanding that, at the Arbitration, Danny Farnham will testify as a technical",
+      "verified": false
+    },
+    {
+      "document": "No Exhibits - CITIOM v. Gulfstream-FAZ Report copy.pdf",
+      "page": 6,
+      "text": "26. According to the Expert Report of Danny Farnham, an aviation maintenance",
+      "verified": false
+    },
+    {
+      "document": "No Exhibits - CITIOM v. Gulfstream-FAZ Report copy.pdf",
+      "page": 6,
+      "text": "27. Mr. Farnham’s Report details numerous deficiencies in Gulfstream’s performance,",
+      "verified": false
+    },
+    {
+      "document": "No Exhibits - CITIOM v. Gulfstream-FAZ Report copy.pdf",
+      "page": 7,
+      "text": "28. Mr. Farnham’s Report concludes that Gulfstream’s failures were the proximate",
+      "verified": false
+    },
+    {
+      "document": "No Exhibits - CITIOM v. Gulfstream-FAZ Report copy.pdf",
+      "page": 7,
+      "text": "earlier checks, as discussed in Mr. Farnham’s Report.",
+      "verified": false
+    },
+    {
+      "document": "1-66.pdf",
+      "page": 3,
+      "text": "Once the authorization form is signed, the seller kindly requests that all information requests go through the seller’s on-site project manager, Danny Farnham (we will provide his contacts) so that there is one clear channel of communication.",
+      "verified": false
+    },
+    {
+      "document": "1-66.pdf",
+      "page": 6,
+      "text": "It has become apparent that our on-site representative, Danny, is often the only source of communication regarding project progress.",
+      "verified": false
+    },
+    {
+      "document": "1-66.pdf",
+      "page": 6,
+      "text": "Without his presence, we fear we would remain uninformed about the inspection status, as updates from Gulfstream have been insufficient.",
+      "verified": false
+    },
+    {
+      "document": "1-110.pdf",
+      "page": 3,
+      "text": "Once the authorization form is signed, the seller kindly requests that all information requests go through the seller’s on-site project manager, Danny Farnham (we will provide his contacts) so that there is one clear channel of communication.",
+      "verified": false
+    },
+    {
+      "document": "1-110.pdf",
+      "page": 6,
+      "text": "It has become apparent that our on-site representative, Danny, is often the only source of communication regarding project progress.",
+      "verified": false
+    },
+    {
+      "document": "1-110.pdf",
+      "page": 6,
+      "text": "Without his presence, we fear we would remain uninformed about the inspection status, as updates from Gulfstream have been insufficient.",
+      "verified": false
+    },
+    {
+      "document": "111-206.pdf",
+      "page": 4,
+      "text": "Over the last 6 months we have been told that everything possible was being done to hire, bring people from other facilities, other departments, etc, to augment the staffing of experienced technicians on our project. We, the owner of the aircraft and his representatives understood this to be a commi",
+      "verified": false
+    }
+  ],
+  "steps": [
+    {
+      "time": 0.0,
+      "type": "thinking",
+      "content": "Query classified as unknown (complexity: 2/5)"
+    },
+    {
+      "time": 0.0,
+      "type": "thinking",
+      "content": "Analyzing repository structure..."
+    },
+    {
+      "time": 12.6,
+      "type": "thinking",
+      "content": "Hypothesis: Danny Farnham was designated as an expert witness for one of the parties (likely Gulfstream, given the 'GS Expert' and 'Gulfstream's Discovery' folders) in a legal proceeding (potentially "
+    },
+    {
+      "time": 12.6,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 1)"
+    },
+    {
+      "time": 12.6,
+      "type": "search",
+      "content": "Investigating: Search for: \"Danny Farnham\" AND \"expert opinion\""
+    },
+    {
+      "time": 17.9,
+      "type": "finding",
+      "content": "Found 1225 matches in 91 files"
+    },
+    {
+      "time": 17.9,
+      "type": "search",
+      "content": "Investigating: Search for: \"Danny Farnham\" AND \"expert report\""
+    },
+    {
+      "time": 18.0,
+      "type": "finding",
+      "content": "Found 1225 matches in 91 files"
+    },
+    {
+      "time": 18.0,
+      "type": "search",
+      "content": "Investigating: Search for: \"Farnham\" AND \"expert witness\""
+    },
+    {
+      "time": 18.1,
+      "type": "finding",
+      "content": "Found 1373 matches in 91 files"
+    },
+    {
+      "time": 37.5,
+      "type": "replan",
+      "content": "Hypothesis updated: Danny Farnham was designated as an expert witness for CITIOM (the Claimant) in an arbitration proceeding involving CITIOM v. Gulfstream. His expert opinion, formally documented in "
+    },
+    {
+      "time": 37.5,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 37.5,
+      "type": "reading",
+      "content": "Deep reading: 4. Charles Philipp - Cross Exam & Impeachment .docx"
+    },
+    {
+      "time": 37.5,
+      "type": "reading",
+      "content": "Deep reading: 331-463.pdf"
+    },
+    {
+      "time": 37.5,
+      "type": "reading",
+      "content": "Deep reading: Charles Philipp Outline #1.docx"
+    },
+    {
+      "time": 43.8,
+      "type": "replan",
+      "content": "Hypothesis updated: Danny Farnham was designated as a technical expert witness for CITIOM (the Claimant), *not* Gulfstream, in an arbitration proceeding, CITIOM v. Gulfstream. His expert opinion, docu"
+    },
+    {
+      "time": 43.8,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 43.8,
+      "type": "reading",
+      "content": "Deep reading: 111-206.pdf"
+    },
+    {
+      "time": 43.8,
+      "type": "reading",
+      "content": "Deep reading: 1-66.pdf"
+    },
+    {
+      "time": 43.8,
+      "type": "reading",
+      "content": "Deep reading: 1-110.pdf"
+    },
+    {
+      "time": 45.1,
+      "type": "replan",
+      "content": "Hypothesis updated: Danny Farnham was designated as an expert witness for the Claimant (CITIOM) in an arbitration proceeding against Gulfstream. His expert opinion, formally documented in an Expert Re"
+    },
+    {
+      "time": 45.1,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 45.1,
+      "type": "reading",
+      "content": "Deep reading: 1. Respondent's Requests for Production of Documents.pdf"
+    },
+    {
+      "time": 45.1,
+      "type": "reading",
+      "content": "Deep reading: Bassim Draft Witness Statement.docx"
+    },
+    {
+      "time": 45.1,
+      "type": "reading",
+      "content": "Deep reading: Full Direct List.docx"
+    },
+    {
+      "time": 55.7,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 2)"
+    },
+    {
+      "time": 55.7,
+      "type": "search",
+      "content": "Investigating: Locate and review the CV (Curriculum Vitae) of Danny Farnham, which is referenced as \"attached\" in his expert report."
+    },
+    {
+      "time": 55.9,
+      "type": "finding",
+      "content": "Found 92 matches in 91 files"
+    },
+    {
+      "time": 55.9,
+      "type": "search",
+      "content": "Investigating: Locate and review the full CV of Danny Farnham, which is stated to be attached to his expert report, to fully understand his qualifications and potential scope of expertise."
+    },
+    {
+      "time": 56.0,
+      "type": "finding",
+      "content": "Found 92 matches in 91 files"
+    },
+    {
+      "time": 71.8,
+      "type": "replan",
+      "content": "Hypothesis updated: Danny Farnham was designated as an expert witness for the Claimant (CITIOM) in an arbitration proceeding against Gulfstream. His expert opinion, formally documented in an Expert Re"
+    },
+    {
+      "time": 71.8,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 71.8,
+      "type": "reading",
+      "content": "Deep reading: Gulfstream - Prehearing Brief .pdf"
+    },
+    {
+      "time": 71.8,
+      "type": "reading",
+      "content": "Deep reading: Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf"
+    },
+    {
+      "time": 71.8,
+      "type": "reading",
+      "content": "Deep reading: 207-329.pdf"
+    },
+    {
+      "time": 77.1,
+      "type": "replan",
+      "content": "Hypothesis updated: Danny Farnham was designated as an expert witness for the Claimant (CITIOM) in an arbitration proceeding against Gulfstream. His expert opinion, formally documented in Expert Repor"
+    },
+    {
+      "time": 77.1,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 77.1,
+      "type": "reading",
+      "content": "Deep reading: Combined_20250505172300.pdf"
+    },
+    {
+      "time": 77.1,
+      "type": "reading",
+      "content": "Deep reading: CITIOM Amended Statement of Claim.pdf"
+    },
+    {
+      "time": 77.1,
+      "type": "reading",
+      "content": "Deep reading: 3. CITIOM Resp and Obj to Gulfstream RFPs.pdf"
+    },
+    {
+      "time": 86.8,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 3)"
+    },
+    {
+      "time": 86.8,
+      "type": "search",
+      "content": "Investigating: Identify the expert 'LB' and obtain their full 'CITIOM v. Gulfstream - LB Expert Rebuttal Report (4-21-25).pdf'."
+    },
+    {
+      "time": 86.9,
+      "type": "finding",
+      "content": "Found 193 matches in 91 files"
+    },
+    {
+      "time": 86.9,
+      "type": "search",
+      "content": "Investigating: Investigate the relationship between the 'EXPERT WITNESS REPORT March 5' documents and 'D. Farnham Expert Report - Mar 21 2025'. Are they different versions, drafts, or reports by diffe"
+    },
+    {
+      "time": 87.0,
+      "type": "finding",
+      "content": "Found 229 matches in 91 files"
+    },
+    {
+      "time": 105.3,
+      "type": "replan",
+      "content": "Hypothesis updated: Danny Farnham was designated as an expert witness for the Claimant (CITIOM) in an arbitration proceeding against Gulfstream, likely under CPR rules. His expert opinion is formally "
+    },
+    {
+      "time": 105.3,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 105.3,
+      "type": "reading",
+      "content": "Deep reading: 1-66.pdf"
+    },
+    {
+      "time": 105.3,
+      "type": "reading",
+      "content": "Deep reading: 331-463.pdf"
+    },
+    {
+      "time": 105.3,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf"
+    },
+    {
+      "time": 107.4,
+      "type": "replan",
+      "content": "Hypothesis updated: Danny Farnham was designated as an expert witness for the Claimant (CITIOM) in an arbitration proceeding against Gulfstream. His expert opinion is formally documented in Expert Rep"
+    },
+    {
+      "time": 107.4,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 107.4,
+      "type": "reading",
+      "content": "Deep reading: Combined_20250505172300.pdf"
+    },
+    {
+      "time": 107.4,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream - Gulfstream's Responses to CITIOM's Requests for Admission (2025.04.21).pdf"
+    },
+    {
+      "time": 107.4,
+      "type": "reading",
+      "content": "Deep reading: 1-110.pdf"
+    },
+    {
+      "time": 115.6,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 4)"
+    },
+    {
+      "time": 115.6,
+      "type": "search",
+      "content": "Investigating: Obtain and review the full content of 'PDF 2 - EXPERT WITNESS REPORT March 5 copy.pdf' to confirm D. Farnham as the author and to extract the specific details of his expert opinion."
+    },
+    {
+      "time": 115.8,
+      "type": "finding",
+      "content": "Found 68 matches in 91 files"
+    },
+    {
+      "time": 115.8,
+      "type": "search",
+      "content": "Investigating: Obtain and review the full content of 'No Exhibits - CITIOM v. Gulfstream-FAZ Report copy.pdf' and 'CITIOM v. Gulfstream-FAZ Report.pdf' to understand the specific arguments and finding"
+    },
+    {
+      "time": 115.8,
+      "type": "finding",
+      "content": "Found 238 matches in 91 files"
+    },
+    {
+      "time": 131.9,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 131.9,
+      "type": "reading",
+      "content": "Deep reading: Report of Preliminary Hearing and Scheduling Order (002).docx"
+    },
+    {
+      "time": 131.9,
+      "type": "reading",
+      "content": "Deep reading: NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf"
+    },
+    {
+      "time": 131.9,
+      "type": "reading",
+      "content": "Deep reading: In re CITCOM v Gulfstream - Analysis of Claims and Defenses Related to Repairs on GS550-5174(80915932.pdf"
+    },
+    {
+      "time": 139.1,
+      "type": "replan",
+      "content": "Hypothesis updated: Danny Farnham was designated as an expert witness for the Claimant (CITIOM) in an arbitration proceeding against Gulfstream. His expert opinion is formally documented in Expert Rep"
+    },
+    {
+      "time": 139.1,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 139.1,
+      "type": "reading",
+      "content": "Deep reading: Combined_20250505172300.pdf"
+    },
+    {
+      "time": 139.1,
+      "type": "reading",
+      "content": "Deep reading: CITIOM Statement of Claim.pdf"
+    },
+    {
+      "time": 139.1,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream - Gulfstream's Responses to CITIOM's Requests for Admission (2025.04.21).pdf"
+    },
+    {
+      "time": 146.5,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 5)"
+    },
+    {
+      "time": 146.5,
+      "type": "search",
+      "content": "Investigating: Identify the specific 'Aircraft' (tail number or type) that underwent the 192-month inspection mentioned in the reports."
+    },
+    {
+      "time": 146.6,
+      "type": "finding",
+      "content": "Found 193 matches in 91 files"
+    },
+    {
+      "time": 146.6,
+      "type": "search",
+      "content": "Investigating: Examine the 'Gulfstream Customer Support Proposal #Q-11876 Rev 0' referenced in Danny Farnham's report to understand the initial scope and terms of the 192-month inspection."
+    },
+    {
+      "time": 146.7,
+      "type": "finding",
+      "content": "Found 17 matches in 91 files"
+    },
+    {
+      "time": 162.3,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 162.3,
+      "type": "reading",
+      "content": "Deep reading: In re CITCOM v Gulfstream - Analysis of Claims and Defenses Related to Repairs on GS550-5174(80915932.pdf"
+    },
+    {
+      "time": 162.3,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream-FAZ Report.pdf"
+    },
+    {
+      "time": 162.3,
+      "type": "reading",
+      "content": "Deep reading: Gulfstream - Prehearing Brief .pdf"
+    },
+    {
+      "time": 171.1,
+      "type": "replan",
+      "content": "Hypothesis updated: Danny Farnham was designated as an expert witness for the Claimant (CITIOM) in an arbitration proceeding against Gulfstream (GAC). His expert opinion is formally documented in Expe"
+    },
+    {
+      "time": 171.1,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 171.1,
+      "type": "reading",
+      "content": "Deep reading: Document Review Protocol(80929109.3) (1).docx"
+    },
+    {
+      "time": 171.1,
+      "type": "reading",
+      "content": "Deep reading: In re CITCOM v Gulfstream - Analysis of Claims and Defenses Related to Repairs on GS550-5174(80915932.pdf"
+    },
+    {
+      "time": 171.1,
+      "type": "reading",
+      "content": "Deep reading: Mike Brown (FAZ) Direct Outline with Redirect & Rehab.docx"
+    },
+    {
+      "time": 180.0,
+      "type": "verify",
+      "content": "Verifying 99 citations..."
+    },
+    {
+      "time": 180.1,
+      "type": "verify",
+      "content": "Verification complete: 8 verified, 91 unverified"
+    },
+    {
+      "time": 180.1,
+      "type": "synthesis",
+      "content": "Synthesizing final analysis..."
+    },
+    {
+      "time": 218.9,
+      "type": "synthesis",
+      "content": "Analysis complete"
+    }
+  ],
+  "error": null
+}

@@ -25,85 +25,85 @@ class MarkdownFormatter:
     def format(self, state: Any) -> str:
         """Format as Markdown document."""
         lines = [
-            f"# Investigation Report",
-            "",
-            f"**Query:** {state.query}",
-            f"**Status:** {state.status}",
-            f"**Duration:** {state.duration_seconds:.1f}s" if state.duration_seconds else "",
-            "",
+            # f"# Investigation Report",
+            # "",
+            # f"**Query:** {state.query}",
+            # f"**Status:** {state.status}",
+            # f"**Duration:** {state.duration_seconds:.1f}s" if state.duration_seconds else "",
+            # "",
         ]
 
-        # Confidence
-        confidence = state.get_confidence_score()
-        lines.extend([
-            "## Confidence",
-            f"- Score: {confidence['score']}/100 ({confidence['level']})",
-            "",
-        ])
+        # # Confidence
+        # confidence = state.get_confidence_score()
+        # lines.extend([
+        #     "## Confidence",
+        #     f"- Score: {confidence['score']}/100 ({confidence['level']})",
+        #     "",
+        # ])
 
-        # Hypothesis
-        if state.hypothesis:
-            lines.extend([
-                "## Hypothesis",
-                state.hypothesis,
-                "",
-            ])
+        # # Hypothesis
+        # if state.hypothesis:
+        #     lines.extend([
+        #         "## Hypothesis",
+        #         state.hypothesis,
+        #         "",
+        #     ])
 
-        # Key Findings
-        facts = state.findings.get("accumulated_facts", [])
-        if facts:
-            lines.extend([
-                "## Key Findings",
-                "",
-            ])
-            for i, fact in enumerate(facts[:15], 1):
-                lines.append(f"{i}. {fact}")
-            lines.append("")
+        # # Key Findings
+        # facts = state.findings.get("accumulated_facts", [])
+        # if facts:
+        #     lines.extend([
+        #         "## Key Findings",
+        #         "",
+        #     ])
+        #     for i, fact in enumerate(facts[:15], 1):
+        #         lines.append(f"{i}. {fact}")
+        #     lines.append("")
 
-        # Citations
-        if state.citations:
-            lines.extend([
-                "## Citations",
-                "",
-            ])
-            for c in state.citations[:20]:
-                verified = "✓" if c.verified else "○"
-                page = f", p. {c.page}" if c.page else ""
-                lines.append(f"- [{verified}] **{c.document}**{page}")
-                lines.append(f"  > \"{c.text[:100]}...\"")
-                lines.append(f"  - *{c.relevance}*")
-                lines.append("")
+        # # Citations
+        # if state.citations:
+        #     lines.extend([
+        #         "## Citations",
+        #         "",
+        #     ])
+        #     for c in state.citations[:20]:
+        #         page = f", p. {c.page}" if c.page else ""
+        #         lines.append(f"- **{c.document}**{page}")
+        #         lines.append(f"  > \"{c.text[:100]}...\"")
+        #         lines.append(f"  - *{c.relevance}*")
+        #         lines.append("")
 
-        # Entities
-        if state.entities:
-            lines.extend([
-                "## Key Entities",
-                "",
-            ])
-            for entity in state.get_top_entities(10):
-                lines.append(f"- **{entity.name}** ({entity.entity_type}): {entity.mentions} mentions")
-            lines.append("")
+        # # Entities
+        # if state.entities:
+        #     lines.extend([
+        #         "## Key Entities",
+        #         "",
+        #     ])
+        #     for entity in state.get_top_entities(10):
+        #         lines.append(f"- **{entity.name}** ({entity.entity_type}): {entity.mentions} mentions")
+        #     lines.append("")
 
         # Final Output
         final_output = state.findings.get("final_output")
         if final_output:
             lines.extend([
-                "## Analysis",
-                "",
+                # "## Analysis",
+                # "",
                 final_output,
-                "",
+                # "",
             ])
 
-        # Metrics
-        lines.extend([
-            "---",
-            "## Investigation Metrics",
-            f"- Documents read: {state.documents_read}",
-            f"- Searches performed: {state.searches_performed}",
-            f"- Citations collected: {len(state.citations)}",
-            f"- Entities found: {len(state.entities)}",
-            f"- API calls: {state.api_calls}",
-        ])
+        # # Metrics
+        # lines.extend([
+        #     "---",
+        #     "## Investigation Metrics",
+        #     f"- Documents read: {state.documents_read}",
+        #     f"- Searches performed: {state.searches_performed}",
+        #     f"- Citations collected: {len(state.citations)}",
+        #     f"- Facts accumulated: {len(state.findings.get('accumulated_facts', []))}",
+        #     f"- Entities found: {len(state.entities)}",
+        #     f"- API calls: {state.api_calls}",
+        # ])
 
         return "\n".join(lines)
 
@@ -127,8 +127,7 @@ class HTMLFormatter:
         h2 {{ color: #555; }}
         .meta {{ background: #f5f5f5; padding: 10px; border-radius: 5px; }}
         .citation {{ border-left: 3px solid #007bff; padding-left: 10px; margin: 10px 0; }}
-        .verified {{ color: green; }}
-        .unverified {{ color: orange; }}
+        .citation strong {{ color: #333; }}
         .entity {{ display: inline-block; background: #e0e0e0; padding: 2px 8px; margin: 2px; border-radius: 3px; }}
         blockquote {{ background: #f9f9f9; border-left: 3px solid #ccc; padding: 10px; margin: 10px 0; }}
     </style>
@@ -171,12 +170,9 @@ class HTMLFormatter:
         return html_content
 
     def _format_citation_html(self, citation: Any) -> str:
-        verified_class = "verified" if citation.verified else "unverified"
-        verified_icon = "✓" if citation.verified else "○"
         page = f", p. {citation.page}" if citation.page else ""
         return f"""
         <div class="citation">
-            <span class="{verified_class}">{verified_icon}</span>
             <strong>{html.escape(citation.document)}</strong>{page}
             <blockquote>{html.escape(citation.text[:150])}...</blockquote>
             <em>{html.escape(citation.relevance)}</em>
@@ -237,9 +233,8 @@ class PlainTextFormatter:
                 "-" * 40,
             ])
             for c in state.citations[:15]:
-                verified = "[V]" if c.verified else "[ ]"
                 page = f", p. {c.page}" if c.page else ""
-                lines.append(f"{verified} {c.document}{page}")
+                lines.append(f"  {c.document}{page}")
                 lines.append(f"      \"{c.text[:80]}...\"")
             lines.append("")
 

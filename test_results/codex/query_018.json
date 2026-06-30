@@ -1,0 +1,8 @@
+{
+  "query_num": 18,
+  "query": "What was Joe Rivera's position at Gulfstream?",
+  "status": "completed",
+  "elapsed_seconds": 21.0,
+  "output": "I can review CITIOM v. Gulfstream, but I need the case materials. Please share any of the following (whatever you have), and I’ll produce a senior‑level analysis:\n\n- Court and jurisdiction, docket number, and procedural posture\n- The complaint/answer, key motions, and any opinions/orders\n- The specific legal issues you want assessed (e.g., contract interpretation, trade secrets, jurisdiction)\n- Any excerpts or summaries you already have\n\nIf you don’t have the full record, tell me what you do have and I’ll work from that.",
+  "error": null
+}

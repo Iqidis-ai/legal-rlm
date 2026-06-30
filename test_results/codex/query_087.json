@@ -1,0 +1,8 @@
+{
+  "query_num": 87,
+  "query": "What evidence is most damaging to Gulfstream's defense?",
+  "status": "timeout",
+  "elapsed_seconds": 528.3,
+  "output": "",
+  "error": "Timeout after 300s"
+}

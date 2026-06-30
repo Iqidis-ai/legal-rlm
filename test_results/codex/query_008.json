@@ -1,0 +1,8 @@
+{
+  "query_num": 8,
+  "query": "Who is Danny Farnham and what was his expert opinion?",
+  "status": "completed",
+  "elapsed_seconds": 4.0,
+  "output": "I can review it as a senior legal analyst, but I’ll need the case materials (briefs, opinion, docket excerpts, or a summary of facts and procedural posture). What documents should I use, and what focus do you want (e.g., liability, jurisdiction, damages, procedural issues, or appeal strategy)?",
+  "error": null
+}

@@ -1,0 +1,143 @@
+{
+  "timestamp": "2026-01-21T02:57:32.494676",
+  "summary": {
+    "total": 12,
+    "passed": 12,
+    "failed": 0,
+    "total_duration_seconds": 591.87
+  },
+  "tests": [
+    {
+      "query": "What is the monthly fee in the original contract?",
+      "complexity": "simple",
+      "status": "completed",
+      "duration_seconds": 23.06,
+      "api_calls": 0,
+      "documents_read": 2,
+      "searches_performed": 3,
+      "facts_found": 12,
+      "error": null
+    },
+    {
+      "query": "When was the service agreement signed?",
+      "complexity": "simple",
+      "status": "completed",
+      "duration_seconds": 38.48,
+      "api_calls": 0,
+      "documents_read": 2,
+      "searches_performed": 3,
+      "facts_found": 8,
+      "error": null
+    },
+    {
+      "query": "Who signed the contract for TechServices?",
+      "complexity": "simple",
+      "status": "completed",
+      "duration_seconds": 59.4,
+      "api_calls": 0,
+      "documents_read": 3,
+      "searches_performed": 3,
+      "facts_found": 16,
+      "error": null
+    },
+    {
+      "query": "What services are included in the agreement?",
+      "complexity": "analytical",
+      "status": "completed",
+      "duration_seconds": 56.38,
+      "api_calls": 0,
+      "documents_read": 3,
+      "searches_performed": 2,
+      "facts_found": 29,
+      "error": null
+    },
+    {
+      "query": "What are the termination conditions?",
+      "complexity": "analytical",
+      "status": "completed",
+      "duration_seconds": 76.34,
+      "api_calls": 0,
+      "documents_read": 3,
+      "searches_performed": 3,
+      "facts_found": 17,
+      "error": null
+    },
+    {
+      "query": "What is the liability cap in the agreement?",
+      "complexity": "analytical",
+      "status": "completed",
+      "duration_seconds": 8.57,
+      "api_calls": 0,
+      "documents_read": 0,
+      "searches_performed": 2,
+      "facts_found": 0,
+      "error": null
+    },
+    {
+      "query": "How did the monthly fee change over time?",
+      "complexity": "multi_document",
+      "status": "completed",
+      "duration_seconds": 45.04,
+      "api_calls": 0,
+      "documents_read": 4,
+      "searches_performed": 4,
+      "facts_found": 17,
+      "error": null
+    },
+    {
+      "query": "What new services were added in the amendment?",
+      "complexity": "multi_document",
+      "status": "completed",
+      "duration_seconds": 36.81,
+      "api_calls": 0,
+      "documents_read": 3,
+      "searches_performed": 4,
+      "facts_found": 14,
+      "error": null
+    },
+    {
+      "query": "What is the total contract term after the amendment?",
+      "complexity": "multi_document",
+      "status": "completed",
+      "duration_seconds": 29.9,
+      "api_calls": 0,
+      "documents_read": 1,
+      "searches_performed": 3,
+      "facts_found": 4,
+      "error": null
+    },
+    {
+      "query": "What performance issues has TechServices had?",
+      "complexity": "complex",
+      "status": "completed",
+      "duration_seconds": 61.5,
+      "api_calls": 0,
+      "documents_read": 3,
+      "searches_performed": 3,
+      "facts_found": 29,
+      "error": null
+    },
+    {
+      "query": "What is the risk of contract termination?",
+      "complexity": "complex",
+      "status": "completed",
+      "duration_seconds": 66.3,
+      "api_calls": 0,
+      "documents_read": 3,
+      "searches_performed": 3,
+      "facts_found": 32,
+      "error": null
+    },
+    {
+      "query": "Summarize the key contractual obligations and their current status",
+      "complexity": "complex",
+      "status": "completed",
+      "duration_seconds": 90.1,
+      "api_calls": 0,
+      "documents_read": 2,
+      "searches_performed": 3,
+      "facts_found": 30,
+      "error": null
+    }
+  ]
+}

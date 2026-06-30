@@ -2,8 +2,60 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
+
+
+# === Investigation Context Models ===
+
+
+class MessageAttachment(BaseModel):
+    """Attachment metadata for a conversation message."""
+    id: Optional[str] = Field(None, description="Unique identifier for the attachment")
+    url: Optional[str] = Field(None, description="URL or path to the attachment")
+    name: Optional[str] = Field(None, description="Display name of the attachment")
+    content_type: Optional[str] = Field(None, description="MIME type (e.g., 'application/pdf')")
+
+    class Config:
+        extra = "allow"  # Allow additional fields for future extensibility
+
+
+class ConversationMessage(BaseModel):
+    """A single message in conversation history."""
+    role: Literal["user", "assistant"] = Field(
+        ..., description="Role of the message sender"
+    )
+    content: str = Field(..., description="Message content")
+    attachments: Optional[list[MessageAttachment]] = Field(
+        None, description="Documents/files attached to this message"
+    )
+
+
+class InvestigationContext(BaseModel):
+    """Additional context and instructions for investigation.
+
+    Groups all optional contextual information that can guide
+    the investigation planning and output synthesis phases.
+    """
+    conversation_history: Optional[list[ConversationMessage]] = Field(
+        None,
+        description="Prior conversation messages for context continuity"
+    )
+    planning_instructions: Optional[str] = Field(
+        None,
+        description="Instructions to guide investigation planning and assessment phase"
+    )
+    output_instructions: Optional[str] = Field(
+        None,
+        description="Instructions for synthesis output (e.g., language, style preferences)"
+    )
+    output_system_instructions: Optional[str] = Field(
+        None,
+        description="Additional system-level instructions appended to the synthesis system prompt"
+    )
+
+
+# === Job Status and Core Models ===
 
 
 class JobStatus(str, Enum):
@@ -20,6 +72,19 @@ class InvestigateRequest(BaseModel):
     s3_prefix: str = Field(..., description="S3 prefix containing documents")
     callback_url: Optional[str] = Field(
         None, description="URL to POST results when complete"
+    )
+    session_id: Optional[str] = Field(
+        None, description="Session ID for cross-investigation fact/citation persistence"
+    )
+    message_id: Optional[str] = Field(
+        None, description="Caller-supplied message ID for telemetry cross-referencing"
+    )
+    user_id: Optional[str] = Field(
+        None, description="Caller-supplied user ID; stored on the telemetry log for attribution even after message/chat deletion"
+    )
+    context: Optional[InvestigationContext] = Field(
+        None,
+        description="Additional context including conversation history and instructions"
     )
     options: Optional[dict[str, Any]] = Field(
         default_factory=dict, description="Additional investigation options"
@@ -99,12 +164,13 @@ class SearchResponse(BaseModel):
 class HealthResponse(BaseModel):
     """Health check response."""
     status: str = "healthy"
-    version: str
-    gemini_connected: bool
-    s3_connected: bool
-    active_jobs: int
-    temp_storage_mb: float
-    uptime_seconds: float
+    # --- Full fields (restore alongside full health check in api.py) ---
+    # version: str
+    # gemini_connected: bool
+    # s3_connected: bool
+    # active_jobs: int
+    # temp_storage_mb: float
+    # uptime_seconds: float
 
 
 class ErrorResponse(BaseModel):
@@ -141,9 +207,11 @@ class SyncInvestigateResponse(BaseModel):
     analysis: str
     citations: list[dict[str, Any]] = []
     entities: dict[str, Any] = {}
+    facts: list[str] = Field(default_factory=list, description="Accumulated facts extracted during investigation")
     documents_processed: int
     duration_seconds: float
     s3_prefix: Optional[str] = Field(None, description="S3 prefix if files were kept")
+    session_id: Optional[str] = Field(None, description="Session ID if session persistence was used")
 
 
 # === S3 URL Models ===
@@ -170,11 +238,23 @@ class S3UrlsInvestigateRequest(BaseModel):
             "'url', 'name' (filename), and 'mime' (MIME type) fields. "
             "Supports S3 URLs and generic HTTP(S) URLs including presigned URLs."
         ),
-        min_length=1,
-        max_length=50,
+        max_length=2000,
     )
     callback_url: Optional[str] = Field(
         None, description="URL to POST results when complete"
+    )
+    session_id: Optional[str] = Field(
+        None, description="Session ID for cross-investigation fact/citation persistence"
+    )
+    message_id: Optional[str] = Field(
+        None, description="Caller-supplied message ID for telemetry cross-referencing"
+    )
+    user_id: Optional[str] = Field(
+        None, description="Caller-supplied user ID; stored on the telemetry log for attribution even after message/chat deletion"
+    )
+    context: Optional[InvestigationContext] = Field(
+        None,
+        description="Additional context including conversation history and instructions"
     )
     options: Optional[dict[str, Any]] = Field(
         default_factory=dict, description="Additional investigation options"
@@ -193,6 +273,15 @@ class S3UrlsInvestigateRequest(BaseModel):
                     },
                 ],
                 "callback_url": "https://your-service.com/webhook/investigation",
+                "context": {
+                    "conversation_history": [
+                        {"role": "user", "content": "What is this contract about?"},
+                        {"role": "assistant", "content": "This is a service agreement..."}
+                    ],
+                    "planning_instructions": "Focus on payment terms. Client is concerned about late fees.",
+                    "output_instructions": "Respond in English. Use formal legal language.",
+                    "output_system_instructions": "You are a senior attorney specializing in contract law."
+                }
             }
         }
 
@@ -206,8 +295,7 @@ class S3UrlsSearchRequest(BaseModel):
             "List of document URLs. Each item can be a string URL or an object with "
             "'url', 'name' (filename), and 'mime' (MIME type) fields."
         ),
-        min_length=1,
-        max_length=50,
+        max_length=2000,
     )
     max_results: int = Field(20, ge=1, le=100, description="Maximum results")
 

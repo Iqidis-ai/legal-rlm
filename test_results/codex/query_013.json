@@ -1,0 +1,8 @@
+{
+  "query_num": 13,
+  "query": "What model aircraft is at issue in this case?",
+  "status": "timeout",
+  "elapsed_seconds": 313.4,
+  "output": "",
+  "error": "Timeout after 300s"
+}

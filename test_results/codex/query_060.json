@@ -1,0 +1,8 @@
+{
+  "query_num": 60,
+  "query": "Do the expert reports identify contradictions in Gulfstream's methodology?",
+  "status": "timeout",
+  "elapsed_seconds": 326.5,
+  "output": "",
+  "error": "Timeout after 300s"
+}

@@ -87,8 +87,20 @@ dmypy.json
 .pytype/
 .ruff_cache/
 
-# Test documents (optional - uncomment if you don't want to commit test files)
-# test_documents/
+# Test documents (sample legal documents for testing)
+test_documents/
+
+# Debug files
+debug_*.py
+debug_log_*.json
+debug_*.log
+
+# Generated reports and outputs
+comparison_report.json
+evaluation_results*.json
+*_report.json
+test_results/
+test_results*.json
 
 # Output files
 output/
@@ -96,6 +108,7 @@ results/
 investigations/
 *.pdf
 *.docx
+test_streaming_output/
 
 # Gradio temporary files
 gradio_cached_examples/

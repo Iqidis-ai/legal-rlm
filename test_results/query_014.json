@@ -1,0 +1,756 @@
+{
+  "query_num": 14,
+  "query": "Who is Charles Philipp and what was his role at Gulfstream?",
+  "status": "completed",
+  "elapsed_seconds": 170.0,
+  "documents_read": 36,
+  "searches_performed": 12,
+  "citations_count": 94,
+  "max_depth_reached": 3,
+  "hypothesis": "Charles Philipp is a Gulfstream employee consistently involved in project management, customer relations, or technical oversight related to the G550 aircraft SN5174, including customer updates, work orders, work packages, and proposals, as well as matters concerning 'Loaned Labor'. He is highly likely to be a key fact witness or corporate representative for Gulfstream concerning the underlying legal dispute.",
+  "final_output": "**INTERNAL LEGAL MEMORANDUM - PRIVILEGED & CONFIDENTIAL**\n\n**TO:** Litigation Team\n**FROM:** Senior Partner\n**DATE:** October 26, 2023\n**RE:** Identity and Role of Charles Philipp at Gulfstream Aerospace Corporation\n\n---\n\n## Executive Summary\n\nCharles Philipp is an employee of Gulfstream Aerospace Corporation (\"Gulfstream\") who was consistently involved in communications concerning the project management, work orders, and customer updates for the Gulfstream G550 aircraft, serial number 5174. Based on the documentary evidence, his role appears to be one of oversight or management related to the aircraft's maintenance, and he is a key person of interest in the underlying dispute.\n\n## Factual Background\n\nThe evidence reviewed pertains to a dispute between CITIOM, the owner of a Gulfstream G550 aircraft (SN 5174), and Gulfstream concerning a major structural inspection and subsequent repairs performed in 2024. [86, UNVERIFIED], [87, UNVERIFIED].\n\nOn January 29, 2024, Charles Philipp was a direct recipient of an email from Florian Thiele, another Gulfstream employee, which contained a \"G550 WorkPackage\" and a signed \"Gulfstream Proposal - G550 5174 (Q-11876UPDATED)_SIGNED.pdf\". Between February and April 2024, Philipp was consistently included as a recipient (either \"To\" or \"Cc\") on email communications regarding the aircraft. These communications concerned specific work orders (e.g., SC17240), customer updates, and the association of work orders for G550 SN 5174. [6, UNVERIFIED], [7, UNVERIFIED], [84, UNVERIFIED]. The email chains involved discussions of technical issues such as window delamination, brake overhauls, and engine items, as well as the need for owner approval and potential schedule delays.\n\nSeparately, on April 8, 2024, Philipp was included on an email chain regarding \"Loaned Labor to CPS\" and an \"FAA Loan Request,\" suggesting involvement in internal staffing or resource allocation matters at Gulfstream.\n\n## Analysis\n\n### Key Findings\n\n-   **Finding 1: Charles Philipp is an employee of Gulfstream.** This is unequivocally established by his corporate email address, `charles.philipp@gulfstream.com`, which appears on numerous internal and external communications. [3, UNVERIFIED], [4, UNVERIFIED], [48, UNVERIFIED].\n\n-   **Finding 2: Philipp was directly involved in the project oversight of G550 SN 5174.** He was a designated recipient of critical project documents, including the formal proposal and work package, and was kept apprised of ongoing customer updates and work order discussions throughout the relevant period. [5, UNVERIFIED], [70, UNVERIFIED].\n\n-   **Finding 3: Philipp’s responsibilities may include personnel and resource management.** His inclusion in correspondence regarding \"Loaned Labor\" indicates a role that extends beyond direct technical oversight to include staffing and resource allocation for projects.\n\n### Supporting Evidence\n\nThe strongest evidence of Philipp's identity and role is his consistent presence on email communications central to the dispute. He was a direct recipient of the project's foundational proposal and work package from Florian Thiele on January 29, 2024. Furthermore, he was a CC recipient on an extensive email chain between February and April 2024 discussing the \"G550 OE-LIM SN5174 SC17240 Work Order Association.\" [84, UNVERIFIED], [85, UNVERIFIED]. This pattern of inclusion demonstrates he held a position requiring awareness of the project's status, from initial proposals to daily operational updates.\n\n### Contradictions or Concerns\n\nThere is no contradictory evidence in the materials reviewed. The primary concern is that Philipp's exact title and specific responsibilities are not explicitly stated in any document. His role is inferred from the context of the communications he received. Furthermore, no documents authored *by* Charles Philipp have been identified, limiting our understanding of his active contributions versus passive monitoring of the project.\n\n### Evidence Strength Assessment\n\n**Moderate.**\n\nThe evidence strongly and consistently places Charles Philipp within the communication loop for the G550 SN 5174 project. The repetition of his name and email address across multiple documents and dates provides a solid circumstantial case for his involvement. However, the strength is moderated by the lack of any verified documents directly mentioning him and the absence of documents defining his specific title, duties, or direct actions.\n\n## Entities & Relationships\n\n-   **Charles Philipp:** Gulfstream employee involved in project management or oversight for G550 SN 5174.\n-   **Gulfstream Aerospace Corporation:** Service provider and Respondent in the dispute.\n-   **CITIOM / Channel IT Isle of Man Ltd.:** Claimant and owner of the G550 aircraft, SN 5174. [30, UNVERIFIED].\n-   **Florian Thiele:** Gulfstream employee who communicated proposals and work packages to Philipp.\n-   **Avcon Jet, A.G.:** Claimant's aircraft management company.\n-   **Danny Farnham:** Claimant's onsite representative during the maintenance visit.\n\n## Gaps & Limitations\n\n-   **Evidence Not Found:** The reviewed documents do not contain Charles Philipp's job title, a description of his duties, or any organizational charts placing him within Gulfstream's hierarchy. Crucially, no emails or documents authored by him have been identified.\n-   **Areas Needing Further Investigation:** We must ascertain Philipp's exact role, his seniority, his direct reports (if any), and the extent of his decision-making authority on the G550 SN 5174 project.\n-   **Limitations of Available Documents:** The analysis is constrained by the fact that nearly all citations directly referencing Philipp are marked `[UNVERIFIED]`. The conclusions are based on metadata (email recipients) rather than substantive content authored by the individual.\n\n## Recommendations\n\n1.  **Immediate Actions:**\n    *   Designate Charles Philipp as a key fact witness and potential deponent.\n    *   Issue a litigation hold that specifically includes all of Philipp’s communications and documents.\n    *   Expand discovery requests to specifically seek documents defining his role and responsibilities.\n\n2.  **Additional Investigation Needed:**\n    *   Conduct targeted keyword searches within the document production for emails and attachments authored by Charles Philipp.\n    *   Prepare deposition outlines for other Gulfstream witnesses (e.g., Florian Thiele, Joseph Schuster) to question them on Philipp’s role, responsibilities, and involvement in the G550 SN 5174 project.\n\n3.  **Risk Mitigation Steps:**\n    *   Anticipate that Gulfstream may designate Charles Philipp as its corporate representative under FRCP 30(b)(6) for topics concerning the project's management and communications.\n    *   Develop a preliminary assessment of whether he is likely to be a favorable or adverse witness based on the discovery of communications he has authored.",
+  "accumulated_facts": [
+    "Charles Philipp is, or was, an employee of Gulfstream, evidenced by his email address 'charles.philipp@gulfstream.com' which appears in numerous internal and external email communications.",
+    "Charles Philipp was involved in email communications concerning work orders, work packages, proposals, and customer updates for a Gulfstream G550 aircraft, specifically SN 5174 (e.g., 'G550 OE-LiM SN5174 SCl7240 Work Order Association', '5174/ OE-LiM / SC17240 / Customer Update', 'G550 WorkPackage', 'Gulfstream Proposal - G550 5174 (Q-11876UPDATED)_SIGNED.pdf').",
+    "Charles Philipp was a recipient on an email chain dated April 5, 2024, and February 23, 2024, related to the G550 SN 5174 work order and customer updates.",
+    "Charles Philipp was a recipient of an email dated January 29, 2024, from Florian Thiele (another Gulfstream employee) regarding a G550 WorkPackage and a Gulfstream Proposal for G550 5174 (Q-11876UPDATED)_SIGNED.pdf.",
+    "Charles Philipp was included in an email chain regarding 'Loaned Labor to CPS', suggesting involvement in human resources, staffing, or project resourcing aspects within Gulfstream.",
+    "Charles Philipp is an individual associated with Gulfstream, possessing the email address charles.philipp@gulfstream.com.",
+    "Charles Philipp was a recipient (To or Cc) of emails dated between at least February 23, 2024, and April 5, 2024, concerning Gulfstream G550 aircraft (SN5174), specific work orders (SC17240), customer updates, and associated work order associations.",
+    "Charles Philipp received an email that included attachments for a 'G550 WorkPackage' dated January 29, 2024, and a 'Gulfstream Proposal - G550 5174 (Q-11876UPDATED)_SIGNED.pdf' from Florian Thiele at Gulfstream.",
+    "Charles Philipp was included in email communications regarding 'Loaned Labor to CPS' within Gulfstream.",
+    "Charles Philipp is an employee of Gulfstream, identified by his email address `charles.philipp@gulfstream.com`.",
+    "Charles Philipp was involved in email communications concerning '5174/ OE-LiM / SC17240 / Customer Update' and 'G550 OE-LiM SN5174 SCl7240 Work Order Association' related to Gulfstream G550 aircraft with serial number 5174, with dates ranging from February 23, 2024, to April 5, 2024.",
+    "On January 29, 2024, Charles Philipp was a direct recipient of an email from Florian Thiele (Gulfstream) containing a 'G550 WorkPackage' and a 'Gulfstream Proposal - G550 5174 (Q-11876UPDATED)_SIGNED.pdf'.",
+    "Charles Philipp was included in email correspondence on April 8, 2024, regarding 'Loaned Labor to CPS' and an 'FAA Loan Request'.",
+    "Charles Philipp is listed as a CC recipient in an email chain regarding the G550 OE-LIM SN5174 SC17240 Work Order Association.",
+    "Charles Philipp is listed as a CC recipient in an email chain initiated by Florian Schaller and responded to by Joseph Schuster.",
+    "The email chain discusses various aspects of work orders for the G550 OE-LIM SN5174, including windshield and side window delamination, brake overhauls, engine-related items, Honeywell coverage, and other open items.",
+    "The communications emphasize the need for owner approval for certain work, the potential for schedule delays due to approval processes, and the exploration of warranty and program coverage.",
+    "An execution copy of the Aircraft Purchase Agreement (APA) was sent on May 8, 2024.",
+    "The escrow agent's bank details were attached as Exhibit E.",
+    "The APU is on JSSI, and the attached APA was updated accordingly.",
+    "Apex Agency Services Ltd. was identified as the process agent, with its address provided.",
+    "KYC documents for Timbro Trading S.A. were requested by Ilona Avramenko on May 7, 2024.",
+    "Gulfstream provided a proposal for a major structural inspection on Claimant's Gulfstream G550 aircraft (the 'Aircraft').",
+    "Gulfstream's proposal followed its then-standard quoting process by providing an estimate of the cost and downtime associated with just the inspection itself.",
+    "Gulfstream's practice was not to estimate costs and downtime associated with the correction of discrepancies because that work is dependent on the nature and scope of defects discovered.",
+    "The proposal clearly stated that cost and downtime estimates were based only on inspection tasks and did not include correcting discrepancies.",
+    "The statement 'correction of discrepancies is not included in the quoted price' appeared ten separate times in Section I of the proposal.",
+    "Section II of the proposal stated that it 'does not include repairs to the Aircraft resulting from discrepancies . . . discovered during the [inspection]'.",
+    "Claimant was represented by Avcon Jet, A.G., an experienced aircraft management company, which executed the proposal on Claimant's behalf.",
+    "Danny Farnham acted as Claimant's onsite representative during the visit and had experience with Gulfstream's proposal process.",
+    "Gulfstream discovered significant corrosion on the Aircraft that far exceeded what it had experienced on other G550 aircraft.",
+    "The Aircraft took more than 27,000 hours to complete, while the fleet average for the 192-month inspection and correction of discrepancies is approximately 5,400 hours.",
+    "Gulfstream's 20-year structural warranty covered costs associated with structural repairs.",
+    "16,270 of the 27,000-plus hours worked on the Aircraft were billed to warranty, costing Gulfstream $3.5 million in lost revenue.",
+    "Gulfstream alleges Claimant also included arguments in its pre-hearing brief alleging spoliation of evidence and seeking an adverse inference.",
+    "Gulfstream has a document retention policy that provides for deletion of emails after a certain time period unless archived.",
+    "The provided search results from 'No Exhibits - CITIOM v. Gulfstream-FAZ Report copy.pdf' and 'NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf' do not mention Charles Philipp.",
+    "The 192-Month Inspection for the Aircraft was performed by Gulfstream at its St. Louis Service Center from January 29, 2024, to November 29, 2024.",
+    "CITIOM alleges that Gulfstream failed to perform required warranty repairs beginning in January 2024.",
+    "Derek Zimmerman, identified as Gulfstream President, Customer Support, sent a letter to Mr. Haidar on April 30, 2024, attempting to justify the lack of overall downtime or expense estimates for inspections, citing their 'highly variable nature'.",
+    "Gulfstream's defense claims that the increase in expected downtime from 35-45 working days to approximately 160 working days was due to repairs for discrepancies, including corrosion, discovered during the 192-month inspection, which were not included in the original proposal.",
+    "The St. Louis Service Center was selected to perform the inspection and maintenance tasks.",
+    "Gulfstream claims it has incurred 9,822 hours allocated to warranty work for corrosion and structural discrepancies, representing 55% of the man-hours spent on the inspection.",
+    "Gulfstream's 20-year structural warranty covers costs associated with structural repairs due to structural corrosion.",
+    "Gulfstream states its warranty covers structural repairs but not the removal of minor corrosion, considered a standard maintenance task.",
+    "The Gulfstream Work Authorization Terms and Conditions (T&C) include an exclusion of damages clause (Section 8) that broadly excludes punitive, special, incidental, or consequential damages, including loss of use, loss of time, inconvenience, diminution in value, or commercial loss.",
+    "The 2023 Proposal's estimated downtime is stated as an estimate, not a contractual commitment, and may be adjusted based on various factors, including additional work required.",
+    "Georgia law implies a 'reasonable time' for performance when a contract is silent on the matter, citing McMillan v. Quincey, 137 Ga. 63, 72 S.E. 506, 506 (1911).",
+    "Contractual limitations on damages are generally valid under Georgia law, unless they purport to relieve liability for gross negligence or willful or wanton conduct, citing Monitronics Int'l, Inc. v. Veasley, 323 Ga. App. 126, 135, 746 S.E.2d 793, 802 (2013).",
+    "Gulfstream warrants previous work for 12 months or 1,000 hours of flight time, with the sole remedy for a defect being repair or replacement.",
+    "Respondents (Gulfstream) are requesting Claimant (Channel IT) produce documents by December 4, 2024.",
+    "The document requests are made pursuant to Scheduling Order No. 1.",
+    "The 'Aircraft' is defined as the G550 aircraft owned by Channel IT, serial number 5174.",
+    "Requests are for documents in the possession, custody, or control of Channel IT, Avcon, and/or Danny Farnham.",
+    "Responsive documents are requested from November 2018 through the date documents are collected.",
+    "Gulfstream is willing to meet and confer regarding the production of a privilege log.",
+    "Request 6 specifically asks for documents related to corrosion repairs performed by entities other than Gulfstream.",
+    "Request 8 includes communications regarding downtime and estimated costs for the Aircraft's 192-month inspection at Gulfstream St. Louis Service Center.",
+    "Request 11 includes correspondence involving legal counsel retained by Channel IT, Avcon, Danny Farnham, and/or Ben Schouten.",
+    "Request 12 and 13 seek documents for accounting of Channel IT's financials and any purported loss of charter/sales revenue if lost profits are claimed.",
+    "Request 14 seeks documents related to loss of use, including alternative lift procured.",
+    "Request 15 seeks documents related to any efforts by Channel IT to market or sell the Aircraft since January 2024.",
+    "Request 16 asks for all documents Channel IT relies on or intends to rely on in this matter.",
+    "CITIOM is requesting production of documents from Gulfstream Aerospace Corporation.",
+    "The arbitration case number is G-24-115-AA.",
+    "The document references a draft scheduling order circulated by the Arbitration Panel on October 15, 2024, and email correspondence dated October 16, 2024, regarding requests for production.",
+    "The aircraft in question is a Gulfstream G550, serial number 5174.",
+    "The 'Proposal' refers to a customer support proposal dated June 2, 2023, prepared by Gulfstream for the Aircraft/Avcon Jet AG, and annexed at Exhibit 1 of CITIOM’s Statement of Claim dated September 9, 2024.",
+    "The definition of 'Document(s)' is broadly construed, mirroring the Federal Rules of Civil Procedure, and includes a wide array of tangible and intangible information, including electronic data.",
+    "If a claim of privilege is asserted, a privilege log must accompany the response, detailing the nature of the document and sufficient information to assess the privilege claim.",
+    "Redacted privileged information must be produced if the non-privileged information can be segregated.",
+    "Objections to requests must be specific, stating all grounds, and responsive documents to non-objected parts must still be produced.",
+    "Responsive documents should be produced in their original form, and ESI in its native format with metadata.",
+    "Each produced document must be marked with the producer's identification and consecutive control numbers, and sourced from specific individuals or departments.",
+    "The requests are continuing in nature, requiring production of responsive documents located or acquired after the initial production.",
+    "Request 1 seeks 'All communications between and among Gulfstream and any of its officers, directors, employees, and all other persons acting on its behalf or under its direction and con(trol)'...",
+    "A draft Aircraft Purchase Agreement was sent to Ilona Avramenko on March 26, 2024.",
+    "The seller accepted an additional comment in the LOI, inserting an estimate of modification costs to be USD 70K.",
+    "Gulfstream requested information on the aircraft, but the seller is hesitant to release it until the LOI is signed and the deposit is in place.",
+    "The 192 MOS inspection project for Gulfstream G550, SN 5174, OE-LIM was initiated on January 28, 2024.",
+    "The estimated Return to Service (RTS) date for the inspection project has been continually postponed since April 2024.",
+    "Key RTS dates and their revised reasons include: June 21st, 2024 (additional 5,730 hours), August 1st, 2024 (additional 14,000 hours for corrosion investigation), August 15th, 2024 (additional 1,200 hours), August 20, 2024 (additional 350 hours), August 27, 2024 (additional 600 hours), September 19th, 2024 (1,955 additional hours since June 7th).",
+    "On June 17th, 2024, work ceased due to an unpaid interim invoice.",
+    "On July 7th, 2024, it was informed that predicting the RTS date was impossible due to the unavailability of a replacement for WTBF Frame PN 1159B51246-39, with an estimated date set for January 6th, 2025.",
+    "On July 15th, the RTS forecast was extended to December 16th, 2024, citing unclear reasons related to the left hand floor beam angle cap.",
+    "Questions regarding the LBL 30.50 floor beam angle cap replacement have remained unanswered.",
+    "The on-site representative, Danny, is often the only source of communication regarding project progress.",
+    "Multiple parts sent out for repair have not yielded timely updates, requiring direct feedback from Savannah.",
+    "Leonard Beauchemin was retained as a rebuttal expert for Gulfstream.",
+    "Beauchemin's testimony is based solely on record review and does not include site involvement or real-time observations of the SN5174 inspection.",
+    "Beauchemin did not speak with the actual project team members (Hassan, Schuster, Moore) for the SN5174 inspection.",
+    "Beauchemin relied exclusively on Gulfstream-provided records and did not request data from CITIOM or Danny Farnham.",
+    "Beauchemin has not run an MRO shop or managed a G550 inspection for at least 15-20 years.",
+    "Beauchemin believes MROs like Gulfstream owe no duty of care to customers in forecasting labor hours or downtime.",
+    "The initial proposal for the SN5174 inspection quoted 2,800 manhours and 45 business days, while the final tally exceeded 26,000 hours and nearly 10 months.",
+    "Gulfstream had an internal tracking system showing typical St. Louis durations often exceeded 100-185 days.",
+    "The horizontal stabilizer was repaired by Gulfstream Savannah in 2020 under warranty, and corrosion reappeared in the same zones four years later during the 192-month inspection.",
+    "Gulfstream had an analytics tool developed in July 2023 for forecasting, but it was not applied to SN5174 prior to the quote.",
+    "Charles Philipp is listed as a CC recipient in multiple emails.",
+    "Leonard A. Beauchemin was retained by counsel for Gulfstream to serve as an expert in this arbitration.",
+    "Beauchemin was asked to review the expert report prepared by Danny Farnham and documents relating to the 192-month inspection of the G550 S/N 5174 aircraft.",
+    "Beauchemin has forty-two years of business jet aircraft maintenance and management experience.",
+    "Beauchemin worked for nine years with Bombardier Maintenance Repair Organization (MRO) overseeing heavy inspection, structural repair, and modifications on similar class airframes.",
+    "Beauchemin has managed and procured proposals for hundreds of business jet aircraft inspections and modifications across numerous MRO facilities, including Gulfstream.",
+    "Beauchemin served on the Gulfstream committee responsible for developing the maintenance program for the GV (i.e., G550) aircraft.",
+    "Once the authorization form is signed, all information requests were to go through the seller’s on-site project manager, Danny Farnham.",
+    "Work ceased on June 17, 2024, due to an unpaid interim invoice, with outstanding billing concerns.",
+    "Unavailability of a replacement for the WTBF Frame PN 1159B51246-39 is cited as a reason for an RTS date set for January 6th, 2025.",
+    "The left hand floor beam angle cap is mentioned as a component causing further delays, with unclear reasons for an additional three months added to the project.",
+    "Danny Farnham (on-site representative) is described as the only source of communication regarding project progress, without whom updates from Gulfstream have been insufficient.",
+    "Gulfstream claims that the increase in expected downtime for the 192-month inspection from an estimated '35-45 Working Days' to approximately 160 working days was due to 'repairs to the Aircraft resulting from discrepancies in the Aircraft (including without limitation corrosion) discovered during the performance' that were not included in the 2023 Proposal.",
+    "Gulfstream determined that the St. Louis Service Center would perform the 192-month inspection following the execution of the 2023 Proposal.",
+    "The 192-month inspection requires Gulfstream to 'substantially take apart the aircraft -- both the interior and exterior -- to access and inspect the underlying systems and structure,' including the removal of 'virtually the entire interior of the aircraft.'",
+    "Gulfstream states its warranty covers structural repairs but 'does not cover the removal of minor corrosion, which is considered a standard maintenance task.' Gulfstream determines warranty coverage.",
+    "The Gulfstream Work Authorization Terms and Conditions ('T&C') contain an exclusion of damages clause (Section 8) that states Gulfstream Parties 'shall not be liable for punitive, special, incidental or consequential damages' and lists 'loss of use, loss of time, inconvenience, diminution in value or commercial loss' as excluded damages.",
+    "The 2023 Proposal states estimated downtime is 'only provided as an estimate' and 'is not a contractual commitment by Gulfstream.' It also notes downtime may be adjusted based on the final induction schedule, agreed facility, and if 'additional Work is required beyond that specifically identified in this Proposal.'",
+    "Georgia law implies a 'reasonable time' for performance when a contract is silent on the matter, citing McMillan v. Quincey.",
+    "Contractual limitations on damages are generally valid under Georgia law, unless they purport to relieve liability for gross negligence or willful or wanton conduct.",
+    "Gulfstream is requesting that the seller releases information on the aircraft.",
+    "The seller is hesitant to release information until the LOI is signed and the deposit is in place.",
+    "Multiple revisions to the RTS date have occurred, with new hours added for investigations or parts.",
+    "The unavailability of a replacement for the WTBF Frame PN 1159B51246-39 has made predicting the RTS date impossible, with an estimated date set for January 6th, 2025.",
+    "Multiple parts sent out for repair have not yielded timely updates.",
+    "The Gulfstream G550 aircraft, Serial Number (SN) 5174, was manufactured in 2008.",
+    "SN 5174 was directed to the Gulfstream St Louis Service Center for a 192-month inspection, with 3-4 months of pre-input planning time.",
+    "Manpower dedicated to the SN 5174 project was inconsistent and sporadic over a 10-month period, with employees cycled in and out, many being entry-level or apprentice level.",
+    "Experienced technicians (e.g., Doug, Armed, Bill, David Hall, Glenn) were frequently moved from the SN 5174 project to other projects, indicating manpower shortages and inefficient utilization.",
+    "Components from SN 5174, including the Rudder, several air ducts, engine mounts, and the Main Entrance Door, were sent off-site (e.g., Savannah or outside vendors) for repair/painting, leading to issues like paint mismatch and control/tracking problems.",
+    "Engine mounts for SN 5174 were shipped to Savannah on April 20, 2024, and the issue was resolved on September 26, 2024, after the expert witness challenged Gulfstream.",
+    "Charles Philipp is listed as a CC recipient on an email chain where Joseph Schuster provides updates and explanations on work order progress and potential issues.",
+    "Charles Philipp is listed as a CC recipient on an email where Joseph Schuster addresses specific queries from Florian Schaller regarding windshield and side windows, brake overhaul, RRCC coverage, Honeywell coverage, and open items.",
+    "Estimated return to service (RTS) dates for the aircraft have been continually postponed since April 2024.",
+    "A key part, WTBF Frame PN 1159B51246-39, has an estimated replacement date of January 6th, 2025, making RTS prediction impossible as of July 7th, 2024.",
+    "Danny Farnham is identified as the seller's on-site project manager and a key source of communication regarding project progress.",
+    "The LOI (Letter of Intent) for Aircraft Purchase Agreement draft was sent on March 26, 2024, with an attachment for review.",
+    "The LOI mentions an estimate of modification costs to be USD 70K.",
+    "Gulfstream Aerospace Corporation is headquartered in Savannah, Georgia, and operates aircraft service centers, including one at the St. Louis Downtown Airport in Cahokia, Illinois.",
+    "Gulfstream submitted a customer support proposal dated 02 June 2023 for the Aircraft's 192-month inspection.",
+    "The Proposal quoted a workscope cost of $835,931, plus other items to be assessed.",
+    "Gulfstream originally estimated 2,800 manhours and 35-45 business days for the 192-month inspection, with an expected return to service date of April 1, 2024.",
+    "CITIOM agreed to the Proposal based on Gulfstream's representations and expertise.",
+    "Gulfstream introduced 'new data collection and analytical capabilities' in July 2023.",
+    "Despite having new capabilities since July 2023, Gulfstream did not revise its Proposal regarding estimated manhours, downtime, or costs before CITIOM inputted the Aircraft.",
+    "CITIOM inputted the Aircraft at Gulfstream's St. Louis facility in January 2024, based on the Proposal and the expected return date of April 1, 2024.",
+    "Gulfstream advised CITIOM of increased costs and time soon after input, citing 'numerous discrepancies' discovered during the inspection.",
+    "Gulfstream conceded in April 2024 that the original 2,800 manhours were insufficient and projected a new completion date of June 21, 2024.",
+    "CITIOM argued that several issues Gulfstream claimed to have discovered should have been previously identified during earlier maintenance events performed by Gulfstream, or were a result of Gulfstream's own ineffective repairs.",
+    "Gulfstream claimed a need to replace certain leading edges due to corrosion, but CITIOM noted this corrosion should have been visible and addressed during July-August 2023 maintenance when the leading edges were removed.",
+    "No mention of 'Charles Philipp' or his role at Gulfstream was found within the search results filtered for '2025'.",
+    "Expert Reports by D. Farnham, dated March 21, 2025, are cited multiple times in documents related to the CITIOM v. Gulfstream case.",
+    "An 'LB Expert Rebuttal Report' dated April 21, 2025, mentions a Gulfstream G550 aircraft undergoing a 144-month inspection at Gulfstream in Savannah as of April 2025.",
+    "AVCON contacted Gulfstream in May 2023 for a quote on a 192-month inspection for an input scheduled for late 2024 or early 2025. Gulfstream provided Customer Support Proposal #Q-11876, dated June 2023, which AVCON approved in September 2023.",
+    "Gulfstream G550, SN 5174, manufactured in 2008, was directed to the Gulfstream St Louis Service Center for a 192-month inspection.",
+    "The St. Louis Service Center was reportedly downgraded from a Tier 4 to a Tier 3, as verbally stated by a member of management, though the timing relative to SN 5174's input is unknown.",
+    "Pre-input planning for SN 5174's 192-month event at St. Louis spanned 3-4 months.",
+    "Experienced technicians assigned to the SN 5174 project were frequently moved to other projects (e.g., Doug, Armed, Bill, David Hall, Glenn).",
+    "There were issues with components from SN 5174 (Rudder, Main Entrance Door, engine mounts) requiring off-site work and experiencing communication/tracking problems, including a paint mismatch upon re-installation.",
+    "An issue with SN 5174's engine mounts (from supplier AVECH TYEE, INC) was not addressed by Gulfstream until challenged, with the issue finally resolved on September 26, after mounts were shipped to Savannah on April 20, 2024.",
+    "SN 5174 was owned and operated by Net Jets Europe until December 2018, and then purchased by Channel IT in December 2018.",
+    "Gulfstream's experts should have known G550, SN 5174 would likely fall into a 'high probability of corrosion category', which is critical for providing owners with accurate cost and downtime estimates for a 192-month inspection.",
+    "Charles Philipp is copied on an email from Florian Schaller to Joseph Schuster regarding the status of windshield and side windows, brake overhaul exchange, RRCC and Honeywell coverage, and open items for the G550 OE-LIM SN5174 SC17240 Work Order Association.",
+    "Charles Philipp is copied on an email from Joseph Schuster to Florian Schaller providing detailed updates on brake OH exchange price and borescope summary for the G550 OE-LIM SN5174 SC17240 Work Order Association.",
+    "CITIOM commenced this Arbitration on May 31, 2024.",
+    "Respondent Gulfstream filed a Notice of Defense and Counterclaim dated August 7, 2024.",
+    "Claimant filed the Amended Statement of Claim (ASOC) on September 9, 2024.",
+    "The Aircraft was returned to service in November 2024, nearly nine months after the estimated return to service date.",
+    "The Proposal for the 192-month inspection was dated 02 June 2023.",
+    "Gulfstream performed the 144-month inspection of the Aircraft at its Savannah, Georgia service center in 2020.",
+    "Gulfstream performed maintenance on the Aircraft in July/August 2023, before the Proposal was signed.",
+    "Patrick Stockton is the Manager of the Gulfstream Savannah Paint Shop.",
+    "The Savannah Paint Shop was responsible for painting and refurbishment of components for SN 5174 sent from St. Louis.",
+    "Components including the rudder, elevators, and main entrance door were sent to Savannah for painting or rework.",
+    "The rudder and main entrance door were delivered back to St. Louis and found to be visibly mismatched in paint tone and finish when reinstalled on the aircraft.",
+    "Gulfstream offers a 24-month paint warranty for refurbishment work.",
+    "The rudder refurbishment and shipment from Fokker (via Savannah) was delayed to at least April 30, 2024.",
+    "The Aircraft’s return to service (RTS) was repeatedly pushed from April, to June, to August, and ultimately into November.",
+    "There is no evidence in the record of Stockton escalating any paint mismatch or delay to St. Louis before parts were returned.",
+    "The estimated return to service (RTS) date has been continually postponed since April 2024 without clear explanations.",
+    "A key part, the WTBF Frame PN 1159B51246-39, is unavailable, with an estimated replacement date of January 6th, 2025.",
+    "The LBL 30.50 floor beam angle cap replacement has led to unclear reasons for an additional three months added to the project.",
+    "Danny Farnham is identified as the seller's on-site project manager, and he is frequently the sole source of communication regarding project progress.",
+    "The seller requested that all information requests go through Danny Farnham once an authorization form is signed."
+  ],
+  "citations": [
+    {
+      "document": "In re CITCOM v Gulfstream - Analysis of Claims and Defenses Related to Repairs on GS550-5174(80915932.pdf",
+      "page": 5,
+      "text": "inspection. In the warranty case of Pulmonary Assocs. of Charleston PLLC v. Greenway Health, LLC, 508 F. Supp.",
+      "verified": false
+    },
+    {
+      "document": "In re CITCOM v Gulfstream - Analysis of Claims and Defenses Related to Repairs on GS550-5174(80915932.pdf",
+      "page": 7,
+      "text": "Pulmonary Assocs. of Charleston PLLC v. Greenway Health, LLC, 508 F. Supp. 3d 1268, 1279 (N.D. Ga. 2020), the",
+      "verified": false
+    },
+    {
+      "document": "pages 201 - 300 Combined_20250408165521 .pdf",
+      "page": 1,
+      "text": "Cc: Philipp, Charles <charles.philipp@gulfstream.com>; Moore, Jeff <Jeffrey.Moore@gulfstream.com>; Hassan,",
+      "verified": false
+    },
+    {
+      "document": "464-544.pdf",
+      "page": 2,
+      "text": "[Jeffrey.Moore@gulfstream.com); Philipp, Charles [charles.philipp@gulfstream.com); Danny",
+      "verified": false
+    },
+    {
+      "document": "1-570 Redacted Combined_20250513014404 copy pages 1 - 570.pdf",
+      "page": 2,
+      "text": "To: Philipp, Charles <charles.philipp@gulfstream.com>; Cunningham, Barry <Barry.Cunningham@gulfstream.com>",
+      "verified": false
+    },
+    {
+      "document": "67-107.pdf",
+      "page": 10,
+      "text": "To: Schaller, Florian <f.schaller@avconjet.at>\nCc: ben.schouten@channelit.com; Schneps, Christoph <c.schneps@avconjet.at>; oe-lim@primus.aero; Danisman, Erdem <e.danisman@avconjet.at>; Moore, Jeff <Jeffrey.Moore@gulfstream.com>; Philipp, Charles <charles.philipp@gulfstream.com>; Danny Farnham <dfarn",
+      "verified": false
+    },
+    {
+      "document": "67-107.pdf",
+      "page": 10,
+      "text": "Sent: Wednesday, February 14, 2024 6:50 AM\nTo: Schuster, Joseph <joseph.schuster@gulfstream.com>\nCc: ben.schouten@channelit.com; Schneps, Christoph; oe-Iim@primus.aero; Danisman, Erdem; Moore, Jeff; Philipp, Charles; Danny Farnham",
+      "verified": false
+    },
+    {
+      "document": "67-107.pdf",
+      "page": 8,
+      "text": "CAUTION: This email originated from outside the organization. Do not click links or open attachments unless you recognize the sender and know the content is safe.",
+      "verified": false
+    },
+    {
+      "document": "331-463.pdf",
+      "page": 1,
+      "text": "Here you go!",
+      "verified": false
+    },
+    {
+      "document": "331-463.pdf",
+      "page": 1,
+      "text": "Can you be so kind to send me the word version as well. 😊",
+      "verified": false
+    },
+    {
+      "document": "331-463.pdf",
+      "page": 2,
+      "text": "Escrow agent’s banks details now attached at Exhibit E.",
+      "verified": false
+    },
+    {
+      "document": "Gulfstream - Prehearing Brief .pdf",
+      "page": 2,
+      "text": "Gulfstream’s practice at the time was not to estimate costs and downtime associated with the correction of discrepancies because that work is entirely dependent on the nature and scope of the defects discovered during the inspection, which Gulfstream cannot determine until it “opens up” the aircraft",
+      "verified": true
+    },
+    {
+      "document": "Gulfstream - Prehearing Brief .pdf",
+      "page": 2,
+      "text": "the 'correction of discrepancies is not included in the quoted price.'",
+      "verified": true
+    },
+    {
+      "document": "Gulfstream - Prehearing Brief .pdf",
+      "page": 2,
+      "text": "the proposal states that the proposal 'does not include repairs to the Aircraft resulting from discrepancies . . . discovered during the [inspection]'.",
+      "verified": true
+    },
+    {
+      "document": "CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf",
+      "page": 2,
+      "text": "technical information, personally identifying information, or other sensitive information of a",
+      "verified": false
+    },
+    {
+      "document": "CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf",
+      "page": 4,
+      "text": "served within 30 days of receipt of the deposition transcript identifying the pages of the deposition",
+      "verified": false
+    },
+    {
+      "document": "CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf",
+      "page": 8,
+      "text": "receipt of the deposition transcript identifying the pages of the deposition transcript containing such",
+      "verified": false
+    },
+    {
+      "document": "CITIOM v. GAC - Confidentiality Agreement and Proposed Protective Order.pdf",
+      "page": 8,
+      "text": "proprietary or competitively sensitive financial information, and/or customer identifying",
+      "verified": false
+    },
+    {
+      "document": "NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf",
+      "page": 5,
+      "text": "Failure to identify and address corrosion issues during prior maintenance: Gulfstream",
+      "verified": false
+    },
+    {
+      "document": "No Exhibits - CITIOM v. Gulfstream-FAZ Report copy.pdf",
+      "page": 2,
+      "text": "the Aircraft would have generated from charter operations during 2024",
+      "verified": false
+    }
+  ],
+  "steps": [
+    {
+      "time": 0.0,
+      "type": "thinking",
+      "content": "Query classified as unknown (complexity: 3/5)"
+    },
+    {
+      "time": 0.0,
+      "type": "thinking",
+      "content": "Analyzing repository structure..."
+    },
+    {
+      "time": 13.9,
+      "type": "thinking",
+      "content": "Hypothesis: Based on the prevalence of 'Cross Exam', 'Direct Outlines', 'Witness Lists', and 'Expert Reports' in the repository, Charles Philipp is highly likely to be either a key witness (fact witne"
+    },
+    {
+      "time": 13.9,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 1)"
+    },
+    {
+      "time": 13.9,
+      "type": "search",
+      "content": "Investigating: Search for: \"Charles Philipp\" AND Gulfstream"
+    },
+    {
+      "time": 20.3,
+      "type": "finding",
+      "content": "Found 1154 matches in 91 files"
+    },
+    {
+      "time": 20.3,
+      "type": "search",
+      "content": "Investigating: Search for: \"Charles Philipp\" AND (role OR position OR title OR capacity)"
+    },
+    {
+      "time": 20.5,
+      "type": "finding",
+      "content": "Found 1154 matches in 91 files"
+    },
+    {
+      "time": 20.5,
+      "type": "search",
+      "content": "Investigating: Search for: \"Charles Philipp\" AND (employee OR employment OR former employee)"
+    },
+    {
+      "time": 20.6,
+      "type": "finding",
+      "content": "Found 1154 matches in 91 files"
+    },
+    {
+      "time": 38.1,
+      "type": "replan",
+      "content": "Hypothesis updated: Charles Philipp is an employee of Gulfstream whose role involves managing or overseeing aspects of G550 aircraft maintenance, repair, customer updates, and potentially internal lab"
+    },
+    {
+      "time": 38.1,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 38.1,
+      "type": "reading",
+      "content": "Deep reading: Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf"
+    },
+    {
+      "time": 38.1,
+      "type": "reading",
+      "content": "Deep reading: Gulfstream - Prehearing Brief .pdf"
+    },
+    {
+      "time": 38.1,
+      "type": "reading",
+      "content": "Deep reading: 1-110.pdf"
+    },
+    {
+      "time": 38.5,
+      "type": "replan",
+      "content": "Hypothesis updated: Charles Philipp is an employee of Gulfstream whose knowledge or actions regarding specific aircraft (G550 SN5174) repairs, work packages, and customer relations are central to the "
+    },
+    {
+      "time": 38.5,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 38.5,
+      "type": "reading",
+      "content": "Deep reading: 4. Charles Philipp - Cross Exam & Impeachment .docx"
+    },
+    {
+      "time": 38.5,
+      "type": "reading",
+      "content": "Deep reading: 1-110.pdf"
+    },
+    {
+      "time": 38.5,
+      "type": "reading",
+      "content": "Deep reading: Charles Philipp Outline #1.docx"
+    },
+    {
+      "time": 41.7,
+      "type": "replan",
+      "content": "Hypothesis updated: Charles Philipp is a Gulfstream employee consistently involved in project management, customer relations, or technical oversight related to the G550 aircraft SN5174, including cust"
+    },
+    {
+      "time": 41.7,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 41.7,
+      "type": "reading",
+      "content": "Deep reading: Charles Philipp Outline #1.docx"
+    },
+    {
+      "time": 41.7,
+      "type": "reading",
+      "content": "Deep reading: 331-463.pdf"
+    },
+    {
+      "time": 41.7,
+      "type": "reading",
+      "content": "Deep reading: 67-107.pdf"
+    },
+    {
+      "time": 51.1,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 2)"
+    },
+    {
+      "time": 51.1,
+      "type": "search",
+      "content": "Investigating: Obtain and analyze the 'G550 WorkPackage (29 Jan 2024 @ 1229).x/sx' and 'Gulfstream Proposal - G550 5174 (Q-11876UPDATED)_SIGNED.pdf'."
+    },
+    {
+      "time": 51.2,
+      "type": "finding",
+      "content": "Found 3104 matches in 91 files"
+    },
+    {
+      "time": 51.2,
+      "type": "search",
+      "content": "Investigating: Examine the attached documents 'G550 WorkPackage (29 Jan 2024 @ 1229).x/sx' and 'Gulfstream Proposal - G550 5174 (Q-11876UPDATED)_SIGNED.pdf' to understand the specific scope of work an"
+    },
+    {
+      "time": 51.3,
+      "type": "finding",
+      "content": "Found 3104 matches in 91 files"
+    },
+    {
+      "time": 51.3,
+      "type": "search",
+      "content": "Investigating: Identify the specific job title and department of Charles Philipp at Gulfstream."
+    },
+    {
+      "time": 51.4,
+      "type": "finding",
+      "content": "Found 193 matches in 91 files"
+    },
+    {
+      "time": 56.0,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 56.0,
+      "type": "reading",
+      "content": "Deep reading: In re CITCOM v Gulfstream - Analysis of Claims and Defenses Related to Repairs on GS550-5174(80915932.pdf"
+    },
+    {
+      "time": 56.0,
+      "type": "reading",
+      "content": "Deep reading: (v3) 5. Joe Schuster - Cross Exam & Impeachment.docx"
+    },
+    {
+      "time": 56.0,
+      "type": "reading",
+      "content": "Deep reading: CITIOM Amended Statement of Claim.pdf"
+    },
+    {
+      "time": 58.8,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 58.8,
+      "type": "reading",
+      "content": "Deep reading: 5. Joe Schuster - Cross Exam & Impeachment.docx"
+    },
+    {
+      "time": 58.8,
+      "type": "reading",
+      "content": "Deep reading: CITIOM First Req for Production on Gulfstream - Oct 18 2024.pdf"
+    },
+    {
+      "time": 58.8,
+      "type": "reading",
+      "content": "Deep reading: 1. Respondent's Requests for Production of Documents.pdf"
+    },
+    {
+      "time": 60.3,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 60.3,
+      "type": "reading",
+      "content": "Deep reading: 1-66.pdf"
+    },
+    {
+      "time": 60.3,
+      "type": "reading",
+      "content": "Deep reading: 7. Leonard B - Cross Exam & Impeachment.docx"
+    },
+    {
+      "time": 60.3,
+      "type": "reading",
+      "content": "Deep reading: Patrick Stockton Outline #1.docx"
+    },
+    {
+      "time": 71.3,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 3)"
+    },
+    {
+      "time": 71.3,
+      "type": "search",
+      "content": "Investigating: Research the roles and involvement of other Gulfstream employees frequently communicating with Charles Philipp on the G550 SN5174 project (e.g., Florian Thiele, Jeff Moore, Barry Cunnin"
+    },
+    {
+      "time": 71.4,
+      "type": "finding",
+      "content": "Found 26 matches in 91 files"
+    },
+    {
+      "time": 71.4,
+      "type": "search",
+      "content": "Investigating: Locate and examine 'Derek Zimmerman's Letter of April 30, 2024' to Mr. Haidar for insights into Gulfstream's stance on inspection estimates and potentially other relevant details."
+    },
+    {
+      "time": 71.5,
+      "type": "finding",
+      "content": "Found 82 matches in 91 files"
+    },
+    {
+      "time": 76.4,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 76.4,
+      "type": "reading",
+      "content": "Deep reading: Combined_20250505172300.pdf"
+    },
+    {
+      "time": 76.4,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream - LB Expert Rebuttal Report (4-21-25).pdf"
+    },
+    {
+      "time": 76.4,
+      "type": "reading",
+      "content": "Deep reading: NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf"
+    },
+    {
+      "time": 78.2,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 78.2,
+      "type": "reading",
+      "content": "Deep reading: In re CITCOM v Gulfstream - Analysis of Claims and Defenses Related to Repairs on GS550-5174(80915932.pdf"
+    },
+    {
+      "time": 78.2,
+      "type": "reading",
+      "content": "Deep reading: Combined_20250505172300.pdf"
+    },
+    {
+      "time": 78.2,
+      "type": "reading",
+      "content": "Deep reading: 464-544.pdf"
+    },
+    {
+      "time": 87.2,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 4)"
+    },
+    {
+      "time": 87.2,
+      "type": "search",
+      "content": "Investigating: Investigate 'CPS' and the context of 'Loaned Labor' to understand this other facet of Charles Philipp's involvement."
+    },
+    {
+      "time": 87.4,
+      "type": "finding",
+      "content": "Found 5 matches in 91 files"
+    },
+    {
+      "time": 87.4,
+      "type": "search",
+      "content": "Investigating: Examine the referenced 'G550 WorkPackage' and 'Gulfstream Proposal - G550 5174 (Q-11876UPDATED)_SIGNED.pdf' to understand the specifics of the work Charles Philipp was involved in."
+    },
+    {
+      "time": 87.4,
+      "type": "finding",
+      "content": "Found 2352 matches in 91 files"
+    },
+    {
+      "time": 99.2,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 99.2,
+      "type": "reading",
+      "content": "Deep reading: 1-110.pdf"
+    },
+    {
+      "time": 99.2,
+      "type": "reading",
+      "content": "Deep reading: Combined_20250505172300.pdf"
+    },
+    {
+      "time": 99.2,
+      "type": "reading",
+      "content": "Deep reading: 1-66.pdf"
+    },
+    {
+      "time": 100.5,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 100.5,
+      "type": "reading",
+      "content": "Deep reading: 67-107.pdf"
+    },
+    {
+      "time": 100.5,
+      "type": "reading",
+      "content": "Deep reading: Joe Rivera Outline #1.docx"
+    },
+    {
+      "time": 100.6,
+      "type": "reading",
+      "content": "Deep reading: CITIOM Amended Statement of Claim.pdf"
+    },
+    {
+      "time": 110.5,
+      "type": "thinking",
+      "content": "Investigating 3 leads in parallel (iteration 5)"
+    },
+    {
+      "time": 110.5,
+      "type": "search",
+      "content": "Investigating: The 'NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf', 'WFW Restructured - D. Farnham Expert Report.docx', 'EXPERT WITNESS REPORT March 5 (1).docx',"
+    },
+    {
+      "time": 110.6,
+      "type": "finding",
+      "content": "Found 229 matches in 91 files"
+    },
+    {
+      "time": 110.6,
+      "type": "search",
+      "content": "Investigating: Identify the author/expert witness who prepared 'PDF 2 - EXPERT WITNESS REPORT March 5 copy.pdf', as they challenged Gulfstream and have direct knowledge of the SN 5174 project."
+    },
+    {
+      "time": 110.7,
+      "type": "finding",
+      "content": "Found 2352 matches in 91 files"
+    },
+    {
+      "time": 127.3,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 127.3,
+      "type": "reading",
+      "content": "Deep reading: 1-110.pdf"
+    },
+    {
+      "time": 127.3,
+      "type": "reading",
+      "content": "Deep reading: Claimant CITIOM Pre-Hearing Brief - Apr 14 2025 (1).pdf"
+    },
+    {
+      "time": 127.3,
+      "type": "reading",
+      "content": "Deep reading: CITIOM v. Gulfstream - LB Expert Rebuttal Report (4-21-25).pdf"
+    },
+    {
+      "time": 129.9,
+      "type": "reading",
+      "content": "Deep reading 3 documents in parallel"
+    },
+    {
+      "time": 129.9,
+      "type": "reading",
+      "content": "Deep reading: Patrick Stockton Outline #1.docx"
+    },
+    {
+      "time": 129.9,
+      "type": "reading",
+      "content": "Deep reading: NO exhibits - CITIOM EXPERT REPORT - D. Farnham Expert Report - Mar 21 2025 copy.pdf"
+    },
+    {
+      "time": 129.9,
+      "type": "reading",
+      "content": "Deep reading: 67-107.pdf"
+    },
+    {
+      "time": 137.0,
+      "type": "verify",
+      "content": "Verifying 94 citations..."
+    },
+    {
+      "time": 137.0,
+      "type": "verify",
+      "content": "Verification complete: 6 verified, 88 unverified"
+    },
+    {
+      "time": 137.0,
+      "type": "synthesis",
+      "content": "Synthesizing final analysis..."
+    },
+    {
+      "time": 170.0,
+      "type": "synthesis",
+      "content": "Analysis complete"
+    }
+  ],
+  "error": null
+}

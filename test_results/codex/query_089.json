@@ -1,0 +1,8 @@
+{
+  "query_num": 89,
+  "query": "What gaps exist in CITIOM's evidentiary presentation?",
+  "status": "timeout",
+  "elapsed_seconds": 321.9,
+  "output": "",
+  "error": "Timeout after 300s"
+}

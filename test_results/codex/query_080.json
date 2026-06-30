@@ -1,0 +1,8 @@
+{
+  "query_num": 80,
+  "query": "What legal remedies is CITIOM seeking and are they supported?",
+  "status": "completed",
+  "elapsed_seconds": 4.9,
+  "output": "I can review it, but I need the case materials or specific questions. Do you want a general case summary, issue/holding analysis, procedural history, or argument strengths/risks? If the files are in this workspace, tell me the relevant paths and I’ll open them.",
+  "error": null
+}

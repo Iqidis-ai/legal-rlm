@@ -1,0 +1,8 @@
+{
+  "query_num": 9,
+  "query": "What specific workscope items were included in the 192-month inspection?",
+  "status": "completed",
+  "elapsed_seconds": 61.2,
+  "output": "Got it. What specific issue or deliverable do you want—case overview, analysis of a claim/defense, timeline, or evidence synthesis? If you want me to ground it in the document set, confirm I should use `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents` (or point me to a subset).",
+  "error": null
+}

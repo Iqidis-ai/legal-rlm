@@ -1,0 +1,8 @@
+{
+  "query_num": 51,
+  "query": "What is the sequence of discovery requests and responses?",
+  "status": "completed",
+  "elapsed_seconds": 2.5,
+  "output": "What specifically do you want reviewed in CITIOM v. Gulfstream (issues, holdings, procedural posture, or a case summary), and do you want a neutral analysis or an advocacy-style memo?",
+  "error": null
+}

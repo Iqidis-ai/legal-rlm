@@ -1,0 +1,8 @@
+{
+  "query_num": 2,
+  "query": "When did CITIOM first deliver the aircraft to Gulfstream for inspection?",
+  "status": "timeout",
+  "elapsed_seconds": 460.8,
+  "output": "",
+  "error": "Timeout after 300s"
+}

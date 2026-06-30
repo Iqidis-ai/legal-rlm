@@ -1,0 +1,8 @@
+{
+  "query_num": 43,
+  "query": "Map the sequence of events from aircraft delivery to arbitration filing.",
+  "status": "completed",
+  "elapsed_seconds": 4.1,
+  "output": "I don’t have the case materials yet. Please point me to the relevant files in this workspace (briefs, opinions, exhibits, or a case summary), or paste the key documents you want analyzed. If there’s a specific question or focus (e.g., liability, damages, procedural posture), tell me and I’ll tailor the review.",
+  "error": null
+}

@@ -1,0 +1,8 @@
+{
+  "query_num": 25,
+  "query": "Compare the testimony in witness statements with documentary evidence about downtime estimates.",
+  "status": "timeout",
+  "elapsed_seconds": 439.5,
+  "output": "",
+  "error": "Timeout after 300s"
+}

@@ -1,0 +1,8 @@
+{
+  "query_num": 6,
+  "query": "How many days did the aircraft actually remain out of service?",
+  "status": "completed",
+  "elapsed_seconds": 86.1,
+  "output": "I’m ready to review, but I don’t have the case record in this workspace. The repo only references documents outside the sandbox at `C:\\Users\\devan\\Downloads\\CITIOM v Gulfstream\\documents`, and the only case content here is generated snippets in `test_results\\`.  \n\nPlease tell me which documents to use (or copy them into the project), and what scope you want: timeline/procedural posture, claims/defenses elements, evidence strengths/weaknesses, damages analysis, or a full memo.",
+  "error": null
+}

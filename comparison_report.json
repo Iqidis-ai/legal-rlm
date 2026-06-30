@@ -1,0 +1,1967 @@
+{
+  "summary": {
+    "rlm": {
+      "total_queries": 70,
+      "successful": 70,
+      "failed": 0,
+      "elapsed_minutes": 285.9,
+      "avg_time_seconds": 0
+    },
+    "codex": {
+      "total_queries": 80,
+      "successful": 61,
+      "failed": 19,
+      "elapsed_minutes": 224.0,
+      "avg_time_seconds": 68.2
+    },
+    "claude_code": {
+      "total_queries": 100,
+      "successful": 100,
+      "failed": 0,
+      "elapsed_minutes": 0.7,
+      "avg_time_seconds": 0.4
+    }
+  },
+  "per_query": [
+    {
+      "query_num": 1,
+      "rlm": {
+        "status": "completed",
+        "time": 271.2,
+        "output_length": 8734,
+        "error": null,
+        "citations": 97,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 676.3,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 5.4,
+        "output_length": 2625,
+        "error": null
+      }
+    },
+    {
+      "query_num": 2,
+      "rlm": {
+        "status": "completed",
+        "time": 221.0,
+        "output_length": 7004,
+        "error": null,
+        "citations": 106,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 460.8,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2339,
+        "error": null
+      }
+    },
+    {
+      "query_num": 3,
+      "rlm": {
+        "status": "completed",
+        "time": 204.8,
+        "output_length": 8213,
+        "error": null,
+        "citations": 101,
+        "documents_read": 32
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 357.3,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 1316,
+        "error": null
+      }
+    },
+    {
+      "query_num": 4,
+      "rlm": {
+        "status": "completed",
+        "time": 191.8,
+        "output_length": 9178,
+        "error": null,
+        "citations": 87,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 11.9,
+        "output_length": 293,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 1236,
+        "error": null
+      }
+    },
+    {
+      "query_num": 5,
+      "rlm": {
+        "status": "completed",
+        "time": 218.6,
+        "output_length": 8988,
+        "error": null,
+        "citations": 91,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 11.9,
+        "output_length": 229,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2328,
+        "error": null
+      }
+    },
+    {
+      "query_num": 6,
+      "rlm": {
+        "status": "completed",
+        "time": 215.4,
+        "output_length": 8830,
+        "error": null,
+        "citations": 100,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 86.1,
+        "output_length": 480,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2548,
+        "error": null
+      }
+    },
+    {
+      "query_num": 7,
+      "rlm": {
+        "status": "completed",
+        "time": 177.3,
+        "output_length": 8368,
+        "error": null,
+        "citations": 86,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 94.3,
+        "output_length": 666,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2238,
+        "error": null
+      }
+    },
+    {
+      "query_num": 8,
+      "rlm": {
+        "status": "completed",
+        "time": 210.0,
+        "output_length": 9422,
+        "error": null,
+        "citations": 92,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 4.0,
+        "output_length": 294,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 1933,
+        "error": null
+      }
+    },
+    {
+      "query_num": 9,
+      "rlm": {
+        "status": "completed",
+        "time": 286.3,
+        "output_length": 8946,
+        "error": null,
+        "citations": 97,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 61.2,
+        "output_length": 285,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2307,
+        "error": null
+      }
+    },
+    {
+      "query_num": 10,
+      "rlm": {
+        "status": "completed",
+        "time": 259.1,
+        "output_length": 9813,
+        "error": null,
+        "citations": 94,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 103.9,
+        "output_length": 2016,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2227,
+        "error": null
+      }
+    },
+    {
+      "query_num": 11,
+      "rlm": {
+        "status": "completed",
+        "time": 208.5,
+        "output_length": 9877,
+        "error": null,
+        "citations": 97,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 117.7,
+        "output_length": 3130,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 3706,
+        "error": null
+      }
+    },
+    {
+      "query_num": 12,
+      "rlm": {
+        "status": "completed",
+        "time": 184.4,
+        "output_length": 8304,
+        "error": null,
+        "citations": 86,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 73.3,
+        "output_length": 3016,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2336,
+        "error": null
+      }
+    },
+    {
+      "query_num": 13,
+      "rlm": {
+        "status": "completed",
+        "time": 190.5,
+        "output_length": 10346,
+        "error": null,
+        "citations": 89,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 313.4,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2593,
+        "error": null
+      }
+    },
+    {
+      "query_num": 14,
+      "rlm": {
+        "status": "completed",
+        "time": 190.3,
+        "output_length": 8384,
+        "error": null,
+        "citations": 78,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 126.2,
+        "output_length": 2548,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 1478,
+        "error": null
+      }
+    },
+    {
+      "query_num": 15,
+      "rlm": {
+        "status": "completed",
+        "time": 200.5,
+        "output_length": 9193,
+        "error": null,
+        "citations": 90,
+        "documents_read": 31
+      },
+      "codex": {
+        "status": "completed",
+        "time": 67.9,
+        "output_length": 1870,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 3343,
+        "error": null
+      }
+    },
+    {
+      "query_num": 16,
+      "rlm": {
+        "status": "completed",
+        "time": 195.8,
+        "output_length": 8435,
+        "error": null,
+        "citations": 73,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 488.9,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 1773,
+        "error": null
+      }
+    },
+    {
+      "query_num": 17,
+      "rlm": {
+        "status": "completed",
+        "time": 253.2,
+        "output_length": 8485,
+        "error": null,
+        "citations": 88,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 102.4,
+        "output_length": 2515,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2367,
+        "error": null
+      }
+    },
+    {
+      "query_num": 18,
+      "rlm": {
+        "status": "completed",
+        "time": 167.4,
+        "output_length": 8128,
+        "error": null,
+        "citations": 74,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 21.0,
+        "output_length": 526,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 1689,
+        "error": null
+      }
+    },
+    {
+      "query_num": 19,
+      "rlm": {
+        "status": "completed",
+        "time": 171.9,
+        "output_length": 9104,
+        "error": null,
+        "citations": 85,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 444.6,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2201,
+        "error": null
+      }
+    },
+    {
+      "query_num": 20,
+      "rlm": {
+        "status": "completed",
+        "time": 160.2,
+        "output_length": 6805,
+        "error": null,
+        "citations": 87,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 66.8,
+        "output_length": 2866,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2078,
+        "error": null
+      }
+    },
+    {
+      "query_num": 21,
+      "rlm": {
+        "status": "completed",
+        "time": 328.7,
+        "output_length": 9390,
+        "error": null,
+        "citations": 102,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 3.9,
+        "output_length": 214,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 1668,
+        "error": null
+      }
+    },
+    {
+      "query_num": 22,
+      "rlm": {
+        "status": "completed",
+        "time": 192.4,
+        "output_length": 9517,
+        "error": null,
+        "citations": 80,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 3.7,
+        "output_length": 233,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2401,
+        "error": null
+      }
+    },
+    {
+      "query_num": 23,
+      "rlm": {
+        "status": "completed",
+        "time": 212.8,
+        "output_length": 9645,
+        "error": null,
+        "citations": 73,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 3.2,
+        "output_length": 255,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2540,
+        "error": null
+      }
+    },
+    {
+      "query_num": 24,
+      "rlm": {
+        "status": "completed",
+        "time": 341.1,
+        "output_length": 11194,
+        "error": null,
+        "citations": 96,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 4.4,
+        "output_length": 315,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2354,
+        "error": null
+      }
+    },
+    {
+      "query_num": 25,
+      "rlm": {
+        "status": "completed",
+        "time": 248.1,
+        "output_length": 10393,
+        "error": null,
+        "citations": 102,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 439.5,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2809,
+        "error": null
+      }
+    },
+    {
+      "query_num": 26,
+      "rlm": {
+        "status": "completed",
+        "time": 243.2,
+        "output_length": 10395,
+        "error": null,
+        "citations": 78,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 3.0,
+        "output_length": 209,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2764,
+        "error": null
+      }
+    },
+    {
+      "query_num": 27,
+      "rlm": {
+        "status": "completed",
+        "time": 251.7,
+        "output_length": 9479,
+        "error": null,
+        "citations": 82,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 3.1,
+        "output_length": 222,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 1977,
+        "error": null
+      }
+    },
+    {
+      "query_num": 28,
+      "rlm": {
+        "status": "completed",
+        "time": 230.5,
+        "output_length": 12119,
+        "error": null,
+        "citations": 81,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 503.5,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2092,
+        "error": null
+      }
+    },
+    {
+      "query_num": 29,
+      "rlm": {
+        "status": "completed",
+        "time": 215.5,
+        "output_length": 9003,
+        "error": null,
+        "citations": 78,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 3.8,
+        "output_length": 280,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 3008,
+        "error": null
+      }
+    },
+    {
+      "query_num": 30,
+      "rlm": {
+        "status": "completed",
+        "time": 264.6,
+        "output_length": 9987,
+        "error": null,
+        "citations": 91,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 125.3,
+        "output_length": 3389,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 1017,
+        "error": null
+      }
+    },
+    {
+      "query_num": 31,
+      "rlm": {
+        "status": "completed",
+        "time": 330.9,
+        "output_length": 10822,
+        "error": null,
+        "citations": 81,
+        "documents_read": 36
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 364.6,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 3125,
+        "error": null
+      }
+    },
+    {
+      "query_num": 32,
+      "rlm": {
+        "status": "completed",
+        "time": 206.7,
+        "output_length": 10752,
+        "error": null,
+        "citations": 81,
+        "documents_read": 32
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 690.9,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2287,
+        "error": null
+      }
+    },
+    {
+      "query_num": 33,
+      "rlm": {
+        "status": "completed",
+        "time": 178.9,
+        "output_length": 8980,
+        "error": null,
+        "citations": 95,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 4.0,
+        "output_length": 255,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2779,
+        "error": null
+      }
+    },
+    {
+      "query_num": 34,
+      "rlm": {
+        "status": "completed",
+        "time": 263.7,
+        "output_length": 10060,
+        "error": null,
+        "citations": 83,
+        "documents_read": 30
+      },
+      "codex": {
+        "status": "completed",
+        "time": 74.1,
+        "output_length": 1972,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 1399,
+        "error": null
+      }
+    },
+    {
+      "query_num": 35,
+      "rlm": {
+        "status": "completed",
+        "time": 203.6,
+        "output_length": 10466,
+        "error": null,
+        "citations": 60,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 55.2,
+        "output_length": 617,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 3267,
+        "error": null
+      }
+    },
+    {
+      "query_num": 36,
+      "rlm": {
+        "status": "completed",
+        "time": 211.5,
+        "output_length": 10839,
+        "error": null,
+        "citations": 82,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 3.2,
+        "output_length": 305,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 1873,
+        "error": null
+      }
+    },
+    {
+      "query_num": 37,
+      "rlm": {
+        "status": "completed",
+        "time": 268.1,
+        "output_length": 10071,
+        "error": null,
+        "citations": 74,
+        "documents_read": 32
+      },
+      "codex": {
+        "status": "completed",
+        "time": 3.4,
+        "output_length": 294,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 1644,
+        "error": null
+      }
+    },
+    {
+      "query_num": 38,
+      "rlm": {
+        "status": "completed",
+        "time": 222.9,
+        "output_length": 10773,
+        "error": null,
+        "citations": 81,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 42.3,
+        "output_length": 805,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2257,
+        "error": null
+      }
+    },
+    {
+      "query_num": 39,
+      "rlm": {
+        "status": "completed",
+        "time": 344.5,
+        "output_length": 9428,
+        "error": null,
+        "citations": 79,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 425.4,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 3049,
+        "error": null
+      }
+    },
+    {
+      "query_num": 40,
+      "rlm": {
+        "status": "completed",
+        "time": 231.3,
+        "output_length": 11077,
+        "error": null,
+        "citations": 65,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 3.8,
+        "output_length": 271,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 1974,
+        "error": null
+      }
+    },
+    {
+      "query_num": 41,
+      "rlm": {
+        "status": "completed",
+        "time": 216.5,
+        "output_length": 9352,
+        "error": null,
+        "citations": 82,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 132.0,
+        "output_length": 1684,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 1796,
+        "error": null
+      }
+    },
+    {
+      "query_num": 42,
+      "rlm": {
+        "status": "completed",
+        "time": 298.1,
+        "output_length": 9965,
+        "error": null,
+        "citations": 82,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 5.0,
+        "output_length": 299,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2571,
+        "error": null
+      }
+    },
+    {
+      "query_num": 43,
+      "rlm": {
+        "status": "completed",
+        "time": 203.9,
+        "output_length": 9314,
+        "error": null,
+        "citations": 88,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 4.1,
+        "output_length": 311,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2247,
+        "error": null
+      }
+    },
+    {
+      "query_num": 44,
+      "rlm": {
+        "status": "completed",
+        "time": 338.1,
+        "output_length": 9032,
+        "error": null,
+        "citations": 77,
+        "documents_read": 30
+      },
+      "codex": {
+        "status": "completed",
+        "time": 3.4,
+        "output_length": 230,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 1912,
+        "error": null
+      }
+    },
+    {
+      "query_num": 45,
+      "rlm": {
+        "status": "completed",
+        "time": 204.5,
+        "output_length": 8218,
+        "error": null,
+        "citations": 93,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 509.0,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 3795,
+        "error": null
+      }
+    },
+    {
+      "query_num": 46,
+      "rlm": {
+        "status": "completed",
+        "time": 303.7,
+        "output_length": 9608,
+        "error": null,
+        "citations": 76,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 167.9,
+        "output_length": 2738,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 3088,
+        "error": null
+      }
+    },
+    {
+      "query_num": 47,
+      "rlm": {
+        "status": "completed",
+        "time": 222.1,
+        "output_length": 9453,
+        "error": null,
+        "citations": 85,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 575.2,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2503,
+        "error": null
+      }
+    },
+    {
+      "query_num": 48,
+      "rlm": {
+        "status": "completed",
+        "time": 290.4,
+        "output_length": 9879,
+        "error": null,
+        "citations": 75,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 67.6,
+        "output_length": 2332,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2219,
+        "error": null
+      }
+    },
+    {
+      "query_num": 49,
+      "rlm": {
+        "status": "completed",
+        "time": 183.5,
+        "output_length": 9223,
+        "error": null,
+        "citations": 92,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 4.6,
+        "output_length": 485,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2101,
+        "error": null
+      }
+    },
+    {
+      "query_num": 50,
+      "rlm": {
+        "status": "completed",
+        "time": 225.4,
+        "output_length": 8929,
+        "error": null,
+        "citations": 96,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 3.3,
+        "output_length": 208,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2159,
+        "error": null
+      }
+    },
+    {
+      "query_num": 51,
+      "rlm": {
+        "status": "completed",
+        "time": 194.5,
+        "output_length": 8644,
+        "error": null,
+        "citations": 77,
+        "documents_read": 31
+      },
+      "codex": {
+        "status": "completed",
+        "time": 2.5,
+        "output_length": 183,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2276,
+        "error": null
+      }
+    },
+    {
+      "query_num": 52,
+      "rlm": {
+        "status": "completed",
+        "time": 263.4,
+        "output_length": 8944,
+        "error": null,
+        "citations": 75,
+        "documents_read": 28
+      },
+      "codex": {
+        "status": "completed",
+        "time": 246.0,
+        "output_length": 2990,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 1905,
+        "error": null
+      }
+    },
+    {
+      "query_num": 53,
+      "rlm": {
+        "status": "completed",
+        "time": 265.6,
+        "output_length": 10143,
+        "error": null,
+        "citations": 86,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 265.3,
+        "output_length": 4780,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 1365,
+        "error": null
+      }
+    },
+    {
+      "query_num": 54,
+      "rlm": {
+        "status": "completed",
+        "time": 235.9,
+        "output_length": 10315,
+        "error": null,
+        "citations": 88,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 113.3,
+        "output_length": 2559,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2508,
+        "error": null
+      }
+    },
+    {
+      "query_num": 55,
+      "rlm": {
+        "status": "completed",
+        "time": 213.3,
+        "output_length": 8374,
+        "error": null,
+        "citations": 78,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 168.9,
+        "output_length": 4655,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2933,
+        "error": null
+      }
+    },
+    {
+      "query_num": 56,
+      "rlm": {
+        "status": "completed",
+        "time": 364.6,
+        "output_length": 9626,
+        "error": null,
+        "citations": 71,
+        "documents_read": 30
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 777.9,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 1782,
+        "error": null
+      }
+    },
+    {
+      "query_num": 57,
+      "rlm": {
+        "status": "completed",
+        "time": 217.9,
+        "output_length": 10723,
+        "error": null,
+        "citations": 86,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 111.7,
+        "output_length": 3373,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 3551,
+        "error": null
+      }
+    },
+    {
+      "query_num": 58,
+      "rlm": {
+        "status": "completed",
+        "time": 349.0,
+        "output_length": 8912,
+        "error": null,
+        "citations": 67,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 173.4,
+        "output_length": 4291,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 1582,
+        "error": null
+      }
+    },
+    {
+      "query_num": 59,
+      "rlm": {
+        "status": "completed",
+        "time": 308.2,
+        "output_length": 10312,
+        "error": null,
+        "citations": 66,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 524.5,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 1414,
+        "error": null
+      }
+    },
+    {
+      "query_num": 60,
+      "rlm": {
+        "status": "completed",
+        "time": 181.1,
+        "output_length": 9700,
+        "error": null,
+        "citations": 92,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 326.5,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 3232,
+        "error": null
+      }
+    },
+    {
+      "query_num": 61,
+      "rlm": {
+        "status": "completed",
+        "time": 281.4,
+        "output_length": 9655,
+        "error": null,
+        "citations": 94,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 86.9,
+        "output_length": 686,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 1624,
+        "error": null
+      }
+    },
+    {
+      "query_num": 62,
+      "rlm": {
+        "status": "completed",
+        "time": 283.9,
+        "output_length": 10329,
+        "error": null,
+        "citations": 77,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 2.8,
+        "output_length": 285,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.5,
+        "output_length": 2346,
+        "error": null
+      }
+    },
+    {
+      "query_num": 63,
+      "rlm": {
+        "status": "completed",
+        "time": 218.9,
+        "output_length": 9349,
+        "error": null,
+        "citations": 83,
+        "documents_read": 30
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 560.8,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2184,
+        "error": null
+      }
+    },
+    {
+      "query_num": 64,
+      "rlm": {
+        "status": "completed",
+        "time": 359.6,
+        "output_length": 10971,
+        "error": null,
+        "citations": 104,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 4.9,
+        "output_length": 282,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2241,
+        "error": null
+      }
+    },
+    {
+      "query_num": 65,
+      "rlm": {
+        "status": "completed",
+        "time": 311.2,
+        "output_length": 10730,
+        "error": null,
+        "citations": 95,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 51.4,
+        "output_length": 947,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2280,
+        "error": null
+      }
+    },
+    {
+      "query_num": 66,
+      "rlm": {
+        "status": "completed",
+        "time": 296.2,
+        "output_length": 10320,
+        "error": null,
+        "citations": 80,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 3.6,
+        "output_length": 374,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2285,
+        "error": null
+      }
+    },
+    {
+      "query_num": 67,
+      "rlm": {
+        "status": "completed",
+        "time": 237.5,
+        "output_length": 9915,
+        "error": null,
+        "citations": 78,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 3.0,
+        "output_length": 217,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 3514,
+        "error": null
+      }
+    },
+    {
+      "query_num": 68,
+      "rlm": {
+        "status": "completed",
+        "time": 224.6,
+        "output_length": 10573,
+        "error": null,
+        "citations": 83,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 3.2,
+        "output_length": 241,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 1676,
+        "error": null
+      }
+    },
+    {
+      "query_num": 69,
+      "rlm": {
+        "status": "completed",
+        "time": 280.0,
+        "output_length": 11935,
+        "error": null,
+        "citations": 90,
+        "documents_read": 30
+      },
+      "codex": {
+        "status": "timeout",
+        "time": 478.7,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2200,
+        "error": null
+      }
+    },
+    {
+      "query_num": 70,
+      "rlm": {
+        "status": "completed",
+        "time": 341.6,
+        "output_length": 10431,
+        "error": null,
+        "citations": 70,
+        "documents_read": 33
+      },
+      "codex": {
+        "status": "completed",
+        "time": 136.8,
+        "output_length": 3126,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 1803,
+        "error": null
+      }
+    },
+    {
+      "query_num": 71,
+      "codex": {
+        "status": "completed",
+        "time": 4.2,
+        "output_length": 317,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.5,
+        "output_length": 2275,
+        "error": null
+      }
+    },
+    {
+      "query_num": 72,
+      "codex": {
+        "status": "completed",
+        "time": 252.1,
+        "output_length": 3823,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.5,
+        "output_length": 2567,
+        "error": null
+      }
+    },
+    {
+      "query_num": 73,
+      "codex": {
+        "status": "completed",
+        "time": 107.8,
+        "output_length": 844,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.5,
+        "output_length": 1805,
+        "error": null
+      }
+    },
+    {
+      "query_num": 74,
+      "codex": {
+        "status": "completed",
+        "time": 4.6,
+        "output_length": 325,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 1294,
+        "error": null
+      }
+    },
+    {
+      "query_num": 75,
+      "codex": {
+        "status": "completed",
+        "time": 272.3,
+        "output_length": 3634,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.5,
+        "output_length": 2210,
+        "error": null
+      }
+    },
+    {
+      "query_num": 76,
+      "codex": {
+        "status": "completed",
+        "time": 116.4,
+        "output_length": 2783,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.5,
+        "output_length": 2593,
+        "error": null
+      }
+    },
+    {
+      "query_num": 77,
+      "codex": {
+        "status": "timeout",
+        "time": 367.2,
+        "output_length": 0,
+        "error": "Timeout after 300s"
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2202,
+        "error": null
+      }
+    },
+    {
+      "query_num": 78,
+      "codex": {
+        "status": "completed",
+        "time": 103.4,
+        "output_length": 2088,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2028,
+        "error": null
+      }
+    },
+    {
+      "query_num": 79,
+      "codex": {
+        "status": "completed",
+        "time": 244.9,
+        "output_length": 3237,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2177,
+        "error": null
+      }
+    },
+    {
+      "query_num": 80,
+      "codex": {
+        "status": "completed",
+        "time": 4.9,
+        "output_length": 261,
+        "error": null
+      },
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 1662,
+        "error": null
+      }
+    },
+    {
+      "query_num": 81,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2547,
+        "error": null
+      }
+    },
+    {
+      "query_num": 82,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2917,
+        "error": null
+      }
+    },
+    {
+      "query_num": 83,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 3126,
+        "error": null
+      }
+    },
+    {
+      "query_num": 84,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2745,
+        "error": null
+      }
+    },
+    {
+      "query_num": 85,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2461,
+        "error": null
+      }
+    },
+    {
+      "query_num": 86,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.5,
+        "output_length": 1903,
+        "error": null
+      }
+    },
+    {
+      "query_num": 87,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2604,
+        "error": null
+      }
+    },
+    {
+      "query_num": 88,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2315,
+        "error": null
+      }
+    },
+    {
+      "query_num": 89,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2564,
+        "error": null
+      }
+    },
+    {
+      "query_num": 90,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 3365,
+        "error": null
+      }
+    },
+    {
+      "query_num": 91,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2585,
+        "error": null
+      }
+    },
+    {
+      "query_num": 92,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 2245,
+        "error": null
+      }
+    },
+    {
+      "query_num": 93,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.4,
+        "output_length": 1432,
+        "error": null
+      }
+    },
+    {
+      "query_num": 94,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 3301,
+        "error": null
+      }
+    },
+    {
+      "query_num": 95,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2899,
+        "error": null
+      }
+    },
+    {
+      "query_num": 96,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2431,
+        "error": null
+      }
+    },
+    {
+      "query_num": 97,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2801,
+        "error": null
+      }
+    },
+    {
+      "query_num": 98,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2538,
+        "error": null
+      }
+    },
+    {
+      "query_num": 99,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2009,
+        "error": null
+      }
+    },
+    {
+      "query_num": 100,
+      "claude_code": {
+        "status": "completed",
+        "time": 0.3,
+        "output_length": 2376,
+        "error": null
+      }
+    }
+  ]
+}

@@ -10,7 +10,7 @@ http {
     # Redirect HTTP to HTTPS
     server {
         listen 80;
-        server_name rlm.irys.ai;
+        server_name rlm.iryslegal.com;
 
         # Let's Encrypt challenge location
         location /.well-known/acme-challenge/ {
@@ -26,11 +26,11 @@ http {
     # HTTPS server
     server {
         listen 443 ssl http2;
-        server_name rlm.irys.ai;
+        server_name rlm.iryslegal.com;
 
         # SSL certificates (Let's Encrypt)
-        ssl_certificate /etc/letsencrypt/live/rlm.irys.ai/fullchain.pem;
-        ssl_certificate_key /etc/letsencrypt/live/rlm.irys.ai/privkey.pem;
+        ssl_certificate /etc/letsencrypt/live/rlm.iryslegal.com/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/rlm.iryslegal.com/privkey.pem;
 
         # SSL configuration
         ssl_session_timeout 1d;
@@ -45,13 +45,13 @@ http {
         # HSTS (optional - uncomment after testing)
         # add_header Strict-Transport-Security "max-age=63072000" always;
 
-        # Max upload size (for file uploads)
-        client_max_body_size 100M;
+        # Max upload size (for file uploads, 0 = unlimited for streaming)
+        client_max_body_size 0;
 
-        # Timeouts for long-running requests
+        # Timeouts for long-running requests (large uploads and investigations)
         proxy_connect_timeout 60s;
-        proxy_send_timeout 120s;
-        proxy_read_timeout 120s;
+        proxy_send_timeout 600s;
+        proxy_read_timeout 600s;
 
         location / {
             proxy_pass http://irys_api;

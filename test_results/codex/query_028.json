@@ -1,0 +1,8 @@
+{
+  "query_num": 28,
+  "query": "What do the direct examination outlines reveal about CITIOM's key arguments?",
+  "status": "timeout",
+  "elapsed_seconds": 503.5,
+  "output": "",
+  "error": "Timeout after 300s"
+}

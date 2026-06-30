@@ -4,6 +4,7 @@ from .models import ModelTier, GeminiClient
 from .repository import MatterRepository
 from .reader import DocumentReader
 from .search import DocumentSearch
+from .fact_store import FactStore, StoredFact
 
 __all__ = [
     "ModelTier",
@@ -11,4 +12,6 @@ __all__ = [
     "MatterRepository",
     "DocumentReader",
     "DocumentSearch",
+    "FactStore",
+    "StoredFact",
 ]

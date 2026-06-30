@@ -1,0 +1,8 @@
+{
+  "query_num": 1,
+  "query": "What was Gulfstream's initial cost estimate for the 192-month inspection?",
+  "status": "timeout",
+  "elapsed_seconds": 676.3,
+  "output": "",
+  "error": "Timeout after 300s"
+}

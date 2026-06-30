@@ -1,9 +1,9 @@
 #!/bin/bash
-# init-ssl.sh - Initialize Let's Encrypt SSL certificates for rlm.irys.ai
+# init-ssl.sh - Initialize Let's Encrypt SSL certificates for rlm.iryslegal.com
 
 set -e
 
-DOMAIN="rlm.irys.ai"
+DOMAIN="rlm.iryslegal.com"
 EMAIL="admin@irys.ai"  # Change this to your email
 STAGING=0  # Set to 1 to test with staging (no rate limits)
 
@@ -24,7 +24,7 @@ events {
 http {
     server {
         listen 80;
-        server_name rlm.irys.ai;
+        server_name rlm.iryslegal.com;
 
         location /.well-known/acme-challenge/ {
             root /var/www/certbot;

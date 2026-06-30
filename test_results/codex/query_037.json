@@ -1,0 +1,8 @@
+{
+  "query_num": 37,
+  "query": "Synthesize all references to change orders and their justifications.",
+  "status": "completed",
+  "elapsed_seconds": 3.4,
+  "output": "I can help, but I need the case materials to review. Please point me to the relevant files in this workspace (briefs, orders, opinions, docket entries, key exhibits) and any specific issues or questions you want addressed. If you don’t have files here, paste the key excerpts you want analyzed.",
+  "error": null
+}

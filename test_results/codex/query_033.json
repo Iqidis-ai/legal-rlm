@@ -1,0 +1,8 @@
+{
+  "query_num": 33,
+  "query": "Synthesize the timeline of estimate revisions across all documents.",
+  "status": "completed",
+  "elapsed_seconds": 4.0,
+  "output": "What would you like me to produce for the CITIOM v. Gulfstream review (e.g., case brief, issue-spotting memo, litigation risk assessment, or summary of holdings)? If you have a record or specific filings to review, point me to them and I’ll analyze those.",
+  "error": null
+}

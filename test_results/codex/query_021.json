@@ -1,0 +1,8 @@
+{
+  "query_num": 21,
+  "query": "What evidence across multiple documents supports that Gulfstream knew its estimates were unreliable?",
+  "status": "completed",
+  "elapsed_seconds": 3.9,
+  "output": "Happy to help. To review CITIOM v. Gulfstream, I need the case materials (complaint, motions, orders, briefs, key exhibits). Please share the documents or point me to the files in the project so I can analyze them.",
+  "error": null
+}

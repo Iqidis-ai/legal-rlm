@@ -5,6 +5,7 @@ with automatic cleanup to keep disk usage low.
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -14,10 +15,11 @@ import time
 from pathlib import Path
 from typing import AsyncIterator, Optional
 from contextlib import asynccontextmanager
-from urllib.parse import unquote_plus
+from urllib.parse import unquote_plus, urlparse, unquote as _url_unquote
 
 import boto3
 import httpx
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from .config import ServiceConfig, get_config
@@ -28,10 +30,24 @@ logger = logging.getLogger(__name__)
 CONTENT_TYPE_TO_EXT = {
     "application/pdf": ".pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
     "application/msword": ".doc",
     "text/plain": ".txt",
+    "text/csv": ".csv",
+    "application/csv": ".csv",
     "application/rtf": ".rtf",
     "text/rtf": ".rtf",
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+}
+
+# Extensions trusted as-is when present on the provided filename. If a file
+# already carries one of these, we keep it rather than re-detecting from the
+# (often generic) S3 Content-Type or ambiguous ZIP magic bytes.
+_KNOWN_EXTENSIONS = {
+    ".pdf", ".docx", ".doc", ".txt", ".md", ".rtf",
+    ".png", ".jpg", ".jpeg", ".csv", ".xlsx", ".mht", ".mhtml",
 }
 
 # Magic bytes for file type detection (fallback when content-type is missing/generic)
@@ -40,7 +56,28 @@ MAGIC_BYTES = {
     b"PK\x03\x04": ".docx",  # ZIP-based formats (docx, xlsx, pptx)
     b"\xd0\xcf\x11\xe0": ".doc",  # OLE compound document (old MS Office)
     b"{\\rtf": ".rtf",
+    b"\x89PNG": ".png",       # PNG signature
+    b"\xff\xd8\xff": ".jpg",  # JPEG signature
 }
+
+# Maximum number of concurrent file downloads
+MAX_CONCURRENT_DOWNLOADS = 20
+
+
+def _make_unique_filename(name: str, used: set[str]) -> str:
+    """Return a unique filename, appending _1, _2 etc. to the stem if already taken."""
+    if name not in used:
+        used.add(name)
+        return name
+    stem = Path(name).stem
+    suffix = Path(name).suffix
+    counter = 1
+    while True:
+        candidate = f"{stem}_{counter}{suffix}"
+        if candidate not in used:
+            used.add(candidate)
+            return candidate
+        counter += 1
 
 
 def detect_extension_from_content_type(content_type: Optional[str]) -> Optional[str]:
@@ -86,12 +123,16 @@ class S3Repository:
         self.prefix = prefix.strip("/")
         self.config = config or get_config()
 
-        # Initialize S3 client
+        # Initialize S3 client with increased connection pool (default is 10,
+        # which saturates quickly when downloading many documents concurrently).
+        # 20 concurrent downloads × 2 boto3 calls each (head_object + download_file)
+        # = 40 connections needed; use 50 to give headroom for simultaneous jobs.
         self._s3 = boto3.client(
             "s3",
             region_name=self.config.s3_region,
             aws_access_key_id=self.config.aws_access_key_id,
             aws_secret_access_key=self.config.aws_secret_access_key,
+            config=Config(max_pool_connections=50),
         )
 
         # Temp storage tracking
@@ -102,16 +143,29 @@ class S3Repository:
     async def list_documents(
         self,
         extensions: Optional[list[str]] = None,
+        include_hash_files: bool = True,
     ) -> list[str]:
         """List documents in S3 prefix.
 
         Args:
             extensions: Filter by file extensions (e.g., ['.pdf', '.txt'])
+            include_hash_files: If True, also include files that look like content hashes
+                               (no extension, 32+ hex chars). These are typically hash-named
+                               files that need mapping to display names.
 
         Returns:
             List of S3 keys (relative to prefix)
         """
-        extensions = extensions or [".txt", ".pdf", ".docx", ".md"]
+        extensions = extensions or [".txt", ".pdf", ".docx", ".md", ".png", ".jpg", ".jpeg", ".csv", ".xlsx"]
+
+        def _is_hash_filename(name: str) -> bool:
+            """Check if filename looks like a content hash (hex string, no extension)."""
+            # Hash filenames are typically 32+ hex chars without extension
+            if '.' in name:
+                return False  # Has extension, not a hash
+            if len(name) < 32:
+                return False
+            return all(c in '0123456789abcdef' for c in name.lower())
 
         def _list():
             documents = []
@@ -122,10 +176,22 @@ class S3Repository:
             for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
                 for obj in page.get("Contents", []):
                     key = obj["Key"]
-                    if any(key.lower().endswith(ext) for ext in extensions):
-                        # Return key relative to prefix
-                        rel_key = key[len(prefix):] if prefix else key
+                    rel_key = key[len(prefix):] if prefix else key
+
+                    # Always include the filename mapping file
+                    if rel_key == "_filename_mapping.json":
                         documents.append(rel_key)
+                        continue
+
+                    # Filter by extension for other files
+                    if any(key.lower().endswith(ext) for ext in extensions):
+                        documents.append(rel_key)
+                        continue
+
+                    # Include hash-named files (they may have display names in mapping)
+                    if include_hash_files and _is_hash_filename(rel_key):
+                        documents.append(rel_key)
+                        logger.debug(f"Including hash-named file: {rel_key}")
 
             return documents
 
@@ -133,6 +199,12 @@ class S3Repository:
 
     async def download_to_temp(self, job_id: str) -> Path:
         """Download all documents to temp directory.
+
+        If a _filename_mapping.json exists in S3, it will be used to:
+        1. Identify hash-named files that should be downloaded
+        2. Save those files with their display names (not hash names)
+
+        This ensures the repository can read files by their human-readable names.
 
         Args:
             job_id: Unique job identifier for tracking
@@ -147,7 +219,7 @@ class S3Repository:
         # Track for cleanup
         self._temp_dirs[job_id] = (temp_dir, time.time())
 
-        # List and download documents
+        # List all documents (including hash-named files)
         documents = await self.list_documents()
         logger.info(f"Downloading {len(documents)} documents for job {job_id}")
 
@@ -158,17 +230,88 @@ class S3Repository:
                 f"Max: {self.config.max_documents_per_job}"
             )
 
-        # Download each document
-        for doc_key in documents:
-            await self._download_file(doc_key, temp_dir)
+        # Download mapping file FIRST if it exists, to get hash -> display name mapping
+        filename_mapping = {}  # hash_name -> display_name
+        if "_filename_mapping.json" in documents:
+            mapping_path = await self._download_file("_filename_mapping.json", temp_dir)
+            if mapping_path and mapping_path.exists():
+                try:
+                    with open(mapping_path) as f:
+                        raw_mapping = json.load(f)
+                    # Build hash -> display_name mapping
+                    for hash_name, info in raw_mapping.items():
+                        if isinstance(info, dict):
+                            display_name = info.get("display_name", hash_name)
+                        else:
+                            display_name = str(info)
+                        filename_mapping[hash_name] = display_name
+                    logger.info(f"Loaded filename mapping with {len(filename_mapping)} entries")
+                except Exception as e:
+                    logger.warning(f"Failed to load filename mapping: {e}")
 
-        logger.info(f"Downloaded {len(documents)} documents to {temp_dir}")
+        # Build download list with unique filenames (handle same-name conflicts)
+        used_names: set[str] = set()
+        download_pairs: list[tuple[str, str]] = []
+        for doc_key in documents:
+            if doc_key == "_filename_mapping.json":
+                continue
+            save_name = filename_mapping.get(doc_key, doc_key)
+            unique_name = _make_unique_filename(save_name, used_names)
+            download_pairs.append((doc_key, unique_name))
+
+        # Download concurrently with limit
+        sem = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+
+        async def _dl(doc_key: str, save_name: str) -> Optional[Path]:
+            async with sem:
+                logger.debug(f"[async-dl] start  {save_name}")
+                result = await self._download_file(doc_key, temp_dir, save_as=save_name)
+                logger.debug(f"[async-dl] done   {save_name}")
+                return result
+
+        logger.info(f"[async-dl] launching {len(download_pairs)} downloads (max {MAX_CONCURRENT_DOWNLOADS} concurrent)")
+        dl_results = await asyncio.gather(*[_dl(k, n) for k, n in download_pairs], return_exceptions=True)
+        downloaded_count = sum(1 for r in dl_results if isinstance(r, Path))
+        skipped_count = sum(1 for r in dl_results if r is None or isinstance(r, Exception))
+
+        # Verify files actually exist in temp directory
+        actual_files = list(temp_dir.glob("**/*"))
+        actual_file_count = sum(1 for f in actual_files if f.is_file())
+
+        logger.info(
+            f"Download complete for job {job_id}: "
+            f"{downloaded_count}/{len(documents)} downloaded, {skipped_count} skipped, "
+            f"{actual_file_count} files verified on disk at {temp_dir}"
+        )
+
+        # Donot raise error even if no files were downloaded
+        # if actual_file_count == 0:
+        #     raise ValueError(
+        #         f"Failed to download any documents. Listed: {len(documents)}, "
+        #         f"Downloaded: {downloaded_count}, Verified on disk: {actual_file_count}. "
+        #         f"Temp dir: {temp_dir}"
+        #     )
+
         return temp_dir
 
-    async def _download_file(self, key: str, dest_dir: Path) -> Path:
-        """Download a single file from S3."""
+    async def _download_file(
+        self, key: str, dest_dir: Path, save_as: Optional[str] = None
+    ) -> Optional[Path]:
+        """Download a single file from S3.
+
+        Args:
+            key: S3 key (relative to prefix) to download
+            dest_dir: Destination directory
+            save_as: Optional filename to save as (instead of the S3 key name).
+                    Use this to save hash-named files with their display names.
+
+        Returns:
+            Path to downloaded file, or None if skipped
+        """
         s3_key = f"{self.prefix}/{key}" if self.prefix else key
-        dest_path = dest_dir / key
+        # Use save_as name if provided, otherwise use the original key
+        dest_filename = save_as if save_as else key
+        dest_path = dest_dir / dest_filename
 
         # Create parent directories
         dest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -183,6 +326,8 @@ class S3Repository:
                 return None
 
             self._s3.download_file(self.bucket, s3_key, str(dest_path))
+            if save_as and save_as != key:
+                logger.debug(f"Downloaded {key} -> {save_as}")
             return dest_path
 
         return await asyncio.to_thread(_download)
@@ -192,7 +337,7 @@ class S3Repository:
         if job_id in self._temp_dirs:
             temp_dir, _ = self._temp_dirs.pop(job_id)
             if temp_dir.exists():
-                shutil.rmtree(temp_dir)
+                await asyncio.to_thread(shutil.rmtree, temp_dir)
                 logger.info(f"Cleaned up temp directory: {temp_dir}")
 
     async def cleanup_expired(self) -> int:
@@ -315,47 +460,94 @@ class S3Repository:
 
         logger.info(f"Downloading {len(url_inputs)} documents for job {job_id}")
 
-        # Download each URL
-        downloaded = 0
-        errors = []
-        for url_input in url_inputs:
-            # Extract URL and metadata
+        # --- Step 1: parse every input and assign unique filenames up-front ---
+        # Filenames are resolved before any I/O so the LLM always sees distinct,
+        # human-readable names even when two inputs share the same base name.
+        used_names: set[str] = set()
+
+        def _resolve_input(url_input) -> tuple[str, Optional[str], Optional[str]]:
+            """Return (url, filename, mime_type) from a str / object / dict input."""
             if isinstance(url_input, str):
-                url = url_input
-                filename = None
-                mime_type = None
+                url, filename, mime_type = url_input, None, None
+            elif hasattr(url_input, "url"):
+                url, filename, mime_type = url_input.url, url_input.name, url_input.mime
             else:
-                # UrlWithMetadata object or dict
-                if hasattr(url_input, 'url'):
-                    url = url_input.url
-                    filename = url_input.name
-                    mime_type = url_input.mime
-                else:
-                    # Dict format
-                    url = url_input.get('url', url_input)
-                    filename = url_input.get('name')
-                    mime_type = url_input.get('mime')
+                url = url_input.get("url", url_input)
+                filename = url_input.get("name")
+                mime_type = url_input.get("mime")
 
-            try:
-                if self.is_s3_url(url):
-                    # S3 URL - use S3 client
-                    bucket, key = self.parse_s3_url(url)
-                    await self._download_url(bucket, key, temp_dir, filename, mime_type)
-                else:
-                    # Generic HTTP(S) URL (includes presigned S3 URLs)
-                    await self._download_http_url(url, temp_dir, filename, mime_type)
-                downloaded += 1
-            except Exception as e:
-                error_msg = f"Failed to download {url}: {e}"
-                logger.warning(error_msg)
-                errors.append(error_msg)
+            # Fall back to the filename embedded in the URL path
+            if not filename:
+                filename = _url_unquote(Path(urlparse(url).path).name) or None
 
-        logger.info(f"Downloaded {downloaded}/{len(url_inputs)} documents to {temp_dir}")
+            # Ensure no two files land with the same name
+            if filename:
+                filename = _make_unique_filename(filename, used_names)
 
-        # Raise error if no files were downloaded
-        if downloaded == 0:
+            return url, filename, mime_type
+
+        parsed_inputs = [_resolve_input(u) for u in url_inputs]
+
+        # --- Step 2: download all files concurrently, capped at MAX_CONCURRENT_DOWNLOADS ---
+        sem = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+
+        async def _download_one(url: str, filename: Optional[str], mime_type: Optional[str]) -> tuple[bool, Optional[str]]:
+            async with sem:
+                logger.debug(f"[async-dl] start  {filename or url}")
+                try:
+                    if self.is_s3_url(url):
+                        bucket, key = self.parse_s3_url(url)
+                        await self._download_url(bucket, key, temp_dir, filename, mime_type)
+                    else:
+                        await self._download_http_url(url, temp_dir, filename, mime_type)
+                    logger.debug(f"[async-dl] done   {filename or url}")
+                    return True, None
+                except Exception as e:
+                    error_msg = f"Failed to download {url}: {e}"
+                    logger.warning(error_msg)
+                    return False, error_msg
+
+        logger.info(f"[async-dl] launching {len(parsed_inputs)} downloads (max {MAX_CONCURRENT_DOWNLOADS} concurrent)")
+        dl_results = await asyncio.gather(*[_download_one(u, f, m) for u, f, m in parsed_inputs])
+        downloaded = sum(1 for ok, _ in dl_results if ok)
+        errors = [msg for _, msg in dl_results if msg]
+
+        # Verify files actually exist in temp directory
+        actual_files = list(temp_dir.glob("**/*"))
+        actual_file_count = sum(1 for f in actual_files if f.is_file())
+
+        logger.info(
+            f"Download complete for job {job_id}: "
+            f"{downloaded}/{len(url_inputs)} downloaded, {actual_file_count} files verified on disk at {temp_dir}"
+        )
+
+        # Create filename mapping with URLs for citation tracking
+        mapping = {}
+        for url, filename, mime_type in parsed_inputs:
+            if filename:
+                mapping[filename] = {
+                    "display_name": filename,
+                    "url": url,
+                    "mime": mime_type,
+                }
+
+        if mapping:
+            mapping_path = temp_dir / "_filename_mapping.json"
+            with open(mapping_path, "w") as f:
+                json.dump(mapping, f, indent=2)
+            logger.info(f"Created filename mapping with {len(mapping)} entries including URLs")
+
+        # Donot raise error even if no files were downloaded
+        # if downloaded == 0:
+        #     raise ValueError(
+        #         f"Failed to download any documents. Errors: {'; '.join(errors)}"
+        #     )
+
+        # Raise error if files reported downloaded but not on disk (indicates bug)
+        if downloaded > 0 and actual_file_count == 0:
             raise ValueError(
-                f"Failed to download any documents. Errors: {'; '.join(errors)}"
+                f"Downloaded {downloaded} documents but 0 files found on disk at {temp_dir}. "
+                f"This may indicate a path or storage issue."
             )
 
         return temp_dir
@@ -400,7 +592,7 @@ class S3Repository:
 
             # Determine file extension
             ext = current_ext
-            if not ext or ext not in {".pdf", ".docx", ".doc", ".txt", ".rtf"}:
+            if not ext or ext not in _KNOWN_EXTENSIONS:
                 # Try to detect from Content-Type
                 content_type = head.get("ContentType")
                 ext = detect_extension_from_content_type(content_type)
@@ -511,7 +703,7 @@ class S3Repository:
 
                 # Determine file extension (prefer provided metadata)
                 ext = current_ext
-                if not ext or ext not in {".pdf", ".docx", ".doc", ".txt", ".rtf"}:
+                if not ext or ext not in _KNOWN_EXTENSIONS:
                     ext = detect_extension_from_content_type(content_type)
                     logger.debug(f"Content-Type '{content_type}' -> extension '{ext}'")
 

@@ -1,0 +1,8 @@
+{
+  "query_num": 97,
+  "query": "What evidence chain establishes reliance by CITIOM?",
+  "status": "error",
+  "elapsed_seconds": 0.1,
+  "output": "",
+  "error": "[WinError 2] The system cannot find the file specified"
+}

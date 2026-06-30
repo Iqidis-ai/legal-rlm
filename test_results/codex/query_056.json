@@ -1,0 +1,8 @@
+{
+  "query_num": 56,
+  "query": "Are there contradictions between Gulfstream's proposal and actual work performed?",
+  "status": "timeout",
+  "elapsed_seconds": 777.9,
+  "output": "",
+  "error": "Timeout after 300s"
+}

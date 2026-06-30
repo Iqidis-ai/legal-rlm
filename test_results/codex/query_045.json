@@ -1,0 +1,8 @@
+{
+  "query_num": 45,
+  "query": "What is the timeline of expert report submissions?",
+  "status": "timeout",
+  "elapsed_seconds": 509.0,
+  "output": "",
+  "error": "Timeout after 300s"
+}

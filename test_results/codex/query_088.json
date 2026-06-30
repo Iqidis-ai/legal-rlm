@@ -1,0 +1,8 @@
+{
+  "query_num": 88,
+  "query": "Which citations are most critical to the damages calculation?",
+  "status": "completed",
+  "elapsed_seconds": 3.5,
+  "output": "What would you like me to do for the CITIOM v. Gulfstream case—summarize, analyze issues/holding, extract key facts, or review a specific document? If you have files in `C:\\Users\\devan\\OneDrive\\Desktop\\Projects\\RLMs` you want reviewed, point me to them.",
+  "error": null
+}

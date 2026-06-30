@@ -7,12 +7,31 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, Iterator
 import os
+import json
 import logging
+import mimetypes
 
-from .reader import DocumentReader, DocumentContent
+from .reader import DocumentReader, DocumentContent, OcrCallMetadata
 from .search import DocumentSearch, SearchResults, SearchHit
+from .cache import LRUCache
 
 logger = logging.getLogger(__name__)
+
+
+def _ocr_cache_max_size() -> int:
+    """Read IRYS_OCR_CACHE_ENTRIES env var, default 200."""
+    try:
+        return max(1, int(os.environ.get("IRYS_OCR_CACHE_ENTRIES", "200")))
+    except (ValueError, TypeError):
+        return 200
+
+
+# Module-level LRU cache for OCR / async-read results.
+# Keyed by the absolute file path (or S3 URL) — content-addressable in practice.
+# Survives across investigate() calls within the same process lifetime.
+# Bounded by IRYS_OCR_CACHE_ENTRIES (default 200).  Each worker process has its own
+# copy, so there is no cross-process lock needed.
+_GLOBAL_DOC_CACHE: LRUCache[DocumentContent] = LRUCache(max_size=_ocr_cache_max_size())
 
 
 @dataclass
@@ -40,10 +59,24 @@ class RepositoryStats:
     total_size_bytes: int
     files_by_type: dict[str, int]
     folders: list[str]
+    skipped_legacy_files: int = 0  # Count of .rtf files that can't be processed
 
     @property
     def size_mb(self) -> float:
         return self.total_size_bytes / (1024 * 1024)
+
+    @property
+    def has_legacy_files(self) -> bool:
+        """True if there are legacy files that couldn't be processed."""
+        return self.skipped_legacy_files > 0
+
+
+@dataclass
+class RepositoryMetadata:
+    """Metadata about repository content size."""
+    total_files: int
+    total_chars: int
+    learnings: dict[str, str] = field(default_factory=dict)  # query -> key facts
 
 
 class MatterRepository:
@@ -52,12 +85,17 @@ class MatterRepository:
 
     Provides:
     - File listing and navigation
-    - Document reading (PDF, DOCX, TXT)
+    - Document reading (PDF, DOCX, DOC, TXT, MHT)
     - Grep-style search across all documents
     - Parallel operations
+
+    Note: .doc files require antiword to be installed on the system.
+    .rtf format is NOT supported — convert to .docx or .pdf.
     """
 
-    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt"}
+    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".md", ".mht", ".mhtml", ".png", ".jpg", ".jpeg", ".csv", ".xlsx"}
+    # Extensions that require async read (OCR path) — sync read() will raise for these
+    _ASYNC_ONLY_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 
     def __init__(self, base_path: str | Path):
         self.base_path = Path(base_path)
@@ -71,7 +109,307 @@ class MatterRepository:
         self.search_engine = DocumentSearch(self.reader)
         self.search_engine._doc_cache = self._doc_cache  # Share cache
         self._file_cache: Optional[list[FileInfo]] = None
+        self._metadata: Optional["RepositoryMetadata"] = None
+        self._display_path_map: Optional[dict[str, Path]] = None  # display_name -> actual Path
+
+        # Load filename mapping if it exists (for S3/upload mode)
+        self._filename_mapping = self._load_filename_mapping()
+
+        # Auto-detect and rename hash-named files if no mapping exists
+        if not self._filename_mapping["actual_to_display"]:
+            renamed = self._auto_detect_hash_files()
+            if renamed > 0:
+                logger.info(f"Auto-renamed {renamed} hash-named files with detected extensions")
+
         logger.info(f"Initialized repository: {base_path}")
+
+    def _load_filename_mapping(self) -> dict:
+        """Load filename mapping from _filename_mapping.json if it exists.
+
+        Returns:
+            Dict with four sub-dicts:
+            - 'actual_to_display': actual_filename -> display_name
+            - 'display_to_actual': display_name -> actual_filename
+            - 'display_to_url': display_name -> url (if available)
+            - 'display_to_mime': display_name -> mime type (if available)
+        """
+        mapping_path = self.base_path / "_filename_mapping.json"
+        result = {
+            "actual_to_display": {},
+            "display_to_actual": {},
+            "display_to_url": {},
+            "display_to_mime": {},
+        }
+
+        if not mapping_path.exists():
+            logger.debug(f"No filename mapping found at {mapping_path}")
+            # List files in directory to help debug
+            try:
+                files_in_dir = list(self.base_path.glob("*"))[:10]
+                file_names = [f.name for f in files_in_dir]
+                logger.debug(f"Files in {self.base_path}: {file_names}")
+            except Exception:
+                pass
+            return result
+
+        try:
+            with open(mapping_path) as f:
+                raw_mapping = json.load(f)
+
+            # Build bidirectional mappings
+            for actual_name, info in raw_mapping.items():
+                if isinstance(info, dict):
+                    display_name = info.get("display_name", actual_name)
+                    url = info.get("url")
+                    mime = info.get("mime")
+                else:
+                    # Legacy format: just a string
+                    display_name = str(info)
+                    url = None
+                    mime = None
+
+                result["actual_to_display"][actual_name] = display_name
+                result["display_to_actual"][display_name] = actual_name
+                if url:
+                    result["display_to_url"][display_name] = url
+                if mime:
+                    result["display_to_mime"][display_name] = mime
+
+            logger.info(f"Loaded filename mapping with {len(raw_mapping)} entries")
+            logger.debug(f"Sample mappings: {list(result['display_to_actual'].items())[:3]}")
+        except Exception as e:
+            logger.warning(f"Failed to load filename mapping: {e}")
+
+        return result
+
+    @staticmethod
+    def _detect_extension_from_file(path: Path) -> str:
+        """Detect file extension from magic bytes of a file on disk.
+
+        Returns:
+            Extension string (e.g., '.pdf') or empty string if undetectable.
+        """
+        try:
+            with open(path, "rb") as f:
+                header = f.read(16)
+        except Exception:
+            return ""
+
+        if header.startswith(b'%PDF'):
+            return '.pdf'
+        if header.startswith(b'PK\x03\x04'):
+            return '.docx'  # ZIP-based (could be docx, xlsx, etc.)
+        if header.startswith(b'\xd0\xcf\x11\xe0'):
+            return '.doc'
+        if header.startswith(b'{\\rtf'):
+            return '.rtf'
+        # Try to detect text files
+        try:
+            with open(path, "rb") as f:
+                sample = f.read(1000)
+            sample.decode('utf-8')
+            return '.txt'
+        except (UnicodeDecodeError, Exception):
+            pass
+        return ''
+
+    def _auto_detect_hash_files(self) -> int:
+        """Detect hash-named files without extensions and rename with detected extension.
+
+        Scans the repository for files that look like content hashes (32+ hex chars,
+        no extension). For each, detects the file type from magic bytes and renames
+        the file on disk to include the correct extension.
+
+        Returns:
+            Number of files renamed.
+        """
+        renamed = 0
+        for path in self.base_path.glob("*"):
+            if not path.is_file():
+                continue
+            name = path.name
+            # Skip special files
+            if name.startswith("_") or name.startswith("~$") or name.startswith("."):
+                continue
+            # Check if it's a hash filename (no extension, 32+ hex chars)
+            if '.' in name or len(name) < 32:
+                continue
+            if not all(c in '0123456789abcdef' for c in name.lower()):
+                continue
+            # Detect extension from magic bytes
+            ext = self._detect_extension_from_file(path)
+            if ext:
+                new_path = path.with_suffix(ext)
+                if not new_path.exists():
+                    path.rename(new_path)
+                    renamed += 1
+                    logger.debug(f"Renamed hash file: {name} -> {new_path.name}")
+                else:
+                    logger.warning(f"Cannot rename {name} to {new_path.name}: target exists")
+        return renamed
+
+    def _get_display_name(self, actual_filename: str) -> str:
+        """Get display name for an actual filename."""
+        return self._filename_mapping["actual_to_display"].get(
+            actual_filename, actual_filename
+        )
+
+    def _get_actual_filename(self, display_name: str) -> str:
+        """Get actual filename from a display name."""
+        return self._filename_mapping["display_to_actual"].get(
+            display_name, display_name
+        )
+
+    def get_document_url(self, document_name: str) -> Optional[str]:
+        """Get URL for a document if available.
+
+        Args:
+            document_name: Display name or actual filename of the document
+
+        Returns:
+            URL string if available, None otherwise
+        """
+        url = self._filename_mapping["display_to_url"].get(document_name)
+        if url:
+            return url
+
+        display_name = self._get_display_name(document_name)
+        return self._filename_mapping["display_to_url"].get(display_name)
+
+    def get_document_mime(self, document_name: str) -> Optional[str]:
+        """Get MIME type for a document if available or infer it from its filename."""
+        mime = self._filename_mapping["display_to_mime"].get(document_name)
+        if mime:
+            return mime
+
+        display_name = self._get_display_name(document_name)
+        mime = self._filename_mapping["display_to_mime"].get(display_name)
+        if mime:
+            return mime
+
+        guessed_mime, _ = mimetypes.guess_type(display_name or document_name)
+        return guessed_mime
+
+    def _get_display_path_map(self) -> dict[str, Path]:
+        """Lazily build mapping from display filenames to actual file Paths.
+
+        This provides a robust fallback for _resolve_path when the
+        _filename_mapping.json lookup fails (e.g., incomplete mapping,
+        S3 download with hash filenames).
+        """
+        if self._display_path_map is None:
+            self._display_path_map = {}
+            for file_info in self.list_files():
+                self._display_path_map[file_info.filename] = file_info.path
+            logger.debug(f"Built display_path_map with {len(self._display_path_map)} entries")
+        return self._display_path_map
+
+    @property
+    def is_small_repo(self) -> bool:
+        """Check if repository is small enough for direct content loading."""
+        SMALL_REPO_THRESHOLD = 100_000  # 100K chars
+        if self._metadata is None:
+            self._compute_metadata()
+        return self._metadata.total_chars < SMALL_REPO_THRESHOLD
+
+    @property
+    def metadata(self) -> Optional["RepositoryMetadata"]:
+        """Get repository metadata (lazy computed)."""
+        if self._metadata is None:
+            self._compute_metadata()
+        return self._metadata
+
+    def _compute_metadata(self) -> None:
+        """Compute and cache repository metadata (sync, fitz-only — no OCR).
+
+        Prefer _compute_metadata_async() in async contexts so that OCR runs
+        and _doc_cache is warmed with real content before anything else reads it.
+        This sync fallback is kept for non-async callers (e.g. add_learning).
+        """
+        files = self.list_files()
+        total_chars = 0
+        for f in files[:50]:  # Sample first 50 files to estimate
+            try:
+                # Skip image files — they require async read (OCR)
+                if Path(f.path).suffix.lower() in self._ASYNC_ONLY_EXTENSIONS:
+                    continue
+                doc = self.read(f.path)
+                total_chars += len(doc.full_text)
+            except Exception:
+                pass
+        # Extrapolate if we sampled
+        if len(files) > 50:
+            total_chars = int(total_chars * len(files) / 50)
+        self._metadata = RepositoryMetadata(
+            total_files=len(files),
+            total_chars=total_chars,
+        )
+
+    async def _compute_metadata_async(self) -> None:
+        """Async version of _compute_metadata — uses read_async() so OCR runs.
+
+        This must be called (and awaited) before any sync access to
+        ``metadata`` or ``is_small_repo``.  It does two things at once:
+
+        1. Populates ``_doc_cache`` with OCR-extracted content for every
+           sampled file, so subsequent ``read_async()`` / ``read()`` calls
+           within the same session are instant cache hits with *real* text.
+
+        2. Sets ``_metadata.total_chars`` from the OCR-accurate char counts,
+           making the ``is_small_repo`` threshold check correct even for
+           repos that consist entirely of scanned PDFs.
+        """
+        files = self.list_files()
+        total_chars = 0
+        for f in files[:50]:  # same 50-file sample limit as the sync version
+            try:
+                doc, _ = await self.read_async(f.path)
+                total_chars += len(doc.full_text)
+            except Exception:
+                pass
+        # Extrapolate if we sampled
+        if len(files) > 50:
+            total_chars = int(total_chars * len(files) / 50)
+        self._metadata = RepositoryMetadata(
+            total_files=len(files),
+            total_chars=total_chars,
+        )
+
+    def add_learning(self, query: str, facts: str) -> None:
+        """Store learnings from a query for future reference."""
+        if self._metadata is None:
+            self._compute_metadata()
+        self._metadata.learnings[query] = facts
+
+    def get_learnings(self, limit: int = 5) -> list[dict[str, str]]:
+        """Get recent learnings from this repository."""
+        if self._metadata is None:
+            return []
+        learnings = []
+        for query, finding in list(self._metadata.learnings.items())[:limit]:
+            learnings.append({"query": query, "finding": finding})
+        return learnings
+
+    def get_all_content(self, max_chars: int = 500_000) -> str:
+        """Get all document content concatenated (for small repos)."""
+        files = self.list_files()
+        content_parts = []
+        total_chars = 0
+        for f in files:
+            if total_chars >= max_chars:
+                break
+            try:
+                # Image files require async read (OCR) — skip in sync context
+                if Path(f.path).suffix.lower() in self._ASYNC_ONLY_EXTENSIONS:
+                    logger.debug(f"Skipping image file in get_all_content (use read_async): {f.filename}")
+                    continue
+                doc = self.read(f.path)
+                text = doc.full_text
+                content_parts.append(f"\n\n=== {f.filename} ===\n{text}")
+                total_chars += len(text)
+            except Exception as e:
+                logger.warning(f"Failed to read {f.filename}: {e}")
+        return "".join(content_parts)
 
     # === NAVIGATION ===
 
@@ -88,25 +426,46 @@ class MatterRepository:
             file_types: Filter by extensions (e.g., [".pdf", ".docx"])
 
         Returns:
-            List of FileInfo objects
+            List of FileInfo objects with display names (if mapping exists)
         """
         files = []
         file_types = file_types or list(self.SUPPORTED_EXTENSIONS)
         file_types = [ft.lower() if ft.startswith(".") else f".{ft.lower()}" for ft in file_types]
 
         for path in self.base_path.glob(pattern):
-            if path.is_file() and path.suffix.lower() in file_types:
-                # Skip temp files
-                if path.name.startswith("~$"):
-                    continue
+            # Skip mapping file and temp files
+            if path.name == "_filename_mapping.json":
+                continue
+            if path.name.startswith("~$"):
+                continue
 
-                files.append(FileInfo(
-                    path=path,
-                    filename=path.name,
-                    file_type=path.suffix.lower(),
-                    size_bytes=path.stat().st_size,
-                    relative_path=str(path.relative_to(self.base_path)),
-                ))
+            if not path.is_file():
+                continue
+
+            # Get display name from mapping FIRST (before extension filtering)
+            actual_name = path.name
+            display_name = self._get_display_name(actual_name)
+
+            # Determine extension - prefer display name extension for hash files
+            display_ext = Path(display_name).suffix.lower()
+            actual_ext = path.suffix.lower()
+            effective_ext = display_ext if display_ext else actual_ext
+
+            # Last resort: detect extension from magic bytes for extensionless files
+            if not effective_ext:
+                effective_ext = self._detect_extension_from_file(path)
+
+            # Filter by extension
+            if effective_ext not in file_types:
+                continue
+
+            files.append(FileInfo(
+                path=path,
+                filename=display_name,  # Use display name for user/LLM
+                file_type=effective_ext,
+                size_bytes=path.stat().st_size,
+                relative_path=str(path.relative_to(self.base_path)),
+            ))
 
         return sorted(files, key=lambda f: f.relative_path)
 
@@ -122,25 +481,86 @@ class MatterRepository:
 
         return dict(sorted(structure.items()))
 
-    def get_stats(self) -> RepositoryStats:
-        """Get repository statistics."""
-        files = self.list_files()
+    def get_file_list(self) -> list[dict]:
+        """Get list of files with names and metadata for LLM planning.
 
+        Returns list of dicts with:
+        - filename: The file name
+        - path: Relative path for reading
+        - type: File extension
+        - size_kb: Size in KB (rounded)
+        - page_count: Extracted page count, when already available
+        - extracted_chars: Extracted character count, when already available
+        - structure: Tabular metadata (rows/columns/sheets) for CSV/XLSX, when available
+        """
+        files = []
+        for file_info in self.list_files():
+            doc = self._doc_cache.get(str(file_info.path))
+            files.append({
+                "filename": file_info.filename,
+                "path": file_info.relative_path,
+                "type": file_info.file_type,
+                "size_kb": round(file_info.size_bytes / 1024),
+                "page_count": doc.page_count if doc else None,
+                "extracted_chars": doc.total_chars if doc else None,
+                "structure": doc.metadata if doc else None,
+            })
+        return files
+
+    def get_stats(self) -> RepositoryStats:
+        """Get repository statistics.
+
+        Also detects and counts legacy files (.rtf) that exist
+        but cannot be processed. Logs a single summary warning if any
+        legacy files are found.
+        """
         files_by_type: dict[str, int] = {}
         total_size = 0
         folders = set()
+        total_files = 0
 
-        for f in files:
-            files_by_type[f.file_type] = files_by_type.get(f.file_type, 0) + 1
-            total_size += f.size_bytes
-            folder = str(Path(f.relative_path).parent)
-            folders.add(folder)
+        # Legacy file tracking
+        legacy_extensions = {".rtf"}
+        skipped_legacy = 0
+        legacy_samples: list[str] = []  # Track a few for the warning
+
+        # Single traversal: count supported and legacy files
+        for path in self.base_path.glob("**/*"):
+            if not path.is_file() or path.name.startswith("~$"):
+                continue
+
+            ext = path.suffix.lower()
+
+            if ext in self.SUPPORTED_EXTENSIONS:
+                total_files += 1
+                files_by_type[ext] = files_by_type.get(ext, 0) + 1
+                total_size += path.stat().st_size
+                rel_path = str(path.relative_to(self.base_path))
+                folder = str(Path(rel_path).parent)
+                if folder == ".":
+                    folder = "(root)"  # Normalize to match get_structure()
+                folders.add(folder)
+            elif ext in legacy_extensions:
+                skipped_legacy += 1
+                if len(legacy_samples) < 3:  # Collect up to 3 samples
+                    legacy_samples.append(str(path.relative_to(self.base_path)))
+
+        # Log a single summary warning if legacy files found
+        if skipped_legacy > 0:
+            samples_str = ", ".join(legacy_samples)
+            if skipped_legacy > 3:
+                samples_str += f", ... ({skipped_legacy - 3} more)"
+            logger.warning(
+                f"Repository contains {skipped_legacy} unsupported legacy file(s) "
+                f"(.rtf): {samples_str}. Convert to .docx or .pdf for processing."
+            )
 
         return RepositoryStats(
-            total_files=len(files),
+            total_files=total_files,
             total_size_bytes=total_size,
             files_by_type=files_by_type,
             folders=sorted(folders),
+            skipped_legacy_files=skipped_legacy,
         )
 
     # === READING ===
@@ -163,6 +583,55 @@ class MatterRepository:
             self._doc_cache[cache_key] = self.reader.read(full_path)
 
         return self._doc_cache[cache_key]
+
+    async def read_async(
+        self,
+        path: str | Path,
+        ocr_timeout: float = 60.0,
+    ) -> tuple[DocumentContent, Optional[OcrCallMetadata]]:
+        """Async read — required for image files and OCR-fallback PDF/DOCX.
+
+        Returns (DocumentContent, OcrCallMetadata | None).
+        OcrCallMetadata is non-None only when a Mistral OCR call was made.
+        Caches the DocumentContent result (same cache as read()).
+
+        Two-level cache:
+        1. Instance-level _doc_cache  — within a single investigate() session.
+        2. Module-level _GLOBAL_DOC_CACHE — across sessions/requests in this process.
+           Keyed by the resolved file path / S3 URL (content-addressable in practice).
+           Bounded by IRYS_OCR_CACHE_ENTRIES (default 200 entries).
+           All cache reads and writes are wrapped in try/except so a failure never
+           blocks the actual read or OCR call.
+        """
+        full_path = self._resolve_path(path)
+        cache_key = str(full_path)
+
+        # --- Level 1: instance cache (within-session dedup) ---
+        if cache_key in self._doc_cache:
+            return self._doc_cache[cache_key], None
+
+        # --- Level 2: global process-level cache (cross-session dedup) ---
+        try:
+            cached = _GLOBAL_DOC_CACHE.get(cache_key)
+            if cached is not None:
+                logger.debug("Global OCR cache hit: %s", full_path.name)
+                self._doc_cache[cache_key] = cached  # warm instance cache
+                return cached, None
+        except Exception:  # noqa: BLE001
+            logger.debug("Global OCR cache read error for %s — proceeding without cache", full_path.name)
+
+        # --- Cache miss: do the actual read (may invoke Mistral OCR) ---
+        logger.debug(f"Reading document (async): {full_path.name}")
+        doc_content, ocr_meta = await self.reader.read_async(full_path, ocr_timeout=ocr_timeout)
+
+        # Populate both caches.  A write failure is non-fatal.
+        self._doc_cache[cache_key] = doc_content
+        try:
+            _GLOBAL_DOC_CACHE.set(cache_key, doc_content)
+        except Exception:  # noqa: BLE001
+            logger.debug("Global OCR cache write error for %s — continuing without caching", full_path.name)
+
+        return doc_content, ocr_meta
 
     def read_pages(self, path: str | Path, start: int, end: int) -> str:
         """Read specific page range from a document."""
@@ -223,6 +692,20 @@ class MatterRepository:
 
     # === SEARCHING ===
 
+    def _map_search_results_to_display_names(self, results: SearchResults) -> SearchResults:
+        """Map filenames in search results to display names."""
+        if not self._filename_mapping["actual_to_display"]:
+            return results  # No mapping, return as-is
+
+        # Update filenames in hits to use display names
+        for hit in results.hits:
+            actual_name = Path(hit.file_path).name
+            display_name = self._get_display_name(actual_name)
+            if display_name != actual_name:
+                hit.filename = display_name
+
+        return results
+
     def search(
         self,
         query: str,
@@ -246,7 +729,7 @@ class MatterRepository:
             max_workers: Max parallel workers for search (default scales with file count)
 
         Returns:
-            SearchResults with all matches
+            SearchResults with all matches (filenames mapped to display names)
         """
         # Get files to search
         if folder:
@@ -260,7 +743,7 @@ class MatterRepository:
         if max_workers is None:
             max_workers = min(10, max(1, len(files)))
 
-        return self.search_engine.search(
+        results = self.search_engine.search(
             query=query,
             files=files,
             regex=regex,
@@ -268,6 +751,59 @@ class MatterRepository:
             context_lines=context_lines,
             max_workers=max_workers,
         )
+
+        # Map filenames to display names
+        return self._map_search_results_to_display_names(results)
+
+    def smart_search(
+        self,
+        query: str,
+        folder: Optional[str] = None,
+        file_types: Optional[list[str]] = None,
+        regex: bool = False,
+        case_sensitive: bool = False,
+        context_lines: int = 2,
+    ) -> SearchResults:
+        """
+        Smart search with OR fallback for multi-word queries.
+
+        If exact phrase returns no results, automatically splits into
+        individual terms and searches for each, deduplicating results.
+        """
+        if folder:
+            pattern = f"{folder}/**/*"
+        else:
+            pattern = "**/*"
+
+        files = [f.path for f in self.list_files(pattern, file_types)]
+
+        results = self.search_engine.smart_search(
+            query=query,
+            files=files,
+            regex=regex,
+            case_sensitive=case_sensitive,
+            context_lines=context_lines,
+        )
+
+        # Map filenames to display names
+        return self._map_search_results_to_display_names(results)
+
+    def smart_search_files(
+        self,
+        query: str,
+        files: list[Path],
+        case_sensitive: bool = False,
+        context_lines: int = 2,
+    ) -> SearchResults:
+        """Smart search over an explicit, already-validated file subset."""
+        results = self.search_engine.smart_search(
+            query=query,
+            files=files,
+            regex=False,
+            case_sensitive=case_sensitive,
+            context_lines=context_lines,
+        )
+        return self._map_search_results_to_display_names(results)
 
     def search_multi(
         self,
@@ -287,10 +823,67 @@ class MatterRepository:
     # === UTILITIES ===
 
     def _resolve_path(self, path: str | Path) -> Path:
-        """Resolve path relative to repository or absolute."""
+        """Resolve path relative to repository or absolute.
+
+        Handles filename mapping: if a display name is provided and doesn't exist,
+        tries to resolve it to the actual filename using the mapping.
+        """
         path = Path(path)
+
+        # If absolute path, use it directly
         if path.is_absolute():
-            return path
+            if path.exists():
+                return path
+            # Try resolving via filename mapping
+            actual_name = self._get_actual_filename(path.name)
+            if actual_name != path.name:
+                resolved = path.parent / actual_name
+                if resolved.exists():
+                    return resolved
+            return path  # Return original even if not found (error will be raised later)
+
+        # Relative path - try direct resolution first
+        resolved = self.base_path / path
+        if resolved.exists():
+            return resolved
+
+        # Try using filename mapping (display_name -> actual_filename)
+        path_str = str(path)
+        actual_name = self._get_actual_filename(path_str)
+        if actual_name != path_str:
+            resolved = self.base_path / actual_name
+            if resolved.exists():
+                logger.debug(f"Resolved display name '{path_str}' to actual '{actual_name}'")
+                return resolved
+
+        # Also try just the filename portion (in case path has directory prefix)
+        if '/' in path_str or os.sep in path_str:
+            filename_only = Path(path_str).name
+            actual_name = self._get_actual_filename(filename_only)
+            if actual_name != filename_only:
+                # Reconstruct path with actual filename
+                parent = Path(path_str).parent
+                resolved = self.base_path / parent / actual_name
+                if resolved.exists():
+                    logger.debug(f"Resolved display name '{filename_only}' to actual '{actual_name}'")
+                    return resolved
+
+        # Fallback: use display_path_map built from list_files()
+        # This handles cases where _filename_mapping.json is missing/incomplete
+        display_map = self._get_display_path_map()
+
+        # Try exact display name match
+        if path_str in display_map:
+            logger.debug(f"Resolved via display_path_map: '{path_str}'")
+            return display_map[path_str]
+
+        # Try just the filename portion
+        filename_only = Path(path_str).name
+        if filename_only in display_map and filename_only != path_str:
+            logger.debug(f"Resolved via display_path_map (filename only): '{filename_only}'")
+            return display_map[filename_only]
+
+        # Fall back to original path (may not exist - let caller handle error)
         return self.base_path / path
 
     def get_file_info(self, path: str | Path) -> FileInfo:

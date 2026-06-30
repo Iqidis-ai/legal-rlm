@@ -9,7 +9,7 @@ from typing import Optional
 
 @dataclass
 class ServiceConfig:
-    """Production service configuration."""
+    """Production service configuration"""
 
     # API Settings
     host: str = "0.0.0.0"
@@ -28,16 +28,16 @@ class ServiceConfig:
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
 
-    # Storage Settings (for small instances)
+    # Storage Settings
     temp_dir: str = "/tmp/irys"
-    max_temp_size_mb: int = 500  # Max temp storage before cleanup
-    cleanup_after_seconds: int = 300  # 5 minutes
-    max_concurrent_jobs: int = 3
+    max_temp_size_mb: int = 5000  # 5GB max temp storage before cleanup
+    cleanup_after_seconds: int = 600  # 10 minutes
+    max_concurrent_jobs: int = 5
 
     # Processing Settings
-    max_documents_per_job: int = 50
-    max_document_size_mb: int = 10
-    request_timeout_seconds: int = 300  # 5 minutes
+    max_documents_per_job: int = 2000
+    max_document_size_mb: int = 200
+    request_timeout_seconds: int = 600  # 10 minutes
 
     # Logging
     log_level: str = "INFO"
@@ -66,13 +66,13 @@ class ServiceConfig:
             aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
             # Storage Settings
             temp_dir=os.getenv("IRYS_TEMP_DIR", "/tmp/irys"),
-            max_temp_size_mb=int(os.getenv("IRYS_MAX_TEMP_SIZE_MB", "500")),
-            cleanup_after_seconds=int(os.getenv("IRYS_CLEANUP_SECONDS", "300")),
-            max_concurrent_jobs=int(os.getenv("IRYS_MAX_CONCURRENT_JOBS", "3")),
+            max_temp_size_mb=int(os.getenv("IRYS_MAX_TEMP_SIZE_MB", "5000")),
+            cleanup_after_seconds=int(os.getenv("IRYS_CLEANUP_SECONDS", "600")),
+            max_concurrent_jobs=int(os.getenv("IRYS_MAX_CONCURRENT_JOBS", "5")),
             # Processing Settings
-            max_documents_per_job=int(os.getenv("IRYS_MAX_DOCS_PER_JOB", "50")),
-            max_document_size_mb=int(os.getenv("IRYS_MAX_DOC_SIZE_MB", "10")),
-            request_timeout_seconds=int(os.getenv("IRYS_TIMEOUT_SECONDS", "300")),
+            max_documents_per_job=int(os.getenv("IRYS_MAX_DOCS_PER_JOB", "2000")),
+            max_document_size_mb=int(os.getenv("IRYS_MAX_DOC_SIZE_MB", "200")),
+            request_timeout_seconds=int(os.getenv("IRYS_TIMEOUT_SECONDS", "600")),
             # Logging
             log_level=os.getenv("IRYS_LOG_LEVEL", "INFO"),
             log_format=os.getenv("IRYS_LOG_FORMAT", "json"),
