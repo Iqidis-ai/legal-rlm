@@ -806,9 +806,13 @@ class RLMEngine:
         """
         return self._trace_ctx
 
-    def finalize_trace(self, state: InvestigationState) -> None:
+    async def finalize_trace(self, state: InvestigationState) -> None:
         """End the Langfuse trace and flush.  Called by Irys after all
-        post-processing (citation injection etc.) is complete."""
+        post-processing (citation injection etc.) is complete.
+
+        flush() is a blocking network call (Langfuse drains queued events over
+        HTTP), so it runs off the event loop via to_thread to keep /health
+        responsive."""
         if self._trace_ctx:
             try:
                 status = "error" if state.status == "failed" else "ok"
@@ -818,7 +822,7 @@ class RLMEngine:
                     metadata={"status": state.status, "answer_length": len(final_output)},
                     status=status,
                 )
-                self._tracing_provider.flush()
+                await asyncio.to_thread(self._tracing_provider.flush)
             except Exception as e:
                 logger.warning("Failed to finalize trace: %s", e)
             self._trace_ctx = None

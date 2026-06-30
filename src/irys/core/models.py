@@ -465,6 +465,14 @@ class GeminiClient:
     _vertex_client: Optional[genai.Client] = None
     _vertex_init_attempted: bool = False
 
+    # Class-level Anthropic fallback client (lazy initialized, shared across instances)
+    _anthropic_client: Optional[Any] = None
+    _anthropic_init_attempted: bool = False
+
+    # Class-level OpenAI fallback client (lazy initialized, shared across instances)
+    _openai_client: Optional[Any] = None
+    _openai_init_attempted: bool = False
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -525,6 +533,84 @@ class GeminiClient:
             logger.warning(f"Failed to initialize Vertex AI client: {e}")
             return None
 
+    @classmethod
+    def _get_anthropic_fallback(cls):
+        """Lazy init for the final-layer Anthropic fallback client.
+
+        Returns None (fallback disabled) when ANTHROPIC_API_KEY is unset or the
+        anthropic package/init fails, leaving Gemini-only behaviour unchanged.
+        """
+        if cls._anthropic_init_attempted:
+            return cls._anthropic_client
+
+        cls._anthropic_init_attempted = True
+        try:
+            if not os.environ.get("ANTHROPIC_API_KEY"):
+                logger.debug("ANTHROPIC_API_KEY not set, Anthropic fallback disabled")
+                return None
+            from .anthropic_fallback import AnthropicClient
+            cls._anthropic_client = AnthropicClient()
+            logger.info("Anthropic fallback client initialized (final fallback layer)")
+            return cls._anthropic_client
+        except Exception as e:
+            logger.warning(f"Failed to initialize Anthropic fallback client: {e}")
+            return None
+
+    @classmethod
+    def _get_openai_fallback(cls):
+        """Lazy init for the final-layer OpenAI fallback client.
+
+        Returns None (fallback disabled) when OPENAI_API_KEY is unset or the
+        openai package/init fails, leaving Gemini-only behaviour unchanged.
+        """
+        if cls._openai_init_attempted:
+            return cls._openai_client
+
+        cls._openai_init_attempted = True
+        try:
+            if not os.environ.get("OPENAI_API_KEY"):
+                logger.debug("OPENAI_API_KEY not set, OpenAI fallback disabled")
+                return None
+            from .openai_fallback import OpenAIClient
+            cls._openai_client = OpenAIClient()
+            logger.info("OpenAI fallback client initialized (final fallback layer)")
+            return cls._openai_client
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenAI fallback client: {e}")
+            return None
+
+    @staticmethod
+    def _describe_block(response: Any) -> str:
+        """Extract a human-readable block/safety reason from a response.
+
+        When a prompt is blocked, Gemini returns zero candidates and the reason
+        lives in response.prompt_feedback.block_reason (NOT in finish_reason),
+        which otherwise surfaces as 'unknown'. This also captures per-category
+        safety ratings flagged as blocked at the prompt or candidate level.
+        Returns '' when no block information is available.
+        """
+        parts = []
+        pf = getattr(response, "prompt_feedback", None)
+        if pf is not None:
+            block_reason = getattr(pf, "block_reason", None)
+            if block_reason is not None:
+                parts.append(f"block_reason={block_reason}")
+            block_msg = getattr(pf, "block_reason_message", None)
+            if block_msg:
+                parts.append(f"block_message={block_msg}")
+            ratings = getattr(pf, "safety_ratings", None) or []
+            blocked = [str(getattr(r, "category", "?")) for r in ratings if getattr(r, "blocked", False)]
+            if blocked:
+                parts.append(f"prompt_blocked_categories={blocked}")
+
+        candidates = getattr(response, "candidates", None)
+        if candidates:
+            ratings = getattr(candidates[0], "safety_ratings", None) or []
+            blocked = [str(getattr(r, "category", "?")) for r in ratings if getattr(r, "blocked", False)]
+            if blocked:
+                parts.append(f"candidate_blocked_categories={blocked}")
+        return ", ".join(parts)
+
     @staticmethod
     def _validate_response(response: Any, model: str) -> None:
         """Raise MalformedResponseError if the response has no usable text.
@@ -548,8 +634,15 @@ class GeminiClient:
         except Exception:
             text = None
         if not text:
+            block_info = GeminiClient._describe_block(response)
+            if block_info:
+                logger.warning(
+                    f"{model} returned empty response — likely content block: {block_info}"
+                )
             raise MalformedResponseError(
-                f"{model} returned empty response (finish_reason={finish_str or 'unknown'})"
+                f"{model} returned empty response "
+                f"(finish_reason={finish_str or 'unknown'}"
+                f"{'; ' + block_info if block_info else ''})"
             )
 
     async def _try_call(
@@ -764,10 +857,30 @@ class GeminiClient:
             mc.model_id, mc.fallback_model_id, contents, config, request_timeout, no_timeout,
             secondary_fallback_model=mc.secondary_fallback_model_id,
         )
-        if overall_timeout is not None:
-            response = await asyncio.wait_for(fallback_coro, timeout=overall_timeout)
-        else:
-            response = await fallback_coro
+        try:
+            if overall_timeout is not None:
+                response = await asyncio.wait_for(fallback_coro, timeout=overall_timeout)
+            else:
+                response = await fallback_coro
+        except Exception as gemini_err:
+            # Final fallback layer: every Gemini API + Vertex attempt failed
+            # (e.g. PROHIBITED_CONTENT hard-block that safety settings can't disable).
+            # Try OpenAI if configured; otherwise re-raise the original error.
+            openai_client = self._get_openai_fallback()
+            if openai_client is None:
+                raise
+            logger.warning(
+                f"All Gemini/Vertex attempts failed for {mc.model_id} "
+                f"({str(gemini_err)[:120]}); falling back to OpenAI"
+            )
+            text = await openai_client.complete(
+                prompt, tier=tier, system_prompt=system_prompt, tools=tools,
+                timeout=timeout, active_step=active_step, trace_ctx=trace_ctx,
+                generation_name=generation_name,
+            )
+            if cache_enabled and text:
+                self._cache.set(cache_key_prompt, mc.model_id, text)
+            return text
         call_latency_ms = int((time.monotonic() - call_start) * 1000)
 
         # Track usage from actual response metadata
