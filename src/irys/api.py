@@ -248,7 +248,7 @@ class Irys:
 
         # Finalize the Langfuse trace after all post-processing is done
         if self._engine:
-            self._engine.finalize_trace(state)
+            await self._engine.finalize_trace(state)
 
         return InvestigationResult(
             state=state,
