@@ -842,7 +842,9 @@ class RLMEngine:
         This replaces the old trigger-based approach which over-searched.
         """
         # Step 1: Load all content directly
-        all_content = repo.get_all_content()
+        # get_all_content() runs synchronous fitz.open() PDF reads, so run it
+        # off the event loop via to_thread to keep /health responsive.
+        all_content = await asyncio.to_thread(repo.get_all_content)
         state.documents_read = len(repo.list_files())
         state.findings["small_repo_content"] = all_content
 

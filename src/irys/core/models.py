@@ -361,7 +361,7 @@ MODEL_CONFIGS: dict[ModelTier, ModelConfig] = {
     ModelTier.PRO: ModelConfig(
         model_id="gemini-3.5-flash",
         thinking_level="",
-        temperature=0.0,  # Deterministic for consistency
+        temperature=1.0,  # gemini-3.5-flash requires temperature=1
         max_output_tokens=65536,  # Maximum output for thorough synthesis
         cost_per_1m_input=2.00,
         cost_per_1m_output=12.00,
