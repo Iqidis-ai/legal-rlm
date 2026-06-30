@@ -465,6 +465,14 @@ class GeminiClient:
     _vertex_client: Optional[genai.Client] = None
     _vertex_init_attempted: bool = False
 
+    # Class-level Anthropic fallback client (lazy initialized, shared across instances)
+    _anthropic_client: Optional[Any] = None
+    _anthropic_init_attempted: bool = False
+
+    # Class-level OpenAI fallback client (lazy initialized, shared across instances)
+    _openai_client: Optional[Any] = None
+    _openai_init_attempted: bool = False
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -523,6 +531,52 @@ class GeminiClient:
             return cls._vertex_client
         except Exception as e:
             logger.warning(f"Failed to initialize Vertex AI client: {e}")
+            return None
+
+    @classmethod
+    def _get_anthropic_fallback(cls):
+        """Lazy init for the final-layer Anthropic fallback client.
+
+        Returns None (fallback disabled) when ANTHROPIC_API_KEY is unset or the
+        anthropic package/init fails, leaving Gemini-only behaviour unchanged.
+        """
+        if cls._anthropic_init_attempted:
+            return cls._anthropic_client
+
+        cls._anthropic_init_attempted = True
+        try:
+            if not os.environ.get("ANTHROPIC_API_KEY"):
+                logger.debug("ANTHROPIC_API_KEY not set, Anthropic fallback disabled")
+                return None
+            from .anthropic_fallback import AnthropicClient
+            cls._anthropic_client = AnthropicClient()
+            logger.info("Anthropic fallback client initialized (final fallback layer)")
+            return cls._anthropic_client
+        except Exception as e:
+            logger.warning(f"Failed to initialize Anthropic fallback client: {e}")
+            return None
+
+    @classmethod
+    def _get_openai_fallback(cls):
+        """Lazy init for the final-layer OpenAI fallback client.
+
+        Returns None (fallback disabled) when OPENAI_API_KEY is unset or the
+        openai package/init fails, leaving Gemini-only behaviour unchanged.
+        """
+        if cls._openai_init_attempted:
+            return cls._openai_client
+
+        cls._openai_init_attempted = True
+        try:
+            if not os.environ.get("OPENAI_API_KEY"):
+                logger.debug("OPENAI_API_KEY not set, OpenAI fallback disabled")
+                return None
+            from .openai_fallback import OpenAIClient
+            cls._openai_client = OpenAIClient()
+            logger.info("OpenAI fallback client initialized (final fallback layer)")
+            return cls._openai_client
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenAI fallback client: {e}")
             return None
 
     @staticmethod
@@ -803,10 +857,30 @@ class GeminiClient:
             mc.model_id, mc.fallback_model_id, contents, config, request_timeout, no_timeout,
             secondary_fallback_model=mc.secondary_fallback_model_id,
         )
-        if overall_timeout is not None:
-            response = await asyncio.wait_for(fallback_coro, timeout=overall_timeout)
-        else:
-            response = await fallback_coro
+        try:
+            if overall_timeout is not None:
+                response = await asyncio.wait_for(fallback_coro, timeout=overall_timeout)
+            else:
+                response = await fallback_coro
+        except Exception as gemini_err:
+            # Final fallback layer: every Gemini API + Vertex attempt failed
+            # (e.g. PROHIBITED_CONTENT hard-block that safety settings can't disable).
+            # Try OpenAI if configured; otherwise re-raise the original error.
+            openai_client = self._get_openai_fallback()
+            if openai_client is None:
+                raise
+            logger.warning(
+                f"All Gemini/Vertex attempts failed for {mc.model_id} "
+                f"({str(gemini_err)[:120]}); falling back to OpenAI"
+            )
+            text = await openai_client.complete(
+                prompt, tier=tier, system_prompt=system_prompt, tools=tools,
+                timeout=timeout, active_step=active_step, trace_ctx=trace_ctx,
+                generation_name=generation_name,
+            )
+            if cache_enabled and text:
+                self._cache.set(cache_key_prompt, mc.model_id, text)
+            return text
         call_latency_ms = int((time.monotonic() - call_start) * 1000)
 
         # Track usage from actual response metadata
