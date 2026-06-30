@@ -526,6 +526,38 @@ class GeminiClient:
             return None
 
     @staticmethod
+    def _describe_block(response: Any) -> str:
+        """Extract a human-readable block/safety reason from a response.
+
+        When a prompt is blocked, Gemini returns zero candidates and the reason
+        lives in response.prompt_feedback.block_reason (NOT in finish_reason),
+        which otherwise surfaces as 'unknown'. This also captures per-category
+        safety ratings flagged as blocked at the prompt or candidate level.
+        Returns '' when no block information is available.
+        """
+        parts = []
+        pf = getattr(response, "prompt_feedback", None)
+        if pf is not None:
+            block_reason = getattr(pf, "block_reason", None)
+            if block_reason is not None:
+                parts.append(f"block_reason={block_reason}")
+            block_msg = getattr(pf, "block_reason_message", None)
+            if block_msg:
+                parts.append(f"block_message={block_msg}")
+            ratings = getattr(pf, "safety_ratings", None) or []
+            blocked = [str(getattr(r, "category", "?")) for r in ratings if getattr(r, "blocked", False)]
+            if blocked:
+                parts.append(f"prompt_blocked_categories={blocked}")
+
+        candidates = getattr(response, "candidates", None)
+        if candidates:
+            ratings = getattr(candidates[0], "safety_ratings", None) or []
+            blocked = [str(getattr(r, "category", "?")) for r in ratings if getattr(r, "blocked", False)]
+            if blocked:
+                parts.append(f"candidate_blocked_categories={blocked}")
+        return ", ".join(parts)
+
+    @staticmethod
     def _validate_response(response: Any, model: str) -> None:
         """Raise MalformedResponseError if the response has no usable text.
 
@@ -548,8 +580,15 @@ class GeminiClient:
         except Exception:
             text = None
         if not text:
+            block_info = GeminiClient._describe_block(response)
+            if block_info:
+                logger.warning(
+                    f"{model} returned empty response — likely content block: {block_info}"
+                )
             raise MalformedResponseError(
-                f"{model} returned empty response (finish_reason={finish_str or 'unknown'})"
+                f"{model} returned empty response "
+                f"(finish_reason={finish_str or 'unknown'}"
+                f"{'; ' + block_info if block_info else ''})"
             )
 
     async def _try_call(
